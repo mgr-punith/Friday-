@@ -4,8 +4,7 @@ import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
-import android.graphics.RadialGradient
-import android.graphics.Shader
+import android.graphics.drawable.Drawable
 import android.os.SystemClock
 import android.util.AttributeSet
 import android.view.HapticFeedbackConstants
@@ -21,13 +20,14 @@ class MicButtonView @JvmOverloads constructor(
     attrs: AttributeSet? = null,
 ) : View(context, attrs) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val microphoneIcon: Drawable = requireNotNull(context.getDrawable(R.drawable.ic_microphone_01)).mutate()
     private var active = false
 
     init {
         isClickable = true
         isFocusable = true
-        minimumWidth = dp(64)
-        minimumHeight = dp(64)
+        minimumWidth = dp(56)
+        minimumHeight = dp(56)
     }
 
     override fun getAccessibilityClassName(): CharSequence = Button::class.java.name
@@ -50,42 +50,34 @@ class MicButtonView @JvmOverloads constructor(
         val centerX = width / 2f
         val centerY = height / 2f
         val radius = min(width, height) * 0.41f
-        val pressedScale = if (isPressed) 0.95f else 1f
         val pulse = if (active && ValueAnimator.areAnimatorsEnabled()) {
-            ((sin(SystemClock.uptimeMillis() / 180.0) + 1.0) * 0.5).toFloat()
-        } else {
-            0f
-        }
+            ((sin(SystemClock.uptimeMillis() / 210.0) + 1.0) * 0.5).toFloat()
+        } else 0f
 
-        canvas.save()
-        canvas.scale(pressedScale, pressedScale, centerX, centerY)
         paint.style = Paint.Style.FILL
         paint.shader = null
-        paint.color = context.getColor(R.color.mic_glow)
-        canvas.drawCircle(centerX, centerY, radius * (1.12f + pulse * 0.08f), paint)
-
-        paint.shader = RadialGradient(
-            centerX - radius * 0.3f,
-            centerY - radius * 0.35f,
-            radius * 1.45f,
-            intArrayOf(
-                context.getColor(R.color.mic_button_highlight),
-                context.getColor(R.color.mic_button),
-                context.getColor(R.color.mic_button_deep),
-            ),
-            floatArrayOf(0f, 0.52f, 1f),
-            Shader.TileMode.CLAMP,
-        )
+        paint.color = context.getColor(if (active) R.color.mic_button else R.color.surface)
         canvas.drawCircle(centerX, centerY, radius, paint)
-        paint.shader = null
-        drawMicrophone(canvas, centerX, centerY, radius)
-        if (hasFocus()) {
-            paint.style = Paint.Style.STROKE
-            paint.strokeWidth = max(2f, radius * 0.08f)
-            paint.color = context.getColor(R.color.focus_ring)
-            canvas.drawCircle(centerX, centerY, radius * 1.1f, paint)
+
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = max(1f, dp(1).toFloat())
+        paint.color = context.getColor(if (active) R.color.accent else R.color.border)
+        canvas.drawCircle(centerX, centerY, radius, paint)
+
+        if (active && pulse > 0f) {
+            paint.alpha = (55 + pulse * 35).toInt()
+            paint.strokeWidth = dp(2).toFloat()
+            paint.color = context.getColor(R.color.accent)
+            canvas.drawCircle(centerX, centerY, radius * (1.08f + pulse * 0.03f), paint)
+            paint.alpha = 255
         }
-        canvas.restore()
+        drawMicrophone(canvas, centerX, centerY, radius)
+
+        if (hasFocus()) {
+            paint.strokeWidth = dp(2).toFloat()
+            paint.color = context.getColor(R.color.focus_ring)
+            canvas.drawCircle(centerX, centerY, radius * 1.12f, paint)
+        }
 
         if (active && ValueAnimator.areAnimatorsEnabled() && isShown) {
             postInvalidateDelayed(40L)
@@ -93,45 +85,16 @@ class MicButtonView @JvmOverloads constructor(
     }
 
     private fun drawMicrophone(canvas: Canvas, centerX: Float, centerY: Float, radius: Float) {
-        val color = context.getColor(R.color.mic_icon)
-        val bodyHalfWidth = radius * 0.16f
-        val bodyTop = centerY - radius * 0.4f
-        val bodyBottom = centerY + radius * 0.08f
-        paint.style = Paint.Style.FILL
-        paint.color = color
-        canvas.drawRoundRect(
-            centerX - bodyHalfWidth,
-            bodyTop,
-            centerX + bodyHalfWidth,
-            bodyBottom,
-            bodyHalfWidth,
-            bodyHalfWidth,
-            paint,
+        val color = context.getColor(if (active) R.color.mic_icon else R.color.text_primary)
+        val size = (radius * 1.08f).toInt()
+        microphoneIcon.setTint(color)
+        microphoneIcon.setBounds(
+            (centerX - size / 2f).toInt(),
+            (centerY - size / 2f).toInt(),
+            (centerX + size / 2f).toInt(),
+            (centerY + size / 2f).toInt(),
         )
-
-        paint.style = Paint.Style.STROKE
-        paint.strokeCap = Paint.Cap.ROUND
-        paint.strokeWidth = max(2.5f, radius * 0.09f)
-        paint.color = color
-        val pickupRadius = radius * 0.3f
-        canvas.drawArc(
-            centerX - pickupRadius,
-            centerY - radius * 0.18f,
-            centerX + pickupRadius,
-            centerY + radius * 0.37f,
-            0f,
-            180f,
-            false,
-            paint,
-        )
-        canvas.drawLine(centerX, centerY + radius * 0.37f, centerX, centerY + radius * 0.55f, paint)
-        canvas.drawLine(
-            centerX - radius * 0.22f,
-            centerY + radius * 0.55f,
-            centerX + radius * 0.22f,
-            centerY + radius * 0.55f,
-            paint,
-        )
+        microphoneIcon.draw(canvas)
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()

@@ -1,9 +1,38 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.HOME" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.CALL" />
+            <data android:scheme="tel" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SET_ALARM" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SET_TIMER" />
+        </intent>
+    </queries>
     <uses-feature
         android:name="android.hardware.microphone"
         android:required="true" />
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
 
     <application
         android:allowBackup="false"
@@ -12,11 +41,11 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:usesCleartextTraffic="false"
-        android:windowSoftInputMode="adjustResize"
         android:theme="@style/Theme.HeyFriday">
+        <activity android:name=".ActionDebugActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".PermissionsActivity" android:exported="false" />
         <activity
             android:name=".MainActivity"
-            android:enableOnBackInvokedCallback="true"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
