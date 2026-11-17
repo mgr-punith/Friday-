@@ -38,6 +38,7 @@ Anything else the user says gets a short "Sorry, I can't do that yet".
 7. **Ask before adding any dependency** (app or backend) and state its size cost.
 8. **Never claim something was tested if it wasn't.** If the SDK, network, or a phone is not available in your environment, say so.
 9. **Be honest in confirmations.** Only say an action happened if it did.
+10. **Stop Slop is mandatory for all user-facing copy.** Apply the `stop-slop` skill whenever writing or reviewing app labels, dialogs, disclosures, errors, documentation, or release notes. Use direct, specific language. Remove filler, generic AI phrasing, dramatic contrasts, vague claims, and invented functionality.
 
 ## Architecture
 
