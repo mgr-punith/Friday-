@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="screen_background_top">#101017</color>
+    <color name="screen_background">#08080D</color>
+    <color name="surface">#19181F</color>
+    <color name="surface_accent">#241A32</color>
+    <color name="border">#34313C</color>
+    <color name="border_accent">#58406F</color>
+    <color name="text_primary">#FAF7FC</color>
+    <color name="text_secondary">#C5BEC9</color>
+    <color name="accent">#B66FFF</color>
+    <color name="accent_soft">#E3C5FF</color>
+    <color name="focus_ring">#FFFFFF</color>
+
+    <color name="orb_glow">#63BBFF</color>
+    <color name="orb_sky_top">#BCE8FF</color>
+    <color name="orb_sky_mid">#69BDF3</color>
+    <color name="orb_sky_deep">#1765AE</color>
+    <color name="orb_sky_shadow">#0A3469</color>
+    <color name="orb_cloud_shadow">#9CCCE5</color>
+    <color name="orb_cloud">#E9F7FC</color>
+    <color name="orb_cloud_highlight">#FFFFFF</color>
+
+    <color name="mic_glow">#30203F</color>
+    <color name="mic_button_highlight">#F0C7FF</color>
+    <color name="mic_button">#C184FF</color>
+    <color name="mic_button_deep">#8B4FD0</color>
+    <color name="mic_icon">#2A123B</color>
+
+    <color name="success">#70E09B</color>
+    <color name="error">#FF7588</color>
+    <color name="launcher_background">#08080D</color>
+</resources>
