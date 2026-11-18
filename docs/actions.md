@@ -1,6 +1,6 @@
 # Friday actions
 
-This is the v1 action contract. The backend is not implemented yet. The action test screen runs these actions directly on Android with typed Kotlin inputs.
+This is the v1 action contract. The Android action test screen runs these actions directly with typed Kotlin inputs. The backend returns the same names and argument shapes from text or WAV commands.
 
 | Action | Args | Android behavior |
 |---|---|---|
@@ -16,4 +16,4 @@ All actions return `Success(confirmation)`, `NeedsPermission(which)`, or `Failed
 
 Clock intents cannot prove the other app saved an alarm or timer, so confirmations say “Alarm request sent…” and “Timer request sent…”. Calling says “Calling…” after Android starts the call UI; it does not promise a connected call. Going Home says “Went to home screen”.
 
-The test screen asks before placing a call. No text parser, backend request, voice recording, or wake-phrase detection is connected in this milestone.
+The test screen asks before placing a call. The backend validates AI-selected actions against this contract. Voice recording, backend networking in the app, and wake-phrase detection are not connected yet.

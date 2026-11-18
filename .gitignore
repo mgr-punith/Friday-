@@ -31,6 +31,7 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+.vercel/
 .aws/
 .codex/
 *.jks
@@ -45,6 +46,7 @@ signing.properties
 # Future Node.js/AWS SAM backend output and local deployment settings.
 node_modules/
 /backend/dist/
+/backend/build-test/
 .aws-sam/
 samconfig*.toml
 samconfig*.yaml

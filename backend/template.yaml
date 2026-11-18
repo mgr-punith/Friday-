@@ -1,0 +1,149 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Friday voice-command backend
+
+Parameters:
+  GeminiApiKeyParameterName:
+    Type: String
+    Default: /friday/production/gemini-api-key
+    AllowedPattern: ^/[A-Za-z0-9_.\-/]+$
+    Description: Name of the SSM SecureString that contains the Gemini API key.
+  JwtSigningKeyParameterName:
+    Type: String
+    Default: /friday/production/jwt-signing-key
+    AllowedPattern: ^/[A-Za-z0-9_.\-/]+$
+    Description: Name of the SSM SecureString that contains the JWT signing key.
+  GeminiModel:
+    Type: String
+    Default: gemini-3.5-flash-lite
+    AllowedPattern: ^[A-Za-z0-9._-]+$
+  GeminiThinkingLevel:
+    Type: String
+    Default: MINIMAL
+    AllowedValues: [MINIMAL, LOW, MEDIUM, HIGH]
+  ReservedConcurrency:
+    Type: Number
+    Default: 20
+    MinValue: 1
+    MaxValue: 1000
+  LogRetentionDays:
+    Type: Number
+    Default: 14
+    AllowedValues: [7, 14, 30]
+  RegisterPerIpDaily:
+    Type: Number
+    Default: 200
+    MinValue: 1
+  RegisterGlobalDaily:
+    Type: Number
+    Default: 10000
+    MinValue: 1
+  CommandPerInstallMinute:
+    Type: Number
+    Default: 12
+    MinValue: 1
+  CommandPerInstallDaily:
+    Type: Number
+    Default: 100
+    MinValue: 1
+  CommandGlobalDaily:
+    Type: Number
+    Default: 100000
+    MinValue: 1
+
+Resources:
+  UsageTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+      SSESpecification:
+        SSEEnabled: true
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+
+  FridayLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-api
+      RetentionInDays: !Ref LogRetentionDays
+
+  FridayFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: FridayRuntimeAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: WriteFunctionLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub ${FridayLogGroup.Arn}:*
+              - Sid: UpdateUsageLimits
+                Effect: Allow
+                Action:
+                  - dynamodb:TransactWriteItems
+                Resource: !GetAtt UsageTable.Arn
+              - Sid: ReadFridaySecrets
+                Effect: Allow
+                Action: ssm:GetParameters
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${GeminiApiKeyParameterName}
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${JwtSigningKeyParameterName}
+
+  FridayFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: FridayLogGroup
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-api
+      CodeUri: .
+      Handler: handler.handler
+      Runtime: nodejs24.x
+      Architectures: [arm64]
+      MemorySize: 256
+      Timeout: 15
+      ReservedConcurrentExecutions: !Ref ReservedConcurrency
+      Role: !GetAtt FridayFunctionRole.Arn
+      FunctionUrlConfig:
+        AuthType: NONE
+        InvokeMode: BUFFERED
+      Environment:
+        Variables:
+          USAGE_TABLE_NAME: !Ref UsageTable
+          GEMINI_API_KEY_PARAMETER: !Ref GeminiApiKeyParameterName
+          JWT_SIGNING_KEY_PARAMETER: !Ref JwtSigningKeyParameterName
+          GEMINI_MODEL: !Ref GeminiModel
+          GEMINI_THINKING_LEVEL: !Ref GeminiThinkingLevel
+          GEMINI_TIMEOUT_MS: "6000"
+          REGISTER_PER_IP_DAILY: !Ref RegisterPerIpDaily
+          REGISTER_GLOBAL_DAILY: !Ref RegisterGlobalDaily
+          COMMAND_PER_INSTALL_MINUTE: !Ref CommandPerInstallMinute
+          COMMAND_PER_INSTALL_DAILY: !Ref CommandPerInstallDaily
+          COMMAND_GLOBAL_DAILY: !Ref CommandGlobalDaily
+
+Outputs:
+  BackendUrl:
+    Description: HTTPS URL used as the Android BACKEND_URL value.
+    Value: !GetAtt FridayFunctionUrl.FunctionUrl
+  FunctionName:
+    Value: !Ref FridayFunction
+  UsageTableName:
+    Value: !Ref UsageTable

@@ -1,0 +1,51 @@
+export type CommandInput =
+  | { readonly kind: "audio"; readonly bytes: Uint8Array; readonly mimeType: "audio/wav" }
+  | { readonly kind: "text"; readonly text: string };
+
+export interface FunctionSelection {
+  readonly name: string;
+  readonly args: unknown;
+}
+
+export interface AssistantProviderResult {
+  readonly selection: FunctionSelection;
+  readonly durationMs: number;
+}
+
+export type AssistantProviderErrorCode = "busy" | "timeout";
+
+export class AssistantProviderError extends Error {
+  constructor(
+    readonly code: AssistantProviderErrorCode,
+    readonly durationMs: number
+  ) {
+    super(code);
+    this.name = "AssistantProviderError";
+  }
+}
+
+export interface AssistantProvider {
+  select(input: CommandInput, now: string): Promise<AssistantProviderResult>;
+}
+
+export interface SecretBundle {
+  readonly geminiApiKey: string;
+  readonly jwtSigningKey: string;
+}
+
+export interface SecretProvider {
+  getSecrets(): Promise<SecretBundle>;
+}
+
+export interface UsageLimitStore {
+  consumeRegistration(identityHash: string, at: Date): Promise<boolean>;
+  consumeCommand(installId: string, at: Date): Promise<boolean>;
+}
+
+export interface Clock {
+  now(): Date;
+}
+
+export interface SafeLogger {
+  error(code: string, requestId?: string): void;
+}
