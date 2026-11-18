@@ -16,6 +16,8 @@ npm run verify
 
 The project uses `backend/public` for a small root page. Vercel deploys the routes in `backend/api` as Functions.
 
+Keep `@types/node` in production dependencies. Vercel's Function transpiler reads the project's TypeScript configuration after the static build and needs the Node declarations.
+
 `npm run eval` needs a Gemini key. Copy `.env.example` to `.env`, replace the fake value, run the evaluation, then keep `.env` outside Git.
 
 ## Vercel project
