@@ -7,7 +7,6 @@ import android.graphics.Paint
 import android.graphics.drawable.Drawable
 import android.os.SystemClock
 import android.util.AttributeSet
-import android.view.HapticFeedbackConstants
 import android.view.View
 import android.widget.Button
 import com.example.assistant.R
@@ -26,6 +25,8 @@ class MicButtonView @JvmOverloads constructor(
     init {
         isClickable = true
         isFocusable = true
+        isSoundEffectsEnabled = false
+        isHapticFeedbackEnabled = false
         minimumWidth = dp(56)
         minimumHeight = dp(56)
     }
@@ -41,7 +42,6 @@ class MicButtonView @JvmOverloads constructor(
 
     override fun performClick(): Boolean {
         super.performClick()
-        performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
         return true
     }
 

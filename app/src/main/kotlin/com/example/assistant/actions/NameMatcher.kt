@@ -19,6 +19,11 @@ object NameMatcher {
     private const val MAX_NAME_LENGTH = 120
     private val marks = Regex("\\p{M}+")
     private val separators = Regex("[^\\p{L}\\p{N}]+")
+    private val repeatedA = Regex("a{2,}")
+    private val repeatedE = Regex("e{2,}")
+    private val repeatedI = Regex("i{2,}")
+    private val terminalTh = Regex("th$")
+    private val terminalSh = Regex("sh$")
 
     fun normalize(value: String): String {
         val decomposed = Normalizer.normalize(value, Normalizer.Form.NFD)
@@ -31,10 +36,10 @@ object NameMatcher {
 
     fun match(query: String, candidates: List<String>): MatchResult {
         if (query.length > MAX_NAME_LENGTH) return MatchResult.NotFound
-        val name = normalize(query)
+        val name = matchingForm(normalize(query))
         if (name.isEmpty()) return MatchResult.NotFound
         val normalizedCandidates = candidates.map {
-            if (it.length <= MAX_NAME_LENGTH) normalize(it) else ""
+            if (it.length <= MAX_NAME_LENGTH) matchingForm(normalize(it)) else ""
         }
         val exact = normalizedCandidates.indices.filter { normalizedCandidates[it] == name }
         if (exact.isNotEmpty()) return resultFor(exact)
@@ -65,14 +70,45 @@ object NameMatcher {
             query.length.toDouble() / candidate.length >= 0.75
         ) return 0.93
 
-        var best = similarity(query, candidate)
+        var best = max(similarity(query, candidate), indianEnglishSimilarity(query, candidate))
         if (' ' !in query && query.length >= 6) {
             for (token in candidate.split(' ')) {
                 // A typo in a long first/last name is allowed only at a strong score.
                 best = max(best, similarity(query, token) - 0.015)
+                best = max(best, indianEnglishSimilarity(query, token) - 0.01)
             }
         }
         return best
+    }
+
+    private fun matchingForm(value: String): String = value.split(' ').joinToString(" ") { token ->
+        when (token) {
+            "doctor" -> "dr"
+            else -> token
+        }
+    }
+
+    /** Exact phonetic keys cover common Indian-English name variants without lowering match thresholds. */
+    private fun indianEnglishSimilarity(left: String, right: String): Double {
+        if (left.length < 5 || right.length < 5) return 0.0
+        val leftKey = indianEnglishKey(left)
+        val rightKey = indianEnglishKey(right)
+        if (leftKey == left && rightKey == right) return 0.0
+        return if (leftKey == rightKey) 0.91 else 0.0
+    }
+
+    private fun indianEnglishKey(value: String): String = value.split(' ').joinToString(" ") { token ->
+        if (token.length < 5) {
+            token
+        } else {
+            repeatedI.replace(
+                repeatedE.replace(
+                    repeatedA.replace(token.replace('w', 'v'), "a"),
+                    "i",
+                ),
+                "i",
+            ).replace(terminalTh, "t").replace(terminalSh, "s")
+        }
     }
 
     private fun similarity(left: String, right: String): Double {

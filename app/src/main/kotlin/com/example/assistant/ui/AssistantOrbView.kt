@@ -20,7 +20,7 @@ import kotlin.math.min
 import kotlin.math.sin
 
 /**
- * Aurora's blue/lilac light fields flow within a stationary, softly lit sphere.
+ * Blue, lilac, and pearl light fields react to speech inside a stationary sphere.
  *
  * Android 13+ uses one small procedural shader. Cached gradients provide a softer
  * approximation on older Android and software Canvas. Both draw through the same
@@ -54,15 +54,17 @@ class AssistantOrbView @JvmOverloads constructor(
     private val runtimeRenderer = createRuntimeRenderer()
 
     private var state = State.IDLE
-    private var targetAmplitude = 0f
+    private var targetVoiceEnergy = 0f
     private var targetLow = 0f
     private var targetMid = 0f
     private var targetHigh = 0f
-    private var amplitude = 0f
+    private var voiceEnergy = 0f
     private var low = 0f
     private var mid = 0f
     private var high = 0f
-    private var activity = IDLE_ACTIVITY
+    private var activity = 0f
+    private var visualNoiseFloor = OrbMotionMath.DEFAULT_NOISE_FLOOR
+    private var calibrationFramesRemaining = 0
     private var animationSeconds = 0.0
     private var lastFrameNanos = 0L
     private var centerX = 0f
@@ -80,27 +82,54 @@ class AssistantOrbView @JvmOverloads constructor(
     fun setState(nextState: State) {
         if (state == nextState) return
         state = nextState
-        targetAmplitude = 0f
+        targetVoiceEnergy = 0f
         targetLow = 0f
         targetMid = 0f
         targetHigh = 0f
-        // Preserve phase and eased values so changing state never snaps the light.
+        if (nextState == State.LISTENING) {
+            visualNoiseFloor = OrbMotionMath.DEFAULT_NOISE_FLOOR
+            calibrationFramesRemaining = VISUAL_CALIBRATION_FRAMES
+        }
+        if (nextState == State.IDLE || nextState == State.SUCCESS || nextState == State.ERROR) {
+            voiceEnergy = 0f
+            low = 0f
+            mid = 0f
+            high = 0f
+            activity = 0f
+            lastFrameNanos = 0L
+        }
         invalidate()
     }
 
-    /** Normalized audio level; only active while capture or speech output is running. */
-    fun setAudioAmplitude(level: Float) {
+    /** Raw RMS drives motion; the spectrum changes the internal flow without resizing the sphere. */
+    fun setAudioSignal(rms: Float, low: Float, mid: Float, high: Float) {
         if (!acceptsAudio()) return
-        targetAmplitude = normalized(level)
-        invalidate()
-    }
-
-    /** Bass shifts broad fields; mids affect flow; treble gently shifts the sheen. */
-    fun setAudioSpectrum(low: Float, mid: Float, high: Float) {
-        if (!acceptsAudio()) return
-        targetLow = normalized(low)
-        targetMid = normalized(mid)
-        targetHigh = normalized(high)
+        val safeRms = normalizedRms(rms)
+        if (state == State.LISTENING && calibrationFramesRemaining > 0) {
+            visualNoiseFloor = OrbMotionMath.adaptNoiseFloor(
+                visualNoiseFloor,
+                safeRms,
+                VISUAL_CALIBRATION_RATE,
+            )
+            calibrationFramesRemaining--
+            targetVoiceEnergy = 0f
+            targetLow = 0f
+            targetMid = 0f
+            targetHigh = 0f
+            return
+        }
+        val threshold = OrbMotionMath.noiseThreshold(visualNoiseFloor)
+        if (safeRms < threshold) {
+            visualNoiseFloor = OrbMotionMath.adaptNoiseFloor(
+                visualNoiseFloor,
+                safeRms,
+                VISUAL_NOISE_ADAPT_RATE,
+            )
+        }
+        targetVoiceEnergy = OrbMotionMath.voiceEnergy(safeRms, visualNoiseFloor)
+        targetLow = normalized(low) * targetVoiceEnergy
+        targetMid = normalized(mid) * targetVoiceEnergy
+        targetHigh = normalized(high) * targetVoiceEnergy
         invalidate()
     }
 
@@ -119,19 +148,30 @@ class AssistantOrbView @JvmOverloads constructor(
         super.onDraw(canvas)
         if (orbRadius <= 0f) return
 
-        val animate = isAttachedToWindow && isShown && windowVisibility == VISIBLE &&
+        val motionEnabled = isAttachedToWindow && isShown && windowVisibility == VISIBLE &&
             ValueAnimator.areAnimatorsEnabled()
-        updateAnimationClock(animate)
+        val needsNextFrame = updateAnimationClock(motionEnabled)
 
         canvas.drawCircle(centerX, centerY, orbRadius * GLOW_RADIUS_RATIO, glowPaint)
         val renderer = if (canvas.isHardwareAccelerated) runtimeRenderer else null
         if (renderer != null) {
-            renderer.draw(canvas, spherePaint, centerX, centerY, orbRadius, animationSeconds.toFloat(), activity, low, high)
+            renderer.draw(
+                canvas,
+                spherePaint,
+                centerX,
+                centerY,
+                orbRadius,
+                animationSeconds.toFloat(),
+                activity,
+                low,
+                mid,
+                high,
+            )
         } else {
             drawAurora(canvas)
         }
 
-        if (animate) {
+        if (needsNextFrame) {
             if (canvas.isHardwareAccelerated) {
                 postInvalidateOnAnimation()
             } else {
@@ -163,10 +203,18 @@ class AssistantOrbView @JvmOverloads constructor(
         if (visibility == VISIBLE) invalidate()
     }
 
-    private fun updateAnimationClock(animate: Boolean) {
-        if (!animate) {
+    private fun updateAnimationClock(motionEnabled: Boolean): Boolean {
+        if (!motionEnabled) {
             lastFrameNanos = 0L
-            return
+            return false
+        }
+        val syntheticMotion = state == State.PREVIEW
+        val audioMotion = targetVoiceEnergy > MOTION_EPSILON || voiceEnergy > MOTION_EPSILON
+        val spectrumSettling = low > MOTION_EPSILON || mid > MOTION_EPSILON || high > MOTION_EPSILON
+        if (!syntheticMotion && !audioMotion && !spectrumSettling) {
+            lastFrameNanos = 0L
+            activity = 0f
+            return false
         }
         val now = SystemClock.elapsedRealtimeNanos()
         val delta = if (lastFrameNanos == 0L) 0f else {
@@ -174,80 +222,77 @@ class AssistantOrbView @JvmOverloads constructor(
         }
         lastFrameNanos = now
 
-        amplitude = easeAudio(amplitude, targetAmplitude, delta)
+        voiceEnergy = easeAudio(voiceEnergy, targetVoiceEnergy, delta)
         low = easeAudio(low, targetLow, delta)
         mid = easeAudio(mid, targetMid, delta)
         high = easeAudio(high, targetHigh, delta)
         val decay = delta * AUDIO_TARGET_DECAY_PER_SECOND
-        targetAmplitude = (targetAmplitude - decay).coerceAtLeast(0f)
+        targetVoiceEnergy = (targetVoiceEnergy - decay).coerceAtLeast(0f)
         targetLow = (targetLow - decay).coerceAtLeast(0f)
         targetMid = (targetMid - decay).coerceAtLeast(0f)
         targetHigh = (targetHigh - decay).coerceAtLeast(0f)
 
         val targetActivity = when (state) {
-            State.IDLE, State.SUCCESS, State.ERROR -> IDLE_ACTIVITY
+            State.IDLE, State.SUCCESS, State.ERROR -> 0f
             State.PREVIEW -> 0.42f + wave(animationSeconds * 1.9) * 0.12f
-            State.LISTENING -> 0.24f + amplitude * 0.22f + mid * 0.1f
-            State.PROCESSING -> 0.36f
-            State.SPEAKING -> 0.3f + amplitude * 0.24f + mid * 0.12f
+            State.LISTENING, State.SPEAKING -> voiceEnergy
+            State.PROCESSING -> voiceEnergy
         }
         activity += (targetActivity - activity) * (delta * ACTIVITY_EASING_PER_SECOND).coerceAtMost(1f)
-        val speed = when (state) {
-            State.IDLE, State.SUCCESS, State.ERROR -> 0.32f
-            State.PREVIEW -> 1.25f
-            State.LISTENING -> 0.62f
-            State.PROCESSING -> 0.82f
-            State.SPEAKING -> 0.74f
+        val speed = when {
+            syntheticMotion -> PREVIEW_SPEED
+            else -> voiceEnergy * (VOICE_BASE_SPEED + voiceEnergy * VOICE_EXTRA_SPEED + mid * MID_SPEED)
         }
-        animationSeconds += delta * (speed + amplitude * 0.55f + mid * 0.25f)
+        animationSeconds += delta * speed
+        return syntheticMotion || targetVoiceEnergy > MOTION_EPSILON || voiceEnergy > MOTION_EPSILON ||
+            low > MOTION_EPSILON || mid > MOTION_EPSILON || high > MOTION_EPSILON
     }
 
     private fun drawAurora(canvas: Canvas) {
         val time = animationSeconds
-        val drift = 0.12f + activity * 0.3f
-        // Independent paths continually change the blend without resetting a timeline.
-        drawField(canvas, baseShader, 0f, 0f, 1f, 1f, wave(time * 0.19) * 9f)
+        val drift = activity * 0.58f
+        drawField(canvas, baseShader, 0f, 0f, 1f, 1f, wave(time * 0.42) * (4f + activity * 14f))
         drawField(
             canvas, cyanShader,
-            -0.48f + wave(time * 0.61) * drift,
-            -0.35f + wave(time * 0.43 + 1.1) * drift,
-            1.38f + low * 0.12f, 1.02f + wave(time * 0.37) * 0.08f,
-            -24f + wave(time * 0.31) * 18f,
+            -0.48f + wave(time * 1.31) * drift,
+            -0.35f + wave(time * 0.91 + 1.1) * drift,
+            1.38f + low * 0.22f, 1.02f + wave(time * 1.07) * activity * 0.16f,
+            -24f + wave(time * 0.83) * (12f + activity * 34f),
         )
         drawField(
             canvas, blueShader,
-            -0.38f + wave(time * 0.47 + 2.3) * drift,
-            0.48f + wave(time * 0.59) * drift,
-            1.28f, 0.94f + low * 0.14f,
-            28f + wave(time * 0.29) * 20f,
+            -0.38f + wave(time * 1.03 + 2.3) * drift,
+            0.48f + wave(time * 1.27) * drift,
+            1.28f + mid * 0.12f, 0.94f + low * 0.2f,
+            28f + wave(time * 0.71) * (14f + activity * 38f),
         )
         drawField(
             canvas, lilacShader,
-            0.52f + wave(time * 0.53 + 1.6) * drift,
-            -0.25f + wave(time * 0.41 + 3.4) * drift,
-            1.18f + wave(time * 0.67) * 0.1f, 1.06f + low * 0.08f,
-            -38f + wave(time * 0.23) * 24f,
+            0.52f + wave(time * 1.17 + 1.6) * drift,
+            -0.25f + wave(time * 0.89 + 3.4) * drift,
+            1.18f + wave(time * 1.43) * activity * 0.18f, 1.06f + low * 0.14f,
+            -38f + wave(time * 0.67) * (16f + activity * 42f),
         )
         drawField(
             canvas, violetShader,
-            0.36f + wave(time * 0.39 + 4.1) * drift,
-            0.62f + wave(time * 0.57 + 0.7) * drift,
-            1.06f, 0.88f + wave(time * 0.51) * 0.1f,
-            15f + wave(time * 0.33) * 26f,
+            0.36f + wave(time * 0.97 + 4.1) * drift,
+            0.62f + wave(time * 1.21 + 0.7) * drift,
+            1.06f + high * 0.1f, 0.88f + wave(time * 1.13) * activity * 0.18f,
+            15f + wave(time * 0.79) * (18f + activity * 44f),
         )
         drawField(
             canvas, pearlShader,
-            -0.24f + wave(time * 0.37 + 0.4) * 0.12f,
-            -0.42f + wave(time * 0.49 + 1.2) * 0.1f,
-            1.1f + activity * 0.08f, 0.72f,
-            -32f + wave(time * 0.27) * 15f,
+            -0.24f + wave(time * 0.93 + 0.4) * drift * 0.55f,
+            -0.42f + wave(time * 1.19 + 1.2) * drift * 0.48f,
+            1.1f + activity * 0.18f, 0.72f + mid * 0.08f,
+            -32f + wave(time * 0.73) * (10f + activity * 26f),
         )
         drawField(
             canvas, sheenShader,
-            wave(time * 0.31) * 0.24f,
-            -0.06f + wave(time * 0.43) * 0.18f,
+            wave(time * 1.11) * drift * 0.6f,
+            -0.06f + wave(time * 1.37) * drift * 0.5f,
             1.2f, 1f,
-            -34f + wave(time * 0.35) * (13f + high * 8f),
+            -34f + wave(time * 0.95) * (8f + activity * 30f + high * 10f),
         )
         // Broad shading gives depth without a rim, outline, or ring.
         spherePaint.shader = depthShader
@@ -347,11 +392,13 @@ class AssistantOrbView @JvmOverloads constructor(
             time: Float,
             activity: Float,
             low: Float,
+            mid: Float,
             high: Float,
         ) {
             shader.setFloatUniform("time", time)
             shader.setFloatUniform("activity", activity)
             shader.setFloatUniform("bass", low)
+            shader.setFloatUniform("mid", mid)
             shader.setFloatUniform("treble", high)
             paint.shader = shader
             canvas.drawCircle(x, y, radius, paint)
@@ -362,6 +409,8 @@ class AssistantOrbView @JvmOverloads constructor(
     private fun acceptsAudio(): Boolean = state == State.LISTENING || state == State.SPEAKING
 
     private fun normalized(value: Float): Float = if (value.isFinite()) value.coerceIn(0f, 1f) else 0f
+
+    private fun normalizedRms(value: Float): Float = if (value.isFinite()) value.coerceIn(0f, 1f) else 0f
 
     private fun easeAudio(current: Float, target: Float, delta: Float): Float {
         val rate = if (target > current) AUDIO_ATTACK_PER_SECOND else AUDIO_RELEASE_PER_SECOND
@@ -379,14 +428,21 @@ class AssistantOrbView @JvmOverloads constructor(
     private companion object {
         const val ORB_RADIUS_RATIO = 0.35f
         const val GLOW_RADIUS_RATIO = 1.32f
-        const val IDLE_ACTIVITY = 0.08f
         const val SOFTWARE_FRAME_DELAY_MS = 33L
         const val NANOS_PER_SECOND = 1_000_000_000f
         const val MAX_FRAME_DELTA_SECONDS = 0.05f
-        const val AUDIO_ATTACK_PER_SECOND = 14f
-        const val AUDIO_RELEASE_PER_SECOND = 4f
-        const val AUDIO_TARGET_DECAY_PER_SECOND = 0.8f
-        const val ACTIVITY_EASING_PER_SECOND = 3.5f
+        const val AUDIO_ATTACK_PER_SECOND = 20f
+        const val AUDIO_RELEASE_PER_SECOND = 5.5f
+        const val AUDIO_TARGET_DECAY_PER_SECOND = 1.7f
+        const val ACTIVITY_EASING_PER_SECOND = 12f
+        const val MOTION_EPSILON = 0.006f
+        const val VISUAL_CALIBRATION_FRAMES = 12
+        const val VISUAL_CALIBRATION_RATE = 0.25f
+        const val VISUAL_NOISE_ADAPT_RATE = 0.035f
+        const val PREVIEW_SPEED = 1.25f
+        const val VOICE_BASE_SPEED = 2.1f
+        const val VOICE_EXTRA_SPEED = 3.2f
+        const val MID_SPEED = 0.9f
 
         // A broad flowing color field: no textures, ray marching, rings, or particles.
         // Written for Friday; references informed visual direction, not source code.
@@ -396,6 +452,7 @@ class AssistantOrbView @JvmOverloads constructor(
             uniform float time;
             uniform float activity;
             uniform float bass;
+            uniform float mid;
             uniform float treble;
             layout(color) uniform half4 blue;
             layout(color) uniform half4 cyan;
@@ -425,16 +482,28 @@ class AssistantOrbView @JvmOverloads constructor(
                 float2 p = (position - center) / radius;
                 float depth = sqrt(max(0.0, 1.0 - dot(p, p)));
                 float2 surface = p / (1.0 + depth * 0.38);
-                float drift = sin(time * 0.31) * 0.06;
-                float broadNoise = noise(surface * 2.5 + float2(time * 0.13, -time * 0.09)) - 0.5;
-                float bend = sin(surface.x * 3.5 + time * 0.48) * 0.16
-                    + sin(surface.x * 1.8 - time * 0.29 + 1.3) * 0.08
-                    + broadNoise * (0.13 + activity * 0.07);
+                float drift = sin(time * 0.73) * activity * 0.12;
+                float2 noiseFlow = float2(
+                    time * (0.10 + activity * 0.42),
+                    -time * (0.07 + activity * 0.31)
+                );
+                float broadNoise = noise(surface * (2.35 + activity * 0.85) + noiseFlow) - 0.5;
+                float bend = sin(surface.x * (3.4 + bass * 1.4) + time * (0.42 + activity * 1.12))
+                        * (0.10 + activity * 0.20)
+                    + sin(surface.x * 1.8 - time * (0.31 + activity * 0.84) + 1.3)
+                        * (0.06 + mid * 0.14)
+                    + broadNoise * (0.11 + activity * 0.19);
                 float flowY = surface.y + surface.x * 0.26 - bend - drift;
-                float width = 0.30 + activity * 0.035 + bass * 0.045;
+                float width = 0.27 + activity * 0.10 + bass * 0.055;
                 float band = exp(-flowY * flowY / (width * width));
+                float secondY = surface.y - surface.x * 0.34
+                    + sin(surface.y * 3.0 - time * (0.38 + activity * 0.96) + 2.2)
+                        * (0.07 + activity * 0.14)
+                    + broadNoise * (0.08 + mid * 0.12);
+                float secondBand = exp(-secondY * secondY / (0.20 + activity * 0.07));
                 float colorPosition = clamp(
-                    0.5 + surface.x * 0.62 + sin(time * 0.23) * 0.1 + broadNoise * 0.09,
+                    0.5 + surface.x * 0.62 + sin(time * (0.24 + activity * 0.54)) * 0.1
+                        + broadNoise * (0.08 + activity * 0.10),
                     0.0, 1.0
                 );
                 half3 flowColor = mix(blue.rgb, cyan.rgb, smoothstep(0.02, 0.45, colorPosition));
@@ -442,9 +511,10 @@ class AssistantOrbView @JvmOverloads constructor(
                 half3 body = mix(deep.rgb, blue.rgb, 0.30 + depth * 0.16);
                 body = mix(body, lilac.rgb, 0.16 * smoothstep(-0.5, 0.9, surface.x));
                 half3 color = mix(body, flowColor, 0.93 * band);
-                float silkY = (flowY + 0.065) / 0.105;
+                color = mix(color, lilac.rgb, secondBand * activity * 0.28);
+                float silkY = (flowY + 0.065) / (0.105 + treble * 0.035);
                 float silk = exp(-silkY * silkY);
-                color = mix(color, pearl.rgb, silk * (0.10 + treble * 0.035));
+                color = mix(color, pearl.rgb, silk * (0.10 + activity * 0.11 + treble * 0.06));
                 float2 lightPosition = p - float2(-0.30, -0.40);
                 float light = exp(-dot(lightPosition, lightPosition) * 4.5);
                 color = mix(color, pearl.rgb, light * 0.21);

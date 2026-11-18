@@ -1,0 +1,18 @@
+[
+  {
+    "file": "private-audio/call-punith.wav",
+    "expected": {
+      "type": "action",
+      "action": "call_contact",
+      "args": { "name": "Punith" }
+    }
+  },
+  {
+    "file": "private-audio/timer-five-minutes.wav",
+    "expected": {
+      "type": "action",
+      "action": "set_timer",
+      "args": { "seconds": 300 }
+    }
+  }
+]

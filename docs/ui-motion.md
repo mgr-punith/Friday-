@@ -6,14 +6,14 @@ On API 33+ hardware canvases, a small AGSL shader compresses coordinates across 
 
 | State | Visual behavior | Meaning |
 |---|---|---|
-| Idle | Slow, subtle internal gradient flow | Available, not recording |
-| Preview | Stronger internal flow with a visible preview message | UI demonstration only; microphone is off |
-| Listening | Internal flow responds to normalized audio input | Reserved for active microphone capture |
-| Processing | Slightly more active internal flow | Reserved for command interpretation |
+| Idle | Frozen light fields | Available, not recording |
+| Preview | Stronger internal flow with a visible preview message | Optional UI demonstration; microphone is off |
+| Listening | Quiet frames stay frozen. Speech energy and low/mid/high balance drive the internal flow. | Active microphone capture after a tap |
+| Processing | The last speech motion settles into a frozen frame. | Backend request and local action preparation |
 | Speaking | Gentle internal movement responds to audio input | Reserved for spoken confirmations |
-| Success | Returns to calm flow; a short confirmation supplies meaning | Reserved for an action Android confirmed |
-| Error | Returns to calm flow; a short recovery message supplies meaning | Reserved for an action that failed or needs recovery |
+| Success | Frozen light fields; a short confirmation supplies meaning | Reserved for an action Android confirmed |
+| Error | Frozen light fields; a short recovery message supplies meaning | Reserved for an action that failed or needs recovery |
 
-Only Idle and Preview are currently connected to the home screen. The audio amplitude and spectrum hooks prepare the component for future voice integration; they do not implement microphone capture or wake detection. The interface must never show the listening state before microphone capture starts or claim an action before Android confirms it.
+Idle, Listening, Processing, Success, and Error are connected to the visible app voice loop. Raw microphone RMS crosses an adaptive room-noise gate before it can move the orb. Low, mid, and high energy alter the shape of that movement. Friday reports success only after Android accepts the requested action. Wake detection remains separate and is not implemented in this milestone.
 
-Animation pauses while the view or app is hidden or detached. The clock resumes without advancing through the hidden interval. Disabling system animators freezes nonessential motion while retaining text feedback. State transitions adjust internal movement without resizing or shifting the sphere.
+Animation pauses while the view or app is hidden or detached. The clock resumes without advancing through the hidden interval. Android's reduced-motion setting freezes the orb while text continues to show status. State transitions never resize or shift the sphere.

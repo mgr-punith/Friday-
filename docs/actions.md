@@ -10,10 +10,10 @@ This is the v1 action contract. The Android action test screen runs these action
 | `set_timer` | `seconds`: positive integer | Send `ACTION_SET_TIMER` to the clock app with skip-UI requested. |
 | `open_app` | `name`: nonempty string | Match launcher labels locally and start the selected app. |
 | `close_app` | optional `name` | Go to Home. Android does not allow Friday to close another app. |
-| `set_ringer_mode` | `mode`: `silent`, `vibrate`, `normal` | Change the ringer mode and check the resulting value. Silent/DND transitions require notification policy access. |
+| `set_ringer_mode` | `mode`: `silent`, `vibrate`, `normal` | Change to vibrate or normal and check the resulting value. Friday does not request Do Not Disturb access, so `silent` returns `Silent mode is unavailable. Try vibrate mode.` |
 
 All actions return `Success(confirmation)`, `NeedsPermission(which)`, or `Failed(reason)`. Missing permissions, unavailable handlers, invalid input, and OEM failures produce feedback rather than a crash. Contacts and launcher labels never leave the phone.
 
 Clock intents cannot prove the other app saved an alarm or timer, so confirmations say “Alarm request sent…” and “Timer request sent…”. Calling says “Calling…” after Android starts the call UI; it does not promise a connected call. Going Home says “Went to home screen”.
 
-The test screen asks before placing a call. The backend validates AI-selected actions against this contract. Voice recording, backend networking in the app, and wake-phrase detection are not connected yet.
+The test screen and voice screen ask before placing a call. The backend validates Gemini-selected actions against this contract. The visible app records and sends a command after the user taps the microphone. Wake-phrase detection remains out of this milestone.
