@@ -14,6 +14,8 @@ npm run verify
 
 `npm run verify` checks the Vercel route map and function settings without a Vercel token. Vercel runs the platform build when it creates a preview or production deployment from Git.
 
+The project uses `backend/public` for a small root page. Vercel deploys the routes in `backend/api` as Functions.
+
 `npm run eval` needs a Gemini key. Copy `.env.example` to `.env`, replace the fake value, run the evaluation, then keep `.env` outside Git.
 
 ## Vercel project

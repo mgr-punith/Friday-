@@ -4,6 +4,7 @@ import path from "node:path";
 const EXPECTED_SCHEMA = "https://openapi.vercel.sh/vercel.json";
 const EXPECTED_REGION = "bom1";
 const FUNCTION_ENTRY = "api/index.ts";
+const OUTPUT_DIRECTORY = "public";
 const EXPECTED_REWRITES = new Map([
   ["/v1/register", "/api/index?fridayRoute=register"],
   ["/v1/warm", "/api/index?fridayRoute=warm"],
@@ -12,6 +13,12 @@ const EXPECTED_REWRITES = new Map([
 
 export function validateVercelConfig(config, projectDirectory) {
   requireValue(config?.$schema === EXPECTED_SCHEMA, "vercel_schema_mismatch");
+  requireValue(config.framework === null, "vercel_framework_must_be_other");
+  requireValue(config.outputDirectory === OUTPUT_DIRECTORY, "vercel_output_directory_invalid");
+  requireValue(
+    fs.existsSync(path.join(projectDirectory, OUTPUT_DIRECTORY, "index.html")),
+    "vercel_output_source_missing"
+  );
   requireValue(
     Array.isArray(config.regions) && config.regions.length === 1 && config.regions[0] === EXPECTED_REGION,
     "vercel_region_must_be_bom1"
