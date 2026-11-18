@@ -7,7 +7,7 @@ await fs.rm("dist", { recursive: true, force: true });
 
 await Promise.all([
   build("src/handler.ts", "dist/handler.js"),
-  build("api/index.ts", "dist/vercel.js")
+  build("src/vercel/index.ts", "dist/vercel.js")
 ]);
 
 for (const [label, file] of [["Lambda", "dist/handler.js"], ["Vercel", "dist/vercel.js"]]) {

@@ -12,7 +12,7 @@ function validConfig() {
     outputDirectory: "public",
     regions: ["bom1"],
     functions: {
-      "api/index.ts": {
+      "api/index.mjs": {
         maxDuration: 15,
         supportsCancellation: true
       }
@@ -29,7 +29,10 @@ function projectDirectory() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "friday-vercel-config-"));
   fs.mkdirSync(path.join(directory, "api"));
   fs.mkdirSync(path.join(directory, "public"));
-  fs.writeFileSync(path.join(directory, "api/index.ts"), "export default {}\n");
+  fs.writeFileSync(
+    path.join(directory, "api/index.mjs"),
+    'import vercelBundle from "../dist/vercel.js";\nexport default vercelBundle.default;\n'
+  );
   fs.writeFileSync(path.join(directory, "public/index.html"), "<!doctype html>\n");
   return directory;
 }
@@ -62,4 +65,18 @@ test("rejects a public route mapped to the wrong handler route", (context) => {
   const config = validConfig();
   config.rewrites[2].destination = "/api/index?fridayRoute=warm";
   assert.throws(() => validateVercelConfig(config, directory), /vercel_rewrite_mapping_invalid/);
+});
+
+test("rejects a TypeScript file in Vercel's API directory", (context) => {
+  const directory = projectDirectory();
+  context.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(directory, "api/index.ts"), "export default {}\n");
+  assert.throws(() => validateVercelConfig(validConfig(), directory), /vercel_typescript_function_entry_forbidden/);
+});
+
+test("rejects a JavaScript entry that does not load the built bundle", (context) => {
+  const directory = projectDirectory();
+  context.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(directory, "api/index.mjs"), "export default {}\n");
+  assert.throws(() => validateVercelConfig(validConfig(), directory), /vercel_function_bundle_import_missing/);
 });

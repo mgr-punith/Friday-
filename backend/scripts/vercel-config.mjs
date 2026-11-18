@@ -3,7 +3,8 @@ import path from "node:path";
 
 const EXPECTED_SCHEMA = "https://openapi.vercel.sh/vercel.json";
 const EXPECTED_REGION = "bom1";
-const FUNCTION_ENTRY = "api/index.ts";
+const FUNCTION_ENTRY = "api/index.mjs";
+const TYPESCRIPT_FUNCTION_ENTRY = "api/index.ts";
 const OUTPUT_DIRECTORY = "public";
 const EXPECTED_REWRITES = new Map([
   ["/v1/register", "/api/index?fridayRoute=register"],
@@ -29,6 +30,14 @@ export function validateVercelConfig(config, projectDirectory) {
   requireValue(functionConfig.maxDuration === 15, "vercel_function_duration_must_be_15");
   requireValue(functionConfig.supportsCancellation === true, "vercel_function_cancellation_required");
   requireValue(fs.existsSync(path.join(projectDirectory, FUNCTION_ENTRY)), "vercel_function_source_missing");
+  requireValue(
+    fs.readFileSync(path.join(projectDirectory, FUNCTION_ENTRY), "utf8").includes('../dist/vercel.js'),
+    "vercel_function_bundle_import_missing"
+  );
+  requireValue(
+    !fs.existsSync(path.join(projectDirectory, TYPESCRIPT_FUNCTION_ENTRY)),
+    "vercel_typescript_function_entry_forbidden"
+  );
 
   requireValue(Array.isArray(config.rewrites), "vercel_rewrites_missing");
   requireValue(config.rewrites.length === EXPECTED_REWRITES.size, "vercel_rewrite_count_invalid");
