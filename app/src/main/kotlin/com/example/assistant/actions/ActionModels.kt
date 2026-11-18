@@ -20,6 +20,16 @@ enum class RequiredAccess {
     MICROPHONE,
     CONTACTS,
     PHONE,
+    NOTIFICATION_POLICY,
+}
+
+object RingerModePolicy {
+    fun requiredAccess(mode: RingerMode, notificationPolicyGranted: Boolean): RequiredAccess? =
+        if (mode == RingerMode.SILENT && !notificationPolicyGranted) {
+            RequiredAccess.NOTIFICATION_POLICY
+        } else {
+            null
+        }
 }
 
 sealed interface ActionResult {

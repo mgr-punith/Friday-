@@ -2,6 +2,7 @@ package com.example.assistant.actions
 
 import android.Manifest
 import android.app.Activity
+import android.app.NotificationManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -276,14 +277,16 @@ class AndroidActionExecutor(private val activity: Activity) {
     }
 
     private fun setRingerMode(mode: RingerMode): ActionResult {
-        if (mode == RingerMode.SILENT) {
-            return ActionResult.Failed("Silent mode is unavailable. Try vibrate mode.")
-        }
+        val notificationManager = activity.getSystemService(NotificationManager::class.java)
+        RingerModePolicy.requiredAccess(
+            mode,
+            notificationPolicyGranted = notificationManager?.isNotificationPolicyAccessGranted == true,
+        )?.let { return ActionResult.NeedsPermission(it) }
         val audio = activity.getSystemService(AudioManager::class.java)
             ?: return ActionResult.Failed("Sound controls unavailable")
         if (audio.isVolumeFixed) return ActionResult.Failed("Sound mode can't be changed")
         val requested = when (mode) {
-            RingerMode.SILENT -> error("Silent mode is handled before changing Android state")
+            RingerMode.SILENT -> AudioManager.RINGER_MODE_SILENT
             RingerMode.VIBRATE -> AudioManager.RINGER_MODE_VIBRATE
             RingerMode.NORMAL -> AudioManager.RINGER_MODE_NORMAL
         }
@@ -291,7 +294,7 @@ class AndroidActionExecutor(private val activity: Activity) {
         if (audio.ringerMode != requested) return ActionResult.Failed("Sound mode didn't change")
         return ActionResult.Success(
             when (mode) {
-                RingerMode.SILENT -> error("Silent mode is handled before changing Android state")
+                RingerMode.SILENT -> "Silent mode on"
                 RingerMode.VIBRATE -> "Vibrate mode on"
                 RingerMode.NORMAL -> "Normal sound mode on"
             },
@@ -303,7 +306,14 @@ class AndroidActionExecutor(private val activity: Activity) {
             ?: ActionResult.Failed("Calling unavailable")
         is PhoneAction.CallNumber -> callPermissionFailure(needsContacts = false)
             ?: ActionResult.Failed("Calling unavailable")
-        is PhoneAction.SetRingerMode -> ActionResult.Failed("Sound mode can't be changed")
+        is PhoneAction.SetRingerMode -> {
+            val notificationManager = activity.getSystemService(NotificationManager::class.java)
+            RingerModePolicy.requiredAccess(
+                action.mode,
+                notificationPolicyGranted = notificationManager?.isNotificationPolicyAccessGranted == true,
+            )?.let { ActionResult.NeedsPermission(it) }
+                ?: ActionResult.Failed("Sound mode can't be changed")
+        }
         else -> ActionResult.Failed("Action unavailable")
     }
 

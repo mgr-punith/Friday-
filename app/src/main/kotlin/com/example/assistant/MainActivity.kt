@@ -179,7 +179,7 @@ class MainActivity : Activity() {
             AppUi.navigationButton(
                 this,
                 "Permissions",
-                "Microphone, contacts and calls",
+                "Microphone, contacts, calls and silent mode",
             ) { startActivity(Intent(this, PermissionsActivity::class.java)) },
             linearParams(bottom = 20),
         )
@@ -386,6 +386,7 @@ class MainActivity : Activity() {
             RequiredAccess.MICROPHONE -> "Allow microphone access to use voice input."
             RequiredAccess.CONTACTS -> "Allow contacts access to find a person."
             RequiredAccess.PHONE -> "Allow phone access to place a call."
+            RequiredAccess.NOTIFICATION_POLICY -> "Allow Silent mode access in Android Settings."
         }
         detail.setTextColor(getColor(R.color.text_primary))
         permissionButton.visibility = View.VISIBLE

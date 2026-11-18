@@ -332,6 +332,7 @@ class ActionDebugActivity : Activity() {
                 RequiredAccess.MICROPHONE -> "Allow microphone access to use voice input."
                 RequiredAccess.CONTACTS -> "Allow contacts access to find a person."
                 RequiredAccess.PHONE -> "Allow phone access to place a call."
+                RequiredAccess.NOTIFICATION_POLICY -> "Allow Silent mode access in Android Settings."
             }
         }
         showFeedback(text, if (result is ActionResult.Failed) R.color.error else R.color.text_primary)
@@ -386,6 +387,6 @@ class ActionDebugActivity : Activity() {
         TIMER("Set a timer", "Choose a duration in seconds"),
         APP("Open an app", "Find an installed app by name"),
         HOME("Go to Home", "Return to your launcher"),
-        SOUND("Sound mode", "Normal or vibrate"),
+        SOUND("Sound mode", "Silent, vibrate or normal"),
     }
 }

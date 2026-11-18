@@ -10,7 +10,7 @@ This is the v1 action contract. The Android action test screen runs these action
 | `set_timer` | `seconds`: positive integer | Send `ACTION_SET_TIMER` to the clock app with skip-UI requested. |
 | `open_app` | `name`: nonempty string | Match launcher labels locally and start the selected app. |
 | `close_app` | optional `name` | Go to Home. Android does not allow Friday to close another app. |
-| `set_ringer_mode` | `mode`: `silent`, `vibrate`, `normal` | Change to vibrate or normal and check the resulting value. Friday does not request Do Not Disturb access, so `silent` returns `Silent mode is unavailable. Try vibrate mode.` |
+| `set_ringer_mode` | `mode`: `silent`, `vibrate`, `normal` | Change the ringer mode and check the resulting value. Silent mode requires Notification Policy access from Android Settings. |
 
 All actions return `Success(confirmation)`, `NeedsPermission(which)`, or `Failed(reason)`. Missing permissions, unavailable handlers, invalid input, and OEM failures produce feedback rather than a crash. Contacts and launcher labels never leave the phone.
 
