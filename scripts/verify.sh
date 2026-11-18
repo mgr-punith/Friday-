@@ -4,6 +4,13 @@ set -euo pipefail
 friday_repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd -- "$friday_repo_dir"
 
+if rg -n --glob '*.{kt,java,kts,xml}' \
+    'android\.speech\.SpeechRecognizer|com\.google\.android\.gms|com\.google\.firebase|com\.google\.mlkit|software\.amazon\.awssdk|com\.amazonaws|material-icons-extended' \
+    app/src app/build.gradle.kts; then
+    printf '%s\n' 'The Android app contains a forbidden device dependency or API.' >&2
+    exit 1
+fi
+
 ./gradlew assembleDebug assembleRelease test lintDebug --console=plain "$@"
 
 shopt -s nullglob

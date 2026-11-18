@@ -2,6 +2,7 @@ package com.example.assistant.voice
 
 import com.example.assistant.actions.PhoneAction
 import com.example.assistant.actions.RingerMode
+import com.example.assistant.entry.EntryPointPolicy
 import com.example.assistant.ui.OrbMotionMath
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -245,6 +246,79 @@ object VoiceLogicTests {
         )
         expect(VoiceCommandResponse.Unsupported.uiOutcome() == VoiceUiOutcome.UNSUPPORTED, "Unsupported reaches the feature popup path")
         expect(normal.uiOutcome() == VoiceUiOutcome.ACTION, "Valid action reaches Android execution")
+        expect(
+            EntryPointPolicy.shouldAutoListen(requested = true, setupSeen = true, microphoneGranted = true),
+            "An enabled entry point starts listening after setup",
+        )
+        expect(
+            !EntryPointPolicy.shouldAutoListen(requested = true, setupSeen = false, microphoneGranted = true),
+            "An entry point waits for setup",
+        )
+        expect(
+            !EntryPointPolicy.shouldAutoListen(requested = true, setupSeen = true, microphoneGranted = false),
+            "An entry point waits for microphone access",
+        )
+        expect(
+            !EntryPointPolicy.shouldAutoListen(requested = false, setupSeen = true, microphoneGranted = true),
+            "A normal launch stays idle",
+        )
+        expect(EntryPointPolicy.shouldRequestSetup(setupSeen = false, promptOpen = false), "First entry-point launch opens setup")
+        expect(!EntryPointPolicy.shouldRequestSetup(setupSeen = false, promptOpen = true), "An open setup screen is not launched twice")
+        expect(!EntryPointPolicy.shouldRequestSetup(setupSeen = true, promptOpen = false), "Completed setup is not reopened")
+        expect(
+            EntryPointPolicy.shouldRestoreReadyNotification(enabled = true, notificationsAllowed = true),
+            "An enabled Ready notification is restored after the app reopens",
+        )
+        expect(
+            !EntryPointPolicy.shouldRestoreReadyNotification(enabled = true, notificationsAllowed = false),
+            "A blocked notification is not posted",
+        )
+        expect(
+            EntryPointPolicy.readyNotificationState(enabled = false, notificationsAllowed = false) ==
+                EntryPointPolicy.ReadyNotificationState.OFF,
+            "A disabled Ready notification stays off",
+        )
+        expect(
+            EntryPointPolicy.readyNotificationState(enabled = true, notificationsAllowed = true) ==
+                EntryPointPolicy.ReadyNotificationState.ON,
+            "An enabled and allowed Ready notification is on",
+        )
+        expect(
+            EntryPointPolicy.readyNotificationState(enabled = true, notificationsAllowed = false) ==
+                EntryPointPolicy.ReadyNotificationState.BLOCKED,
+            "A revoked notification permission is shown as blocked",
+        )
+        expect(
+            EntryPointPolicy.restoresReadyNotification(android.content.Intent.ACTION_LOCKED_BOOT_COMPLETED),
+            "Locked boot restores the Ready notification",
+        )
+        expect(
+            EntryPointPolicy.restoresReadyNotification(android.content.Intent.ACTION_BOOT_COMPLETED),
+            "Unlocked boot restores the Ready notification",
+        )
+        expect(
+            EntryPointPolicy.restoresReadyNotification(android.content.Intent.ACTION_MY_PACKAGE_REPLACED),
+            "App updates restore the Ready notification",
+        )
+        expect(!EntryPointPolicy.restoresReadyNotification(null), "Unrelated broadcasts do not restore the notification")
+        expect(
+            VoiceFailureCopy.forOutcome(VoiceUiOutcome.TIMEOUT) == "The server took too long. Try again.",
+            "A provider timeout names the cause",
+        )
+        expect(
+            VoiceFailureCopy.forConnectionFailure("registration_failed", offline = false) ==
+                "Friday couldn't start. Try again.",
+            "A registration failure does not look like a speech error",
+        )
+        expect(
+            VoiceFailureCopy.forConnectionFailure("offline", offline = true) == "No internet",
+            "An offline request keeps the direct network message",
+        )
+        expect(!EntryPointPolicy.supportsTileSubtitle(28), "API 28 skips the tile subtitle API")
+        expect(EntryPointPolicy.supportsTileSubtitle(29), "API 29 enables tile subtitles")
+        expect(!EntryPointPolicy.usesPendingIntentTileLaunch(33), "API 33 uses the legacy tile launch API")
+        expect(EntryPointPolicy.usesPendingIntentTileLaunch(34), "API 34 uses PendingIntent tile launch")
+        expect(EntryPointPolicy.RECOGNITION_ERROR_CLIENT == 5, "Assistant compatibility service reports a client error")
         expect(
             VoiceCommandResponse.Error(VoiceCommandResponse.Reason.BUSY).uiOutcome() == VoiceUiOutcome.BUSY,
             "Busy response reaches retry feedback",

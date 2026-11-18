@@ -69,6 +69,7 @@ class PermissionsActivity : Activity() {
         content.addView(
             AppUi.button(this, "Done", AppUi.ButtonTone.PRIMARY) {
                 getSharedPreferences("friday", MODE_PRIVATE).edit().putBoolean("setup_seen", true).apply()
+                setResult(RESULT_OK)
                 finish()
             },
             AppUi.params(this, 8),

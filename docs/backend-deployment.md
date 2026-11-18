@@ -47,6 +47,7 @@ Add each value through Vercel project settings. Apply them to Production and Pre
 - `JWT_SIGNING_KEY`: random value with at least 32 characters
 - `GEMINI_MODEL`: `gemini-3.5-flash-lite`
 - `GEMINI_THINKING_LEVEL`: `MINIMAL`
+- `GEMINI_TIMEOUT_MS`: `10000`
 
 Do not send these values in chat, store them in GitHub, or commit them. Friday reads them from Vercel's encrypted environment at function start.
 
