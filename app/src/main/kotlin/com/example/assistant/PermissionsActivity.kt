@@ -2,6 +2,7 @@ package com.example.assistant
 
 import android.Manifest
 import android.app.Activity
+import android.app.NotificationManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -14,6 +15,7 @@ import com.example.assistant.ui.FridayDialog
 /** Explicit disclosures always precede sensitive system permission prompts. */
 class PermissionsActivity : Activity() {
     private val permissionButtons = linkedMapOf<String, Button>()
+    private lateinit var soundAccessButton: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -55,6 +57,14 @@ class PermissionsActivity : Activity() {
             permissionButtons[permissionInfo.permission] = button
             content.addView(button, AppUi.params(this, 8))
         }
+        soundAccessButton = AppUi.navigationButton(
+            this,
+            "Silent mode",
+            "Required by Android to change ringer mode",
+        ) {
+            showSoundAccessDisclosure()
+        }
+        content.addView(soundAccessButton, AppUi.params(this, 8))
 
         content.addView(
             AppUi.button(this, "Done", AppUi.ButtonTone.PRIMARY) {
@@ -90,6 +100,19 @@ class PermissionsActivity : Activity() {
         }
     }
 
+    private fun showSoundAccessDisclosure() {
+        if (hasNotificationPolicyAccess()) return
+        FridayDialog.show(
+            this,
+            "Silent mode access",
+            "Android requires this settings access before Friday can switch silent mode on. Friday uses it only when you ask to change sound mode.",
+            positive = "Open settings",
+            negative = "Not now",
+        ) {
+            openSettings(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
+        }
+    }
+
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == PERMISSION_REQUEST) updatePermissionLabels()
@@ -109,7 +132,15 @@ class PermissionsActivity : Activity() {
                 "${info.second} · ${if (allowed) "Allowed" else "Not allowed"}",
             )
         }
+        AppUi.setNavigationText(
+            soundAccessButton,
+            "Silent mode",
+            "Required by Android to change ringer mode · ${if (hasNotificationPolicyAccess()) "Allowed" else "Not allowed"}",
+        )
     }
+
+    private fun hasNotificationPolicyAccess(): Boolean =
+        getSystemService(NotificationManager::class.java)?.isNotificationPolicyAccessGranted == true
 
     private fun openSettings(intent: Intent) {
         try {

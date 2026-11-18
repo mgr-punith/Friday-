@@ -72,6 +72,23 @@ object ActionLogicTests {
         expect(PhoneAction.SetTimer(-10).validationError() != null, "Negative timer is invalid")
         expect(PhoneAction.CloseApp().validationError() == null, "Going home needs no name")
         expect(PhoneAction.SetRingerMode(RingerMode.SILENT).validationError() == null, "Typed ringer modes are valid")
+        expect(
+            RingerModePolicy.requiredAccess(RingerMode.SILENT, notificationPolicyGranted = false) ==
+                RequiredAccess.NOTIFICATION_POLICY,
+            "Silent mode requires Notification Policy access",
+        )
+        expect(
+            RingerModePolicy.requiredAccess(RingerMode.SILENT, notificationPolicyGranted = true) == null,
+            "Silent mode can run after Notification Policy access",
+        )
+        expect(
+            RingerModePolicy.requiredAccess(RingerMode.VIBRATE, notificationPolicyGranted = false) == null,
+            "Vibrate mode does not require Notification Policy access",
+        )
+        expect(
+            RingerModePolicy.requiredAccess(RingerMode.NORMAL, notificationPolicyGranted = false) == null,
+            "Normal mode does not require Notification Policy access",
+        )
         println("$checks action logic checks passed")
     }
 }

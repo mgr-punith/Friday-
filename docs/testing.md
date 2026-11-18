@@ -47,14 +47,14 @@ Install with `./gradlew installDebug` and launch Friday. Use a test phone and kn
 | Area | Check and expected result |
 |---|---|
 | Permission setup | Open each sensitive disclosure. Cancel or press Back: no system permission prompt. Tap “Agree and allow”: Android manages the request. Deny access and continue: home remains usable. |
-| Permission management | Reopen setup after granting or denying access; labels reflect Android's state. After permanent denial, agreeing opens app settings. |
+| Permission management | Reopen setup after granting or denying access; labels reflect Android's state. After permanent denial, agreeing opens app settings. Silent mode access opens Android's Notification Policy settings and refreshes on return. |
 | Missing permissions | With phone or contacts access denied, try the corresponding action. Friday shows the required access without crashing or starting a call. |
 | Contact matching | Try an exact known contact, Puneet/Punith, Pradeep/Pradip, a missing name, and a weak short prefix. Missing or weak matches must not call. Two contacts with the same phonetic form ask which one; multiple numbers must be distinguishable. |
 | Final call confirmation | Choose a known contact or enter a valid number. The final dialog shows the resolved target. Cancel: no call. Only confirm using a number approved for the test; verify Android opens the call UI. |
 | Input validation | Try an empty name, invalid alarm hour/minute, zero timer, and a dial string such as `*123#`. Friday rejects invalid input before side effects. |
 | Alarm and timer | Send a test alarm with a distinct label and a short timer. Confirm the request in the installed clock app, then remove it. Friday reports “request sent”; it cannot verify another app saved it. Test an unavailable handler on a suitable device if available. |
 | App launch and Home | Open a known launcher app; try an unknown label. Duplicate labels require a choice. Go to Home opens the launcher and reports “Went to home screen”. |
-| Sound modes | Record the original mode. Try normal and vibrate, verify Android's actual mode, then restore it. A silent request must say `Silent mode is unavailable. Try vibrate mode.` and must not open Do Not Disturb settings. |
+| Sound modes | Record the original mode. Without Silent mode access, request silent and confirm Friday offers permission management without changing the mode. Grant access, then test silent, vibrate, and normal. Verify Android's mode after each command and restore the original setting. |
 | Lifecycle | Begin local resolution, then leave the action screen. No delayed action should launch from the background. Return and retry; the screen remains usable. |
 | UI and orb | Check graphite dialogs, readable labels, focused action editors, keyboard scrolling, enlarged system text, and landscape. Compare two idle screenshots several seconds apart: the orb must match. While listening, quiet input stays frozen and speech moves only the internal light fields. The circle must not resize or shift. Disabling animators freezes motion. Leaving the app pauses animation. |
 | Voice permission | Deny microphone access, then tap the home mic. Friday shows a permission action and does not crash. Grant access through Friday's disclosure, then return to the home screen. |
