@@ -1,5 +1,9 @@
 # Friday testing
 
+## Regression rule
+
+Add a repeatable test when a build or feature failure has a deterministic reproduction. Keep hardware, OEM, permission-panel, launcher, and other device-only failures in the phone checklist with the exact reproduction steps. Do not mark a device case as automated coverage.
+
 ## Repeatable build checks
 
 Run from the repository root:
@@ -12,7 +16,9 @@ The script runs `./gradlew assembleDebug assembleRelease test lintDebug --consol
 
 `./gradlew test` invokes two JavaExec tasks. `:app:actionLogicTest` runs the pure Kotlin action checks in `app/src/test/kotlin/com/example/assistant/actions/ActionLogicTests.kt`. `:app:voiceLogicTest` runs the audio and backend-contract checks in `app/src/test/kotlin/com/example/assistant/voice/VoiceLogicTests.kt`. They require no JUnit or additional dependency. A failed assertion exits with an error.
 
-The action checks cover name normalization, exact and fuzzy matching, ambiguous candidates, weak-match rejection, bounded inputs, phone-number formatting and unsafe dial strings, alarm ranges, timer durations, and typed action validation. The voice checks cover canonical WAV headers, format rejection, upload size, silence trimming, speech detection, normalized audio levels, silence-stop behavior, every action response, malformed and extra arguments, backend error responses, `Server-Timing`, token refresh rules, and HTTPS backend URL validation.
+The action checks cover name normalization, exact and fuzzy matching, ambiguous candidates, weak-match rejection, bounded inputs, phone-number formatting and unsafe dial strings, alarm ranges, timer durations, and typed action validation. The voice checks cover canonical WAV headers, format rejection, upload size, silence trimming, speech detection, normalized audio levels, silence-stop behavior, every action response, malformed and extra arguments, backend error responses, `Server-Timing`, token refresh rules, HTTPS backend URL validation, entry-point auto-listen gates, and Quick Settings API boundaries.
+
+The verification script also scans the Android source for banned device dependencies and APIs. This guard covers the earlier assistant-service regression that referenced `SpeechRecognizer`, which Friday must not use.
 
 These checks do not execute Android permissions, microphone hardware, network requests, contacts providers, clock apps, calls, or ringer changes. Record phone results separately. Review `./gradlew :app:dependencies` after dependency changes to confirm the app remains free of Google service and AWS SDK dependencies.
 
@@ -62,5 +68,11 @@ Install with `./gradlew installDebug` and launch Friday. Use a test phone and kn
 | No speech and network | Start recording without speaking, then stop after one second. Friday reports “I couldn't hear a clear command” without uploading. Short manual stops stay local; natural speech can still finish through silence detection. Disable the network, record a clear command, and confirm the app reports “No internet” without losing usability. |
 | Unsupported request | Ask a question or request an unavailable phone feature. Friday shows “Feature not built yet” and lists the commands available now. No Android action starts. |
 | Voice lifecycle | Start recording, press Home, then return. Capture stops and no delayed phone action starts while Friday is hidden. Debug logcat includes `FridayVoice` record, audio, upload, server, and action timings for completed requests. |
+| Ready notification | Turn on Ready notification and allow notifications if Android asks. Confirm one ongoing “Friday ready” notification appears without sound, vibration, or lights. Confirm Android shows no microphone privacy indicator before you tap it. Tap the notification: Friday opens and starts listening. |
+| Ready notification controls | Turn the notification off and confirm it disappears. Turn it on, force-stop Friday from Android Settings, then reopen Friday and confirm the notification returns. Update or reinstall the debug build and confirm it returns. Restart the phone and confirm the enabled notification returns before and after unlock. On Vivo, also allow Friday to auto-start if Funtouch OS blocks the boot receiver. If Android notifications are blocked, Friday must direct you to app notification settings. |
+| Quick Settings | Add the Friday tile, confirm its label and “Tap to speak” subtitle where Android supports subtitles, then tap it. Friday opens and starts listening. Test from another app and from the launcher. |
+| Home-screen widget | Add the Friday widget. Confirm the text remains readable with large system text and that the whole widget is a clear tap target. Tap it from the launcher; Friday opens and starts listening. |
+| Default assistant | Choose Friday under Power button assistant. Long-press the power button from the launcher and another app. Friday opens and starts listening. Restore the original assistant after the test if required. |
+| Spoken confirmation | Complete a harmless action with an English TTS engine installed and confirm Friday speaks the short on-screen result once. Disable or remove the TTS engine on a suitable test device and confirm Friday keeps the on-screen result without crashing. |
 
 Mark untested cases explicitly. Passing JVM checks or dispatching an Android intent does not prove the target app completed its work.

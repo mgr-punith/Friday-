@@ -132,7 +132,7 @@ Resources:
           JWT_SIGNING_KEY_PARAMETER: !Ref JwtSigningKeyParameterName
           GEMINI_MODEL: !Ref GeminiModel
           GEMINI_THINKING_LEVEL: !Ref GeminiThinkingLevel
-          GEMINI_TIMEOUT_MS: "6000"
+          GEMINI_TIMEOUT_MS: "10000"
           REGISTER_PER_IP_DAILY: !Ref RegisterPerIpDaily
           REGISTER_GLOBAL_DAILY: !Ref RegisterGlobalDaily
           COMMAND_PER_INSTALL_MINUTE: !Ref CommandPerInstallMinute

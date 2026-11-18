@@ -3,10 +3,13 @@ package com.example.assistant
 import android.Manifest
 import android.app.Activity
 import android.app.Dialog
+import android.app.role.RoleManager
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
+import android.provider.Settings
 import android.util.Log
 import android.view.Gravity
 import android.view.View
@@ -19,16 +22,21 @@ import android.widget.TextView
 import com.example.assistant.actions.ActionResult
 import com.example.assistant.actions.AndroidActionExecutor
 import com.example.assistant.actions.RequiredAccess
+import com.example.assistant.entry.EntryPointPolicy
+import com.example.assistant.entry.FridayEntryPoints
+import com.example.assistant.entry.ReadyNotification
 import com.example.assistant.ui.AppUi
 import com.example.assistant.ui.AssistantOrbView
 import com.example.assistant.ui.FridayDialog
 import com.example.assistant.ui.MicButtonView
 import com.example.assistant.voice.CommandResult
+import com.example.assistant.voice.ConfirmationSpeaker
 import com.example.assistant.voice.CaptureResult
 import com.example.assistant.voice.FridayBackendClient
 import com.example.assistant.voice.PcmProcessor
 import com.example.assistant.voice.RecordedCommand
 import com.example.assistant.voice.VoiceCommandResponse
+import com.example.assistant.voice.VoiceFailureCopy
 import com.example.assistant.voice.VoiceUiOutcome
 import com.example.assistant.voice.VoiceRecorder
 import com.example.assistant.voice.uiOutcome
@@ -49,9 +57,12 @@ class MainActivity : Activity() {
     private lateinit var micLabel: TextView
     private lateinit var detail: TextView
     private lateinit var permissionButton: Button
+    private lateinit var readyNotificationButton: Button
+    private lateinit var assistantRoleButton: Button
     private lateinit var backend: FridayBackendClient
     private lateinit var actionExecutor: AndroidActionExecutor
     private lateinit var actionRunner: VoiceActionRunner
+    private lateinit var confirmationSpeaker: ConfirmationSpeaker
     private var activeRecorder: VoiceRecorder? = null
     private var unsupportedDialog: Dialog? = null
     private val worker: ExecutorService = Executors.newSingleThreadExecutor()
@@ -63,23 +74,51 @@ class MainActivity : Activity() {
     private var lastUploadMs = 0L
     private var lastServerMs: Double? = null
     private var orbDemoRunnable: Runnable? = null
+    private var pendingAutoListen = false
+    private var setupPromptOpen = false
+    private var resumeListeningAfterSetup = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         backend = FridayBackendClient(this)
         actionExecutor = AndroidActionExecutor(this)
         actionRunner = VoiceActionRunner(this, ::onActionResult)
+        confirmationSpeaker = ConfirmationSpeaker(this)
         setContentView(createContentView())
+        consumeEntryPointIntent(intent)
         if (BuildConfig.DEBUG && intent.getBooleanExtra(DEBUG_ORB_VOICE_EXTRA, false)) startOrbVoiceDemo()
         backend.registerInBackground()
         if (!getSharedPreferences("friday", MODE_PRIVATE).getBoolean("setup_seen", false)) {
-            startActivity(Intent(this, PermissionsActivity::class.java))
+            launchSetup(resumeAfterSetup = pendingAutoListen)
+            pendingAutoListen = false
         }
     }
 
     override fun onResume() {
         super.onResume()
         resumed = true
+        restoreReadyNotificationIfNeeded()
+        updateReadyNotificationButton()
+        updateAssistantRoleButton()
+        maybeStartFromEntryPoint()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        consumeEntryPointIntent(intent)
+        maybeStartFromEntryPoint()
+    }
+
+    @Deprecated("Android Activity result compatibility for the dependency-free framework UI")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != SETUP_REQUEST) return
+        setupPromptOpen = false
+        val shouldResume = resumeListeningAfterSetup || pendingAutoListen
+        resumeListeningAfterSetup = false
+        pendingAutoListen = resultCode == RESULT_OK && shouldResume
+        maybeStartFromEntryPoint()
     }
 
     override fun onPause() {
@@ -97,6 +136,7 @@ class MainActivity : Activity() {
         orbDemoRunnable?.let(orb::removeCallbacks)
         orbDemoRunnable = null
         actionRunner.cancel()
+        confirmationSpeaker.shutdown()
         worker.shutdownNow()
         super.onDestroy()
     }
@@ -166,6 +206,20 @@ class MainActivity : Activity() {
         content.addView(detail, linearParams(bottom = 4))
         content.addView(permissionButton, linearParams(bottom = 20))
 
+        content.addView(AppUi.sectionLabel(this, "Quick access"), linearParams(bottom = 8))
+        readyNotificationButton = AppUi.navigationButton(
+            this,
+            "Ready notification",
+            "Off",
+        ) { toggleReadyNotification() }
+        content.addView(readyNotificationButton, linearParams(bottom = 8))
+        assistantRoleButton = AppUi.navigationButton(
+            this,
+            "Power button assistant",
+            "Choose Friday as your assistant",
+        ) { requestAssistantRole() }
+        content.addView(assistantRoleButton, linearParams(bottom = 20))
+
         content.addView(AppUi.sectionLabel(this, "Phone actions"), linearParams(bottom = 8))
         content.addView(
             AppUi.navigationButton(
@@ -187,6 +241,148 @@ class MainActivity : Activity() {
         screen.isFocusableInTouchMode = true
         screen.requestFocus()
         return screen
+    }
+
+    private fun consumeEntryPointIntent(source: Intent) {
+        if (source.getBooleanExtra(FridayEntryPoints.EXTRA_START_LISTENING, false)) {
+            pendingAutoListen = true
+            source.removeExtra(FridayEntryPoints.EXTRA_START_LISTENING)
+        }
+    }
+
+    private fun maybeStartFromEntryPoint() {
+        if (!resumed || !pendingAutoListen || state != VoiceState.IDLE) return
+        val setupSeen = getSharedPreferences("friday", MODE_PRIVATE).getBoolean("setup_seen", false)
+        val microphoneGranted = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        if (EntryPointPolicy.shouldRequestSetup(setupSeen, setupPromptOpen)) {
+            pendingAutoListen = false
+            launchSetup(resumeAfterSetup = true)
+        } else if (EntryPointPolicy.shouldAutoListen(true, setupSeen, microphoneGranted)) {
+            pendingAutoListen = false
+            startListening()
+        } else if (setupSeen) {
+            pendingAutoListen = false
+            showPermission(RequiredAccess.MICROPHONE)
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun launchSetup(resumeAfterSetup: Boolean) {
+        if (resumeAfterSetup) resumeListeningAfterSetup = true
+        if (setupPromptOpen) return
+        setupPromptOpen = true
+        startActivityForResult(Intent(this, PermissionsActivity::class.java), SETUP_REQUEST)
+    }
+
+    private fun restoreReadyNotificationIfNeeded() {
+        val notificationsAllowed = Build.VERSION.SDK_INT < 33 ||
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        if (EntryPointPolicy.shouldRestoreReadyNotification(ReadyNotification.isEnabled(this), notificationsAllowed)) {
+            ReadyNotification.show(this)
+        }
+    }
+
+    private fun toggleReadyNotification() {
+        when (readyNotificationState()) {
+            EntryPointPolicy.ReadyNotificationState.ON -> {
+                ReadyNotification.setEnabled(this, false)
+                updateReadyNotificationButton()
+                return
+            }
+            EntryPointPolicy.ReadyNotificationState.BLOCKED -> {
+                openNotificationSettings()
+                return
+            }
+            EntryPointPolicy.ReadyNotificationState.OFF -> Unit
+        }
+        if (!notificationsAllowed()) {
+            FridayDialog.show(
+                this,
+                "Ready notification",
+                "Friday keeps one silent notification with a Tap to speak shortcut. The microphone stays off until you tap it.",
+                positive = "Allow notifications",
+                negative = "Not now",
+            ) {
+                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), READY_NOTIFICATION_PERMISSION_REQUEST)
+            }
+            return
+        }
+        ReadyNotification.setEnabled(this, true)
+        updateReadyNotificationButton()
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != READY_NOTIFICATION_PERMISSION_REQUEST) return
+        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+            ReadyNotification.setEnabled(this, true)
+            updateReadyNotificationButton()
+        } else {
+            FridayDialog.show(
+                this,
+                "Notifications off",
+                "Allow Friday notifications in Android Settings to keep the Tap to speak shortcut.",
+                positive = "Open settings",
+                negative = "Not now",
+            ) { openNotificationSettings() }
+        }
+    }
+
+    private fun updateReadyNotificationButton() {
+        if (!::readyNotificationButton.isInitialized) return
+        val detail = when (readyNotificationState()) {
+            EntryPointPolicy.ReadyNotificationState.OFF -> "Off · Tap to turn on"
+            EntryPointPolicy.ReadyNotificationState.ON -> "On · Tap to turn off"
+            EntryPointPolicy.ReadyNotificationState.BLOCKED -> "Blocked · Tap to manage"
+        }
+        AppUi.setNavigationText(
+            readyNotificationButton,
+            "Ready notification",
+            detail,
+        )
+    }
+
+    private fun readyNotificationState(): EntryPointPolicy.ReadyNotificationState =
+        EntryPointPolicy.readyNotificationState(ReadyNotification.isEnabled(this), notificationsAllowed())
+
+    private fun notificationsAllowed(): Boolean = Build.VERSION.SDK_INT < 33 ||
+        checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+
+    private fun openNotificationSettings() {
+        try {
+            startActivity(
+                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, packageName),
+            )
+        } catch (_: RuntimeException) {
+            showError("Notification settings unavailable")
+        }
+    }
+
+    private fun requestAssistantRole() {
+        if (Build.VERSION.SDK_INT >= 29) {
+            val roles = getSystemService(RoleManager::class.java)
+            if (roles?.isRoleAvailable(RoleManager.ROLE_ASSISTANT) == true) {
+                startActivity(roles.createRequestRoleIntent(RoleManager.ROLE_ASSISTANT))
+                return
+            }
+        }
+        try {
+            startActivity(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS))
+        } catch (_: RuntimeException) {
+            showError("Assistant settings unavailable")
+        }
+    }
+
+    private fun updateAssistantRoleButton() {
+        if (!::assistantRoleButton.isInitialized) return
+        val selected = Build.VERSION.SDK_INT >= 29 &&
+            getSystemService(RoleManager::class.java)?.isRoleHeld(RoleManager.ROLE_ASSISTANT) == true
+        AppUi.setNavigationText(
+            assistantRoleButton,
+            "Power button assistant",
+            if (selected) "Selected · Long-press power to speak" else "Choose Friday as your assistant",
+        )
     }
 
     private fun onMicPressed() {
@@ -278,17 +474,19 @@ class MainActivity : Activity() {
         worker.execute {
             val result = try {
                 backend.sendCommand(recording.wavBytes)
-            } catch (_: SocketTimeoutException) {
-                runIfCurrent(request) { showError("Try again") }
+            } catch (error: SocketTimeoutException) {
+                logCommandFailure(error)
+                runIfCurrent(request) { showError(VoiceFailureCopy.forOutcome(VoiceUiOutcome.TIMEOUT)) }
                 return@execute
             } catch (error: IOException) {
-                val message = if (
-                    error.message == "offline" || error is UnknownHostException || error is ConnectException
-                ) "No internet" else "Try again"
+                logCommandFailure(error)
+                val offline = error.message == "offline" || error is UnknownHostException || error is ConnectException
+                val message = VoiceFailureCopy.forConnectionFailure(error.message, offline)
                 runIfCurrent(request) { showError(message) }
                 return@execute
-            } catch (_: RuntimeException) {
-                runIfCurrent(request) { showError("Try again") }
+            } catch (error: RuntimeException) {
+                logCommandFailure(error)
+                runIfCurrent(request) { showError("Friday couldn't finish that. Try again.") }
                 return@execute
             }
             runIfCurrent(request) { handleCommand(request, recording, result) }
@@ -310,10 +508,10 @@ class MainActivity : Activity() {
                 }
             }
             VoiceUiOutcome.UNSUPPORTED -> showUnsupported()
-            VoiceUiOutcome.BUSY -> showError("Friday is busy. Try again.")
-            VoiceUiOutcome.TIMEOUT -> showError("Try again")
-            VoiceUiOutcome.BAD_AUDIO -> showError("I didn't hear that clearly")
-            VoiceUiOutcome.UNAUTHORIZED -> showError("Try again")
+            VoiceUiOutcome.BUSY,
+            VoiceUiOutcome.TIMEOUT,
+            VoiceUiOutcome.BAD_AUDIO,
+            VoiceUiOutcome.UNAUTHORIZED -> showError(VoiceFailureCopy.forOutcome(result.response.uiOutcome()))
         }
         if (BuildConfig.DEBUG) {
             Log.d(
@@ -350,6 +548,7 @@ class MainActivity : Activity() {
         detail.text = message
         detail.setTextColor(getColor(R.color.text_primary))
         orb.setState(AssistantOrbView.State.SUCCESS)
+        confirmationSpeaker.speak(message)
     }
 
     private fun showError(message: String) {
@@ -426,6 +625,12 @@ class MainActivity : Activity() {
     private fun isCurrent(request: Int): Boolean =
         resumed && !isFinishing && !isDestroyed && request == generation
 
+    private fun logCommandFailure(error: Throwable) {
+        if (BuildConfig.DEBUG) {
+            Log.w(VOICE_LOG_TAG, "commandFailure=${error.javaClass.simpleName}:${error.message.orEmpty()}")
+        }
+    }
+
     /** ADB-only renderer check. R8 removes this path from release builds. */
     private fun startOrbVoiceDemo() {
         orb.setState(AssistantOrbView.State.LISTENING)
@@ -469,5 +674,7 @@ class MainActivity : Activity() {
         const val DEBUG_ORB_VOICE_EXTRA = "debug_orb_voice"
         const val DEBUG_ORB_VOICE_DURATION_MS = 4_000L
         const val DEBUG_ORB_FRAME_MS = 32L
+        const val READY_NOTIFICATION_PERMISSION_REQUEST = 202
+        const val SETUP_REQUEST = 203
     }
 }

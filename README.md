@@ -4,7 +4,9 @@ Hey Friday is a small, fast Android voice assistant for phone commands: calls, a
 
 ## Current milestone
 
-Milestone 3 connects the visible Android app to the deployed backend. Tap the microphone to record one 16 kHz command. Friday warms the Vercel Function while you speak, uploads a trimmed WAV, receives one validated action, then runs it from the visible activity. The app registers an anonymous install ID in the background and refreshes its token before expiry.
+Milestone 4 adds Android entry points around the existing voice loop. You can keep a silent “Friday ready” notification, add a Quick Settings tile or home-screen widget, and choose Friday as the power-button assistant. Each entry point opens the visible app and starts one recording. The microphone stays off until you tap an entry point or invoke the selected assistant.
+
+Tap the microphone to record one 16 kHz command. Friday warms the Vercel Function while you speak, uploads a trimmed WAV, receives one validated action, then runs it from the visible activity. The app registers an anonymous install ID in the background and refreshes its token before expiry. Successful actions can use Android TextToSpeech for a short confirmation. Friday keeps the on-screen confirmation when no English TTS engine is available.
 
 One Vercel Function in Mumbai accepts 16 kHz WAV or debug text, calls Gemini through REST, validates one forced function call, and returns the action contract in [docs/actions.md](docs/actions.md). Upstash Redis applies per-install and global limits. Vercel stores the Gemini and JWT values in its encrypted environment. The backend does not log audio, text commands, tokens, contacts, or app names. The AWS SAM deployment remains available as a fallback.
 
@@ -20,7 +22,7 @@ The reusable Aurora orb uses blue, cyan, lilac, and pearl light fields with sphe
 
 Idle and quiet listening are frozen. During recording, raw microphone energy must cross an adaptive room-noise gate before the orb moves. Low, mid, and high energy change the internal flow while the sphere stays still. Motion settles after speech ends. Hardware rendering schedules active frames with display vsync; software rendering uses a limited cadence. Frame rate depends on the device.
 
-The intended wake experience is:
+The later wake-phrase experience is:
 
 1. The user explicitly enables always-listening mode.
 2. Saying “Hey Friday” opens a compact round assistant surface over the current context.

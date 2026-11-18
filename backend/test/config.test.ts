@@ -16,6 +16,7 @@ test("loads secure defaults and required deployment configuration", () => {
   const config = loadConfig(environment());
   assert.equal(config.geminiModel, "gemini-3.5-flash-lite");
   assert.equal(config.geminiThinkingLevel, "MINIMAL");
+  assert.equal(config.geminiTimeoutMs, 10_000);
   assert.equal(config.commandPerInstallMinute, 12);
   assert.equal(config.commandPerInstallDaily, 100);
   assert.equal(config.commandGlobalDaily, 100_000);

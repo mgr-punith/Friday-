@@ -51,7 +51,7 @@ function loadRuntimeConfig(environment: NodeJS.ProcessEnv): RuntimeConfig {
   return {
     geminiModel: modelName(required(environment, "GEMINI_MODEL")),
     geminiThinkingLevel: thinkingLevel(environment.GEMINI_THINKING_LEVEL ?? "MINIMAL"),
-    geminiTimeoutMs: integer(environment, "GEMINI_TIMEOUT_MS", 6_000, 500, 12_000),
+    geminiTimeoutMs: integer(environment, "GEMINI_TIMEOUT_MS", 10_000, 500, 12_000),
     registerPerIpDaily: integer(environment, "REGISTER_PER_IP_DAILY", 200, 1, 100_000),
     registerGlobalDaily: integer(environment, "REGISTER_GLOBAL_DAILY", 10_000, 1, 10_000_000),
     commandPerInstallMinute: integer(environment, "COMMAND_PER_INSTALL_MINUTE", 12, 1, 1_000),
