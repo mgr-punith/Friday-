@@ -40,6 +40,32 @@ test("loads Vercel secrets and Redis configuration", () => {
   assert.equal(config.geminiThinkingLevel, "MINIMAL");
 });
 
+test("loads Redis configuration created by the Vercel Upstash integration", () => {
+  const config = loadVercelConfig({
+    GEMINI_API_KEY: "development-gemini-key",
+    JWT_SIGNING_KEY: "a-long-jwt-signing-key-with-more-than-thirty-two-bytes",
+    UPSTASH_REDIS_REST_KV_REST_API_URL: "https://integration.upstash.io/",
+    UPSTASH_REDIS_REST_KV_REST_API_TOKEN: "integration-redis-token",
+    GEMINI_MODEL: "gemini-3.5-flash-lite"
+  });
+  assert.equal(config.redisRestUrl, "https://integration.upstash.io");
+  assert.equal(config.redisRestToken, "integration-redis-token");
+});
+
+test("prefers the standard Redis variable names when both forms exist", () => {
+  const config = loadVercelConfig({
+    GEMINI_API_KEY: "development-gemini-key",
+    JWT_SIGNING_KEY: "a-long-jwt-signing-key-with-more-than-thirty-two-bytes",
+    UPSTASH_REDIS_REST_URL: "https://standard.upstash.io",
+    UPSTASH_REDIS_REST_TOKEN: "standard-redis-token",
+    UPSTASH_REDIS_REST_KV_REST_API_URL: "https://integration.upstash.io",
+    UPSTASH_REDIS_REST_KV_REST_API_TOKEN: "integration-redis-token",
+    GEMINI_MODEL: "gemini-3.5-flash-lite"
+  });
+  assert.equal(config.redisRestUrl, "https://standard.upstash.io");
+  assert.equal(config.redisRestToken, "standard-redis-token");
+});
+
 test("rejects short Vercel secrets and non-HTTPS Redis URLs", () => {
   const base = {
     GEMINI_API_KEY: "development-gemini-key",

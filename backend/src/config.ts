@@ -36,8 +36,14 @@ export function loadVercelConfig(environment: NodeJS.ProcessEnv = process.env): 
     ...loadRuntimeConfig(environment),
     geminiApiKey: secret(environment, "GEMINI_API_KEY", 16),
     jwtSigningKey: secret(environment, "JWT_SIGNING_KEY", 32),
-    redisRestUrl: httpsUrl(required(environment, "UPSTASH_REDIS_REST_URL")),
-    redisRestToken: secret(environment, "UPSTASH_REDIS_REST_TOKEN", 16)
+    redisRestUrl: httpsUrl(requiredFirst(environment, [
+      "UPSTASH_REDIS_REST_URL",
+      "UPSTASH_REDIS_REST_KV_REST_API_URL"
+    ])),
+    redisRestToken: secretFirst(environment, [
+      "UPSTASH_REDIS_REST_TOKEN",
+      "UPSTASH_REDIS_REST_KV_REST_API_TOKEN"
+    ], 16)
   };
 }
 
@@ -63,6 +69,20 @@ function required(environment: NodeJS.ProcessEnv, name: string): string {
 function secret(environment: NodeJS.ProcessEnv, name: string, minimumLength: number): string {
   const value = required(environment, name);
   if (value.length < minimumLength) throw new Error(`invalid_${name.toLowerCase()}`);
+  return value;
+}
+
+function requiredFirst(environment: NodeJS.ProcessEnv, names: readonly string[]): string {
+  for (const name of names) {
+    const value = environment[name]?.trim();
+    if (value) return value;
+  }
+  throw new Error(`missing_${names[0]?.toLowerCase() ?? "environment_value"}`);
+}
+
+function secretFirst(environment: NodeJS.ProcessEnv, names: readonly string[], minimumLength: number): string {
+  const value = requiredFirst(environment, names);
+  if (value.length < minimumLength) throw new Error(`invalid_${names[0]?.toLowerCase() ?? "environment_secret"}`);
   return value;
 }
 
