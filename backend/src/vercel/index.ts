@@ -1,10 +1,10 @@
-import { loadVercelConfig } from "../src/config";
-import { createApi } from "../src/core/api";
-import type { Clock, SafeLogger } from "../src/core/contracts";
-import { EnvironmentSecretProvider } from "../src/env/secrets";
-import { GeminiProvider } from "../src/providers/gemini";
-import { createRedisClient, RedisUsageLimitStore } from "../src/redis/usage-store";
-import { createVercelHandler } from "../src/vercel/adapter";
+import { loadVercelConfig } from "../config";
+import { createApi } from "../core/api";
+import type { Clock, SafeLogger } from "../core/contracts";
+import { EnvironmentSecretProvider } from "../env/secrets";
+import { GeminiProvider } from "../providers/gemini";
+import { createRedisClient, RedisUsageLimitStore } from "../redis/usage-store";
+import { createVercelHandler } from "./adapter";
 
 const config = loadVercelConfig();
 const secrets = new EnvironmentSecretProvider(config.geminiApiKey, config.jwtSigningKey);

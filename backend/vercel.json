@@ -4,7 +4,7 @@
   "outputDirectory": "public",
   "regions": ["bom1"],
   "functions": {
-    "api/index.ts": {
+    "api/index.mjs": {
       "maxDuration": 15,
       "supportsCancellation": true
     }
