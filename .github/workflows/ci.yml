@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend, Vercel, and SAM
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      AWS_DEFAULT_REGION: ap-south-1
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.20.0
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Verify backend and Vercel configuration
+        run: npm run verify
+
+      - name: Set up AWS SAM CLI
+        uses: aws-actions/setup-sam@f84ec7d548307efafe33230528756de3c5841a17 # v2
+        with:
+          version: 1.172.1
+
+      - name: Validate SAM template
+        run: sam validate --lint --template-file template.yaml
+
+      - name: Build SAM artifact
+        run: sam build --template-file template.yaml --build-dir .aws-sam/build
+
+      - name: Check packaged handler
+        run: test -s .aws-sam/build/FridayFunction/handler.js
+
+      - name: Upload SAM artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: friday-sam-${{ github.sha }}
+          path: backend/.aws-sam/build
+          if-no-files-found: error
+          retention-days: 7
+
+  android:
+    name: Android
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Java
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install Android API 37
+        run: sdkmanager "platforms;android-37" "build-tools;37.0.0"
+
+      - name: Verify Android app and APK size
+        run: ./scripts/verify.sh --no-daemon
+
+      - name: Confirm app dependency boundary
+        run: |
+          ./gradlew :app:dependencies --configuration releaseRuntimeClasspath --no-daemon > /tmp/friday-runtime-dependencies.txt
+          if grep -Eiq 'com\.google\.android\.gms|com\.google\.firebase|mlkit|software\.amazon\.awssdk|com\.amazonaws' /tmp/friday-runtime-dependencies.txt; then
+            cat /tmp/friday-runtime-dependencies.txt
+            exit 1
+          fi
