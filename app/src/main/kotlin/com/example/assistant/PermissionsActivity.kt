@@ -2,7 +2,6 @@ package com.example.assistant
 
 import android.Manifest
 import android.app.Activity
-import android.app.NotificationManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -15,7 +14,6 @@ import com.example.assistant.ui.FridayDialog
 /** Explicit disclosures always precede sensitive system permission prompts. */
 class PermissionsActivity : Activity() {
     private val permissionButtons = linkedMapOf<String, Button>()
-    private lateinit var dndButton: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -25,7 +23,7 @@ class PermissionsActivity : Activity() {
             "Choose which phone actions Friday can use.",
         )
         content.addView(
-            AppUi.notice(this, "This build does not record audio or listen in the background."),
+            AppUi.notice(this, "Friday records after you tap the microphone. Background listening is off."),
             AppUi.params(this, 20),
         )
         content.addView(AppUi.sectionLabel(this, "ACCESS"), AppUi.params(this, 8))
@@ -35,19 +33,19 @@ class PermissionsActivity : Activity() {
                 Manifest.permission.RECORD_AUDIO,
                 "Microphone",
                 "Voice input",
-                "Friday will use your microphone to record short voice commands when you start the assistant. Voice audio will be sent to Friday’s backend on AWS in Mumbai and processed by Google’s Gemini. Audio is not stored after processing. This build does not capture audio.",
+                "Friday records one short command after you tap the microphone. It sends that audio to Friday’s Vercel backend and Google Gemini to choose a phone action. Friday does not store the audio. Background listening is off.",
             ),
             PermissionInfo(
                 Manifest.permission.READ_CONTACTS,
                 "Contacts",
                 "Find a person to call",
-                "Friday reads contact names and phone numbers to match who you ask to call. Matching happens on this phone. Your contact list and contact details never leave this device. In the future voice loop, short command audio will be sent to Friday’s backend on AWS in Mumbai and processed by Google’s Gemini; it is not stored after processing.",
+                "Friday reads contact names and phone numbers on this phone to match the person you asked to call. Your contact list and contact details stay on this phone. Friday sends the recorded command to its Vercel backend and Google Gemini, and does not store the audio.",
             ),
             PermissionInfo(
                 Manifest.permission.CALL_PHONE,
                 "Phone calls",
                 "Place a confirmed call",
-                "Friday uses phone access to place a call you request from the visible assistant. Friday asks you to confirm before starting a call. Call history is not read or uploaded. In the future voice loop, short command audio will be sent to Friday’s backend on AWS in Mumbai and processed by Google’s Gemini; it is not stored after processing.",
+                "Friday uses phone access to place a call you request from the visible assistant. You confirm the resolved number before Android starts the call. Friday does not read or upload call history.",
             ),
         )
         permissions.forEach { permissionInfo ->
@@ -58,16 +56,6 @@ class PermissionsActivity : Activity() {
             content.addView(button, AppUi.params(this, 8))
         }
 
-        dndButton = AppUi.navigationButton(this, "Sound mode", "Change silent, vibrate or normal mode") {
-            FridayDialog.show(
-                this,
-                "Sound mode access",
-                "Do Not Disturb access lets Friday switch silent mode when you request it. Android manages this access in Settings.",
-                positive = "Open settings",
-                negative = "Not now",
-            ) { openSettings(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)) }
-        }
-        content.addView(dndButton, AppUi.params(this, 24))
         content.addView(
             AppUi.button(this, "Done", AppUi.ButtonTone.PRIMARY) {
                 getSharedPreferences("friday", MODE_PRIVATE).edit().putBoolean("setup_seen", true).apply()
@@ -119,14 +107,6 @@ class PermissionsActivity : Activity() {
                 button,
                 info.first,
                 "${info.second} · ${if (allowed) "Allowed" else "Not allowed"}",
-            )
-        }
-        if (::dndButton.isInitialized) {
-            val allowed = getSystemService(NotificationManager::class.java).isNotificationPolicyAccessGranted
-            AppUi.setNavigationText(
-                dndButton,
-                "Sound mode",
-                "Silent mode · ${if (allowed) "Allowed" else "Not allowed"}",
             )
         }
     }

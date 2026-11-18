@@ -1,14 +1,9 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { parseFunctionSelection, type CommandResponse } from "../src/core/action-schema";
+import { parseFunctionSelection } from "../src/core/action-schema";
 import type { SecretProvider } from "../src/core/contracts";
 import { GeminiProvider } from "../src/providers/gemini";
-
-interface EvaluationCase {
-  readonly phrase: string;
-  readonly expected: CommandResponse;
-}
+import { loadAudioCases, loadTextCases } from "./cases";
 
 void main().catch((error: unknown) => {
   console.error(errorMessage(error));
@@ -22,7 +17,10 @@ async function main(): Promise<void> {
   const delayMs = parseNonNegativeInteger(process.env.EVAL_DELAY_MS ?? "0", "EVAL_DELAY_MS");
   const limit = parseNonNegativeInteger(process.env.EVAL_LIMIT ?? "0", "EVAL_LIMIT");
   const now = "2026-11-17T09:30:00+05:30";
-  const cases = await loadCases();
+  const audioManifest = audioManifestArgument(process.argv.slice(2));
+  const cases = audioManifest
+    ? await loadAudioCases(audioManifest)
+    : await loadTextCases(path.resolve(process.cwd(), "../docs/test-phrases.md"));
   const selectedCases = limit > 0 ? cases.slice(0, limit) : cases;
 
   const secrets: SecretProvider = {
@@ -43,15 +41,15 @@ async function main(): Promise<void> {
   for (const evaluationCase of selectedCases) {
     const startedAt = performance.now();
     try {
-      const result = await provider.select({ kind: "text", text: evaluationCase.phrase }, now);
+      const result = await provider.select(evaluationCase.input, now);
       const actual = parseFunctionSelection(result.selection);
       assert.deepEqual(actual, evaluationCase.expected);
       passed += 1;
       latencies.push(result.durationMs);
-      console.log(`PASS ${result.durationMs.toFixed(0)}ms | ${evaluationCase.phrase}`);
+      console.log(`PASS ${result.durationMs.toFixed(0)}ms | ${evaluationCase.label}`);
     } catch (error) {
       const elapsed = performance.now() - startedAt;
-      console.log(`FAIL ${elapsed.toFixed(0)}ms | ${evaluationCase.phrase} | ${errorMessage(error)}`);
+      console.log(`FAIL ${elapsed.toFixed(0)}ms | ${evaluationCase.label} | ${errorMessage(error)}`);
     }
     if (delayMs > 0) await delay(delayMs);
   }
@@ -68,40 +66,12 @@ async function main(): Promise<void> {
   if (passed !== selectedCases.length) process.exitCode = 1;
 }
 
-async function loadCases(): Promise<EvaluationCase[]> {
-  const file = path.resolve(process.cwd(), "../docs/test-phrases.md");
-  const text = await readFile(file, "utf8");
-  const cases: EvaluationCase[] = [];
-  for (const line of text.split("\n")) {
-    if (!line.startsWith("| `")) continue;
-    const columns = line.slice(1, -1).split("|").map((column) => column.trim());
-    if (columns.length !== 3) throw new Error(`Invalid phrase row: ${line}`);
-    const phrase = unwrapCode(columns[0] ?? "");
-    const action = unwrapCode(columns[1] ?? "");
-    const args = JSON.parse(unwrapCode(columns[2] ?? "")) as Record<string, unknown>;
-    cases.push({
-      phrase,
-      expected: action === "unsupported"
-        ? { type: "unsupported" }
-        : { type: "action", action: parseAction(action), args }
-    });
+function audioManifestArgument(argumentsList: readonly string[]): string | null {
+  if (argumentsList.length === 0) return null;
+  if (argumentsList.length !== 2 || argumentsList[0] !== "--audio-manifest" || !argumentsList[1]?.trim()) {
+    throw new Error("Use --audio-manifest <path-to-manifest.json>");
   }
-  if (cases.length === 0) throw new Error("No evaluation phrases found");
-  return cases;
-}
-
-function unwrapCode(value: string): string {
-  if (!value.startsWith("`") || !value.endsWith("`")) throw new Error(`Expected code value: ${value}`);
-  return value.slice(1, -1);
-}
-
-function parseAction(value: string): Exclude<CommandResponse, { type: "unsupported" }>["action"] {
-  if (
-    value === "call_contact" || value === "call_number" || value === "set_alarm" ||
-    value === "set_timer" || value === "open_app" || value === "close_app" ||
-    value === "set_ringer_mode"
-  ) return value;
-  throw new Error(`Unknown expected action: ${value}`);
+  return argumentsList[1];
 }
 
 function required(name: string): string {

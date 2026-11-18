@@ -6,6 +6,8 @@ build/
 .cxx/
 local.properties
 captures/
+docs/private-audio/
+docs/indian-english-audio-eval.json
 *.apk
 *.aab
 *.apks

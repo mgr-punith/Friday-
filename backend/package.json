@@ -16,6 +16,7 @@
     "check:vercel-entry": "node scripts/check-vercel-entry.mjs",
     "verify": "npm run typecheck && npm test && npm run check:vercel && npm run build && npm run check:vercel-entry",
     "eval": "npm run build:test && node --env-file-if-exists=.env build-test/eval/run.js",
+    "eval:audio": "npm run build:test && node --env-file-if-exists=.env build-test/eval/run.js --audio-manifest",
     "vercel:build": "npm run typecheck"
   },
   "dependencies": {

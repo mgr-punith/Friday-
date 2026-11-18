@@ -11,6 +11,7 @@ android {
     targetSdk = 37
     versionCode = 1
     versionName = "1.0"
+    buildConfigField("String", "BACKEND_URL", "\"https://friday-backend-seven.vercel.app\"")
   }
 
   buildTypes {
@@ -27,7 +28,7 @@ android {
   buildFeatures {
     aidl = false
     compose = false
-    buildConfig = false
+    buildConfig = true
     dataBinding = false
     prefab = false
     resValues = false
@@ -50,11 +51,22 @@ val actionLogicTest by tasks.registering(JavaExec::class) {
     configurations.named("debugUnitTestRuntimeClasspath"),
   )
 }
+val voiceLogicTest by tasks.registering(JavaExec::class) {
+  group = "verification"
+  description = "Runs dependency-free voice audio and protocol checks."
+  dependsOn("compileDebugUnitTestKotlin")
+  mainClass.set("com.example.assistant.voice.VoiceLogicTests")
+  classpath(
+    layout.buildDirectory.dir("intermediates/built_in_kotlinc/debug/compileDebugKotlin/classes"),
+    layout.buildDirectory.dir("intermediates/built_in_kotlinc/debugUnitTest/compileDebugUnitTestKotlin/classes"),
+    configurations.named("debugUnitTestRuntimeClasspath"),
+  )
+}
 tasks.matching { it.name == "test" || it.name == "check" }.configureEach {
-  dependsOn(actionLogicTest)
+  dependsOn(actionLogicTest, voiceLogicTest)
 }
 // There is no JUnit dependency; the JavaExec task above runs our JVM checks.
 tasks.withType<Test>().configureEach {
   enabled = false
-  dependsOn(actionLogicTest)
+  dependsOn(actionLogicTest, voiceLogicTest)
 }

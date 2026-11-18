@@ -2,6 +2,8 @@ import type { FunctionSelection } from "./contracts";
 
 export const SYSTEM_PROMPT =
   "You control an Android phone. The user speaks English. Pick exactly one function. " +
+  "The speaker may use Indian English pronunciation and phrasing. Preserve spoken contact and app names. " +
+  "Interpret double and triple digit words in phone numbers. " +
   "Use unsupported for anything else. Never answer questions. Use set_timer for durations. " +
   "Use the supplied current phone time for clock times such as tomorrow.";
 

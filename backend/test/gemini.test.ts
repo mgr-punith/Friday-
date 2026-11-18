@@ -29,6 +29,8 @@ test("sends a compact forced-function request for text", async () => {
   assert.equal(request.generationConfig.temperature, 0);
   assert.equal(request.generationConfig.maxOutputTokens, 100);
   assert.equal(request.generationConfig.thinkingConfig.thinkingLevel, "MINIMAL");
+  assert.match(request.systemInstruction.parts[0].text, /Indian English pronunciation and phrasing/);
+  assert.match(request.systemInstruction.parts[0].text, /double and triple digit words/);
   assert.equal(request.contents[0].parts[1].text, "Open camera");
   assert.deepEqual(result.selection, { name: "open_app", args: { name: "Camera" } });
 });

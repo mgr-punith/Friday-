@@ -20,7 +20,6 @@ enum class RequiredAccess {
     MICROPHONE,
     CONTACTS,
     PHONE,
-    DO_NOT_DISTURB,
 }
 
 sealed interface ActionResult {

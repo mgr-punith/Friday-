@@ -31,6 +31,17 @@ object ActionLogicTests {
         expect(matched("Jonathon", listOf("Jonathan Smith", "Mary Jones"), 0), "Long first-name typo can match a token")
         expect(ambiguous("Alexand", listOf("Alexander", "Alexandr"), listOf(0, 1)), "Similar prefixes need a choice")
         expect(ambiguous("Samantha", listOf("Samanthe", "Samanthi"), listOf(0, 1)), "Equally close fuzzy matches need a choice")
+        expect(matched("Punith", listOf("Puneet", "Arjun"), 0), "Match a common Indian long-vowel spelling variant")
+        expect(matched("Pradip", listOf("Pradeep", "Prakash"), 0), "Match ee and i in a longer Indian name")
+        expect(matched("Wikas", listOf("Vikas", "Vijay"), 0), "Match v and w pronunciation variants")
+        expect(matched("Sures", listOf("Suresh", "Ramesh"), 0), "Match a terminal sh and s variant")
+        expect(matched("Doctor Reddy", listOf("Dr Reddy", "Dr Mehta"), 0), "Match spoken doctor to a saved Dr title")
+        expect(
+            ambiguous("Punit", listOf("Puneet", "Punith"), listOf(0, 1)),
+            "Indian phonetic collisions need a choice",
+        )
+        expect(NameMatcher.match("Wim", listOf("Vim")) == MatchResult.NotFound, "Do not phonetic-match short names")
+        expect(NameMatcher.match("Sara", listOf("Sarah")) == MatchResult.NotFound, "Do not broaden unrelated final h names")
         expect(NameMatcher.match("Roberto", listOf("Alexander", "Maria")) == MatchResult.NotFound, "Reject unrelated contacts")
         expect(NameMatcher.match(" ", listOf("Mom")) == MatchResult.NotFound, "Empty queries never select a contact")
         expect(NameMatcher.match("Mom", emptyList()) == MatchResult.NotFound, "Empty device lists are handled")
