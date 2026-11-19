@@ -1,9 +1,16 @@
-import assert from "node:assert/strict";
 import path from "node:path";
 import { parseFunctionSelection } from "../src/core/action-schema";
-import type { SecretProvider } from "../src/core/contracts";
-import { GeminiProvider } from "../src/providers/gemini";
+import {
+  AssistantProviderError,
+  type SecretProvider
+} from "../src/core/contracts";
+import { parseEvaluationAudioFormat, prepareAudioCases } from "./audio-format";
+import { buildBenchmarkSummary, type EvaluationObservation } from "./benchmark";
 import { loadAudioCases, loadTextCases } from "./cases";
+import { GeminiEvaluationProvider } from "./gemini";
+import { GroqEvaluationProvider } from "./groq";
+import type { EvaluationProvider } from "./provider";
+import { matchEvaluationResult } from "./result-match";
 
 void main().catch((error: unknown) => {
   console.error(errorMessage(error));
@@ -11,18 +18,79 @@ void main().catch((error: unknown) => {
 });
 
 async function main(): Promise<void> {
-  const apiKey = required("GEMINI_API_KEY");
-  const model = required("GEMINI_MODEL");
-  const thinkingLevel = parseThinkingLevel(process.env.GEMINI_THINKING_LEVEL ?? "MINIMAL");
-  const delayMs = parseNonNegativeInteger(process.env.EVAL_DELAY_MS ?? "0", "EVAL_DELAY_MS");
-  const limit = parseNonNegativeInteger(process.env.EVAL_LIMIT ?? "0", "EVAL_LIMIT");
+  const delayMs = parseInteger(process.env.EVAL_DELAY_MS ?? "0", "EVAL_DELAY_MS", 0, 60_000);
+  const limit = parseInteger(process.env.EVAL_LIMIT ?? "0", "EVAL_LIMIT", 0, 10_000);
+  const offset = parseInteger(process.env.EVAL_OFFSET ?? "0", "EVAL_OFFSET", 0, 10_000);
   const now = "2026-11-17T09:30:00+05:30";
   const audioManifest = audioManifestArgument(process.argv.slice(2));
   const cases = audioManifest
     ? await loadAudioCases(audioManifest)
     : await loadTextCases(path.resolve(process.cwd(), "../docs/test-phrases.md"));
-  const selectedCases = limit > 0 ? cases.slice(0, limit) : cases;
+  const remainingCases = cases.slice(offset);
+  const limitedCases = limit > 0 ? remainingCases.slice(0, limit) : remainingCases;
+  const audioFormat = parseEvaluationAudioFormat(process.env.EVAL_AUDIO_FORMAT ?? "wav");
+  if (!audioManifest && audioFormat !== "wav") {
+    throw new Error("EVAL_AUDIO_FORMAT only applies to --audio-manifest runs");
+  }
+  const selectedCases = await prepareAudioCases(limitedCases, audioFormat);
+  const provider = createProvider(process.env);
+  const observations: EvaluationObservation[] = [];
+  for (const [index, evaluationCase] of selectedCases.entries()) {
+    const caseNumber = offset + index + 1;
+    const startedAt = performance.now();
+    try {
+      const result = await provider.select(evaluationCase.input, now);
+      const actual = parseFunctionSelection(result.selection);
+      const { passed, exact, difference } = matchEvaluationResult(actual, evaluationCase.expected);
+      observations.push({
+        passed,
+        completed: true,
+        durationMs: result.durationMs,
+        ...(evaluationCase.input.kind === "audio" ? { inputBytes: evaluationCase.input.bytes.byteLength } : {}),
+        stages: result.stages,
+        ...(passed ? {} : { failure: `wrong_${difference ?? "result"}` })
+      });
+      console.log(`${passed ? "PASS" : "FAIL"} ${result.durationMs.toFixed(0)}ms | case ${caseNumber}${passed ? (exact ? "" : " | equivalent_result") : ` | wrong_${difference}`}`);
+    } catch (error) {
+      const elapsed = performance.now() - startedAt;
+      const failure = failureCode(error);
+      observations.push({
+        passed: false,
+        completed: false,
+        durationMs: elapsed,
+        ...(evaluationCase.input.kind === "audio" ? { inputBytes: evaluationCase.input.bytes.byteLength } : {}),
+        failure
+      });
+      console.log(`FAIL ${elapsed.toFixed(0)}ms | case ${caseNumber} | ${failure}`);
+    }
+    if (delayMs > 0) await delay(delayMs);
+  }
 
+  const summary = buildBenchmarkSummary(provider.name, provider.models, observations);
+  printSummary(summary);
+  console.log(`SUMMARY_JSON=${JSON.stringify(summary)}`);
+  if (summary.failed > 0) process.exitCode = 1;
+}
+
+function createProvider(environment: NodeJS.ProcessEnv): EvaluationProvider {
+  const providerName = (environment.EVAL_PROVIDER ?? "gemini").trim().toLowerCase();
+  if (providerName === "gemini") return createGeminiProvider(environment);
+  if (providerName === "groq") {
+    return new GroqEvaluationProvider({
+      apiKey: required(environment, "GROQ_API_KEY"),
+      transcriptionModel: environment.GROQ_TRANSCRIPTION_MODEL?.trim() || "whisper-large-v3-turbo",
+      actionModel: environment.GROQ_ACTION_MODEL?.trim() || "openai/gpt-oss-20b",
+      timeoutMs: parseInteger(environment.GROQ_TIMEOUT_MS ?? "10000", "GROQ_TIMEOUT_MS", 500, 30_000)
+    });
+  }
+  throw new Error("EVAL_PROVIDER must be gemini or groq");
+}
+
+function createGeminiProvider(environment: NodeJS.ProcessEnv): EvaluationProvider {
+  const apiKey = required(environment, "GEMINI_API_KEY");
+  const model = required(environment, "GEMINI_MODEL");
+  const thinkingLevel = parseThinkingLevel(environment.GEMINI_THINKING_LEVEL ?? "MINIMAL");
+  const timeoutMs = parseInteger(environment.GEMINI_TIMEOUT_MS ?? "10000", "GEMINI_TIMEOUT_MS", 500, 30_000);
   const secrets: SecretProvider = {
     async getSecrets() {
       return {
@@ -31,39 +99,31 @@ async function main(): Promise<void> {
       };
     }
   };
-  const provider = new GeminiProvider(
-    { model, thinkingLevel, timeoutMs: 6_000 },
-    secrets
-  );
+  return new GeminiEvaluationProvider({ model, thinkingLevel, timeoutMs }, secrets);
+}
 
-  let passed = 0;
-  const latencies: number[] = [];
-  for (const evaluationCase of selectedCases) {
-    const startedAt = performance.now();
-    try {
-      const result = await provider.select(evaluationCase.input, now);
-      const actual = parseFunctionSelection(result.selection);
-      assert.deepEqual(actual, evaluationCase.expected);
-      passed += 1;
-      latencies.push(result.durationMs);
-      console.log(`PASS ${result.durationMs.toFixed(0)}ms | ${evaluationCase.label}`);
-    } catch (error) {
-      const elapsed = performance.now() - startedAt;
-      console.log(`FAIL ${elapsed.toFixed(0)}ms | ${evaluationCase.label} | ${errorMessage(error)}`);
-    }
-    if (delayMs > 0) await delay(delayMs);
-  }
+function printSummary(summary: ReturnType<typeof buildBenchmarkSummary>): void {
+  console.log(`\nProvider: ${summary.provider}`);
+  console.log(`Models: ${summary.models.join(" + ")}`);
+  console.log(`Result: ${summary.passed}/${summary.cases} (${summary.accuracyPercent.toFixed(1)}%)`);
+  console.log(`Completed responses: ${summary.passed}/${summary.completedCases} (${summary.completedAccuracyPercent.toFixed(1)}%)`);
+  printLatency("End-to-end", summary.latency);
+  printUpload(summary.upload);
+  for (const [stage, latency] of Object.entries(summary.stages)) printLatency(stage, latency);
+  for (const [failure, count] of Object.entries(summary.failures)) console.log(`Failures ${failure}: ${count}`);
+}
 
-  const accuracy = selectedCases.length === 0 ? 0 : (passed / selectedCases.length) * 100;
-  console.log(`\nModel: ${model}`);
-  console.log(`Result: ${passed}/${selectedCases.length} (${accuracy.toFixed(1)}%)`);
-  if (latencies.length > 0) {
-    latencies.sort((left, right) => left - right);
-    console.log(`Median Gemini latency: ${percentile(latencies, 0.5).toFixed(0)}ms`);
-    console.log(`P95 Gemini latency: ${percentile(latencies, 0.95).toFixed(0)}ms`);
-  }
+function printUpload(upload: { medianBytes: number | null; p95Bytes: number | null; maxBytes: number | null }): void {
+  if (upload.medianBytes === null || upload.p95Bytes === null || upload.maxBytes === null) return;
+  console.log(`Upload: median ${upload.medianBytes} bytes, P95 ${upload.p95Bytes} bytes, max ${upload.maxBytes} bytes`);
+}
 
-  if (passed !== selectedCases.length) process.exitCode = 1;
+function printLatency(
+  label: string,
+  latency: { medianMs: number | null; p95Ms: number | null; maxMs: number | null }
+): void {
+  if (latency.medianMs === null || latency.p95Ms === null || latency.maxMs === null) return;
+  console.log(`${label}: median ${latency.medianMs.toFixed(0)}ms, P95 ${latency.p95Ms.toFixed(0)}ms, max ${latency.maxMs.toFixed(0)}ms`);
 }
 
 function audioManifestArgument(argumentsList: readonly string[]): string | null {
@@ -74,8 +134,8 @@ function audioManifestArgument(argumentsList: readonly string[]): string | null 
   return argumentsList[1];
 }
 
-function required(name: string): string {
-  const value = process.env[name]?.trim();
+function required(environment: NodeJS.ProcessEnv, name: string): string {
+  const value = environment[name]?.trim();
   if (!value) throw new Error(`${name} is required. Put it in backend/.env for local evaluation.`);
   return value;
 }
@@ -88,15 +148,20 @@ function parseThinkingLevel(value: string): "MINIMAL" | "LOW" | "MEDIUM" | "HIGH
   throw new Error("GEMINI_THINKING_LEVEL must be MINIMAL, LOW, MEDIUM, or HIGH");
 }
 
-function parseNonNegativeInteger(value: string, name: string): number {
+function parseInteger(value: string, name: string, minimum: number, maximum: number): number {
   const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 0) throw new Error(`${name} must be a non-negative integer`);
+  if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new Error(`${name} must be an integer from ${minimum} to ${maximum}`);
+  }
   return parsed;
 }
 
-function percentile(sorted: readonly number[], fraction: number): number {
-  const index = Math.min(sorted.length - 1, Math.ceil(sorted.length * fraction) - 1);
-  return sorted[Math.max(0, index)] ?? 0;
+function failureCode(error: unknown): string {
+  if (error instanceof AssistantProviderError) return error.code;
+  const message = errorMessage(error);
+  if (/^gemini_http_\d{3}$/.test(message)) return message;
+  if (/^groq_(transcription|classification)_(timeout|invalid_response|http_\d{3})$/.test(message)) return message;
+  return "request_failed";
 }
 
 function errorMessage(error: unknown): string {

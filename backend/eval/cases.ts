@@ -35,15 +35,16 @@ export async function loadAudioCases(manifestFile: string): Promise<EvaluationCa
   const manifest = parseAudioManifest(JSON.parse(await readFile(manifestPath, "utf8")) as unknown);
   const manifestDirectory = path.dirname(manifestPath);
   const cases: EvaluationCase[] = [];
-  for (const entry of manifest) {
+  for (const [index, entry] of manifest.entries()) {
+    const caseName = `Audio case ${index + 1}`;
     const audioPath = path.resolve(manifestDirectory, entry.file);
     const relativePath = path.relative(manifestDirectory, audioPath);
     if (relativePath.startsWith("..") || path.isAbsolute(relativePath) || path.extname(audioPath).toLowerCase() !== ".wav") {
-      throw new Error(`${entry.file}: WAV must stay inside the manifest directory`);
+      throw new Error(`${caseName}: WAV must stay inside the manifest directory`);
     }
     const bytes = await readFile(audioPath);
-    if (bytes.byteLength > 1_000_000) throw new Error(`${entry.file}: WAV exceeds 1,000,000 bytes`);
-    if (!isFridayWav(bytes)) throw new Error(`${entry.file}: expected 16 kHz mono 16-bit PCM WAV`);
+    if (bytes.byteLength > 1_000_000) throw new Error(`${caseName}: WAV exceeds 1,000,000 bytes`);
+    if (!isFridayWav(bytes)) throw new Error(`${caseName}: expected 16 kHz mono 16-bit PCM WAV`);
     cases.push({
       label: path.basename(entry.file),
       input: { kind: "audio", bytes, mimeType: "audio/wav" },
@@ -74,13 +75,17 @@ function parseAudioManifest(value: unknown): AudioManifestEntry[] {
 }
 
 function parseExpected(value: unknown): CommandResponse {
-  if (!isRecord(value) || !hasOnlyKeys(value, ["type", "action", "args"])) {
+  if (!isRecord(value)) {
     throw new Error("Invalid expected audio result");
   }
-  if (value.type === "unsupported" && value.action === undefined && value.args === undefined) {
+  if (value.type === "unsupported" && hasOnlyKeys(value, ["type"])) {
     return { type: "unsupported" };
   }
-  if (value.type !== "action" || typeof value.action !== "string" || !isRecord(value.args)) {
+  if (value.type === "error" && value.reason === "bad_audio" && hasOnlyKeys(value, ["type", "reason"])) {
+    return { type: "error", reason: "bad_audio" };
+  }
+  if (value.type !== "action" || !hasOnlyKeys(value, ["type", "action", "args"]) ||
+    typeof value.action !== "string" || !isRecord(value.args)) {
     throw new Error("Invalid expected audio action");
   }
   const parsed = parseExpectedAction(value.action, value.args);

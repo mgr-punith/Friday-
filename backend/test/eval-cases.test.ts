@@ -49,3 +49,33 @@ test("rejects audio files outside the private manifest directory", async () => {
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("loads silence and noise cases that must return bad audio", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "friday-audio-eval-"));
+  try {
+    await writeFile(path.join(directory, "noise.wav"), createPcmWav());
+    await writeFile(path.join(directory, "manifest.json"), JSON.stringify([{
+      file: "noise.wav",
+      expected: { type: "error", reason: "bad_audio" }
+    }]));
+
+    const cases = await loadAudioCases(path.join(directory, "manifest.json"));
+    assert.deepEqual(cases[0]?.expected, { type: "error", reason: "bad_audio" });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("rejects mixed expectation fields rather than hiding a mislabeled case", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "friday-audio-eval-"));
+  try {
+    await writeFile(path.join(directory, "sample.wav"), createPcmWav());
+    await writeFile(path.join(directory, "manifest.json"), JSON.stringify([{
+      file: "sample.wav",
+      expected: { type: "unsupported", reason: "bad_audio" }
+    }]));
+    await assert.rejects(loadAudioCases(path.join(directory, "manifest.json")), /Invalid expected/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
