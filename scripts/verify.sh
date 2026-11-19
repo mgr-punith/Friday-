@@ -11,6 +11,11 @@ if rg -n --glob '*.{kt,java,kts,xml}' \
     exit 1
 fi
 
+if rg -n 'unsupportedDialog|"Feature not built yet"' app/src/main; then
+    printf '%s\n' 'Unsupported requests must stay inside the main screen.' >&2
+    exit 1
+fi
+
 ./gradlew assembleDebug assembleRelease test lintDebug --console=plain "$@"
 
 shopt -s nullglob

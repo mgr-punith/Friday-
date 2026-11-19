@@ -2,7 +2,6 @@ package com.example.assistant
 
 import android.Manifest
 import android.app.Activity
-import android.app.Dialog
 import android.app.role.RoleManager
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -64,7 +63,6 @@ class MainActivity : Activity() {
     private lateinit var actionRunner: VoiceActionRunner
     private lateinit var confirmationSpeaker: ConfirmationSpeaker
     private var activeRecorder: VoiceRecorder? = null
-    private var unsupportedDialog: Dialog? = null
     private val worker: ExecutorService = Executors.newSingleThreadExecutor()
     private var state = VoiceState.IDLE
     private var resumed = false
@@ -131,8 +129,6 @@ class MainActivity : Activity() {
         generation++
         activeRecorder?.stop()
         activeRecorder = null
-        unsupportedDialog?.dismiss()
-        unsupportedDialog = null
         orbDemoRunnable?.let(orb::removeCallbacks)
         orbDemoRunnable = null
         actionRunner.cancel()
@@ -565,14 +561,6 @@ class MainActivity : Activity() {
 
     private fun showUnsupported() {
         showError("That feature isn't built yet")
-        unsupportedDialog?.dismiss()
-        unsupportedDialog = FridayDialog.show(
-            this,
-            "Feature not built yet",
-            "Friday can call contacts or numbers, set alarms and timers, open apps, go to the Home screen, and change sound mode.",
-            positive = "Got it",
-            onCancel = { unsupportedDialog = null },
-        ) { unsupportedDialog = null }
     }
 
     private fun showPermission(access: RequiredAccess) {
@@ -596,8 +584,6 @@ class MainActivity : Activity() {
         generation++
         activeRecorder?.stop()
         activeRecorder = null
-        unsupportedDialog?.dismiss()
-        unsupportedDialog = null
         actionRunner.cancel()
         if (resetUi && ::micButton.isInitialized) resetIdle()
     }

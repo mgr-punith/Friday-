@@ -4,7 +4,9 @@ export const SYSTEM_PROMPT =
   "You control an Android phone. The user speaks English. Pick exactly one function. " +
   "The speaker may use Indian English pronunciation and phrasing. Preserve spoken contact and app names. " +
   "Interpret double and triple digit words in phone numbers. " +
-  "Use unsupported for anything else. Never answer questions. Use set_timer for durations. " +
+  "For audio, use unclear_command for silence, noise, music, or words you cannot understand. Never guess an action. " +
+  "Use unsupported only for a clear request outside the supported actions. Never answer questions. " +
+  "For set_ringer_mode, copy the exact command words into utterance. Use set_timer for durations. " +
   "Use the supplied current phone time for clock times such as tomorrow.";
 
 export const FUNCTION_DECLARATIONS = [
@@ -71,14 +73,20 @@ export const FUNCTION_DECLARATIONS = [
     parameters: {
       type: "object",
       properties: {
-        mode: { type: "string", enum: ["silent", "vibrate", "normal"] }
+        mode: { type: "string", enum: ["silent", "vibrate", "normal"] },
+        utterance: { type: "string", description: "Exact command words heard in the audio or text." }
       },
-      required: ["mode"]
+      required: ["mode", "utterance"]
     }
   },
   {
+    name: "unclear_command",
+    description: "Use when audio is silence, noise, music, non-speech, or the spoken words are uncertain.",
+    parameters: { type: "object", properties: {} }
+  },
+  {
     name: "unsupported",
-    description: "Use for questions, chat, web requests, unsupported phone controls, or non-English speech.",
+    description: "Use for a clear request for questions, chat, web, unsupported phone controls, or non-English speech.",
     parameters: { type: "object", properties: {} }
   }
 ] as const;
@@ -96,7 +104,8 @@ export type ActionName =
 
 export type CommandResponse =
   | { readonly type: "action"; readonly action: ActionName; readonly args: Record<string, unknown> }
-  | { readonly type: "unsupported" };
+  | { readonly type: "unsupported" }
+  | { readonly type: "error"; readonly reason: "bad_audio" };
 
 export function parseFunctionSelection(selection: FunctionSelection): CommandResponse {
   const args = isRecord(selection.args) ? selection.args : {};
@@ -106,51 +115,65 @@ export function parseFunctionSelection(selection: FunctionSelection): CommandRes
       const name = readShortString(args, "name");
       return name && hasOnlyKeys(args, ["name"])
         ? action("call_contact", { name })
-        : unsupported();
+        : badAudio();
     }
     case "call_number": {
       const number = readShortString(args, "number", 40);
       return number && hasOnlyKeys(args, ["number"])
         ? action("call_number", { number })
-        : unsupported();
+        : badAudio();
     }
     case "set_alarm": {
       const hour = readInteger(args, "hour", 0, 23);
       const minute = readInteger(args, "minute", 0, 59);
       const label = readOptionalShortString(args, "label");
-      if (hour === undefined || minute === undefined || label === null) return unsupported();
-      if (!hasOnlyKeys(args, ["hour", "minute", "label"])) return unsupported();
+      if (hour === undefined || minute === undefined || label === null) return badAudio();
+      if (!hasOnlyKeys(args, ["hour", "minute", "label"])) return badAudio();
       return action("set_alarm", label === undefined ? { hour, minute } : { hour, minute, label });
     }
     case "set_timer": {
       const seconds = readInteger(args, "seconds", 1, 2_147_483_647);
       return seconds !== undefined && hasOnlyKeys(args, ["seconds"])
         ? action("set_timer", { seconds })
-        : unsupported();
+        : badAudio();
     }
     case "open_app": {
       const name = readShortString(args, "name");
       return name && hasOnlyKeys(args, ["name"])
         ? action("open_app", { name })
-        : unsupported();
+        : badAudio();
     }
     case "close_app": {
       const name = readOptionalShortString(args, "name");
-      if (name === null || !hasOnlyKeys(args, ["name"])) return unsupported();
+      if (name === null || !hasOnlyKeys(args, ["name"])) return badAudio();
       return action("close_app", name === undefined ? {} : { name });
     }
     case "set_ringer_mode": {
       const mode = args.mode;
+      const utterance = readShortString(args, "utterance", 160);
       return (mode === "silent" || mode === "vibrate" || mode === "normal") &&
-        hasOnlyKeys(args, ["mode"])
+        utterance !== undefined && matchesRingerCommand(mode, utterance) &&
+        hasOnlyKeys(args, ["mode", "utterance"])
         ? action("set_ringer_mode", { mode })
-        : unsupported();
+        : badAudio();
     }
+    case "unclear_command":
+      return badAudio();
     case "unsupported":
-      return unsupported();
+      return hasOnlyKeys(args, []) ? unsupported() : badAudio();
     default:
-      return unsupported();
+      return badAudio();
   }
+}
+
+export function parseExpectedAction(name: string, args: unknown): CommandResponse {
+  if (name === "set_ringer_mode" && isRecord(args) && hasOnlyKeys(args, ["mode"])) {
+    const mode = args.mode;
+    if (mode === "silent" || mode === "vibrate" || mode === "normal") {
+      return action("set_ringer_mode", { mode });
+    }
+  }
+  return parseFunctionSelection({ name, args });
 }
 
 function action(actionName: ActionName, args: Record<string, unknown>): CommandResponse {
@@ -159,6 +182,17 @@ function action(actionName: ActionName, args: Record<string, unknown>): CommandR
 
 function unsupported(): CommandResponse {
   return { type: "unsupported" };
+}
+
+function badAudio(): CommandResponse {
+  return { type: "error", reason: "bad_audio" };
+}
+
+function matchesRingerCommand(mode: "silent" | "vibrate" | "normal", utterance: string): boolean {
+  const words: string[] = utterance.toLowerCase().match(/[a-z]+/g) ?? [];
+  if (mode === "silent") return words.includes("silent") || words.includes("mute") || words.includes("muted");
+  if (mode === "vibrate") return words.some((word) => word.startsWith("vibrat"));
+  return words.includes("normal") || words.includes("ring") || words.includes("ringer");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -177,6 +177,22 @@ object VoiceLogicTests {
         repeat(50) { steadyNoise.add(0.04f) }
         expect(steadyNoise.hasSpeech && !steadyNoise.hasClearCommand, "Sustained steady noise never becomes a clear command")
         expect(!steadyNoise.endedBySilence, "Continuous noise does not create a natural speech end")
+        val broadbandNoise = SpeechEndDetector(
+            minimumSpeechFrames = 4,
+            silenceFramesToStop = 4,
+            calibrationFrames = 0,
+            minimumCommandFrames = 20,
+            minimumDynamicFrames = 6,
+            minimumStrongFrames = 10,
+            minimumVoicedFrames = 6,
+        )
+        val broadbandRandom = Random(711)
+        repeat(60) {
+            val noiseFrame = ShortArray(320) { broadbandRandom.nextInt(-12_000, 12_001).toShort() }
+            broadbandNoise.add(PcmProcessor().analyze(noiseFrame))
+        }
+        repeat(4) { broadbandNoise.add(PcmProcessor.Level(0f, 0f, 0f, 0f)) }
+        expect(!broadbandNoise.hasClearCommand, "Changing broadband noise lacks enough voiced speech frames")
         val tapWithLowNoise = SpeechEndDetector(
             minimumSpeechFrames = 4,
             silenceFramesToStop = 5,

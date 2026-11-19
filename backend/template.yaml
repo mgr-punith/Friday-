@@ -15,7 +15,7 @@ Parameters:
     Description: Name of the SSM SecureString that contains the JWT signing key.
   GeminiModel:
     Type: String
-    Default: gemini-3.5-flash-lite
+    Default: gemini-3.1-flash-lite
     AllowedPattern: ^[A-Za-z0-9._-]+$
   GeminiThinkingLevel:
     Type: String

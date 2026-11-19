@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { parseFunctionSelection, type CommandResponse } from "../src/core/action-schema";
+import { parseExpectedAction, type CommandResponse } from "../src/core/action-schema";
 import type { CommandInput } from "../src/core/contracts";
 import { isFridayWav } from "../src/core/wav";
 
@@ -83,14 +83,14 @@ function parseExpected(value: unknown): CommandResponse {
   if (value.type !== "action" || typeof value.action !== "string" || !isRecord(value.args)) {
     throw new Error("Invalid expected audio action");
   }
-  const parsed = parseFunctionSelection({ name: value.action, args: value.args });
+  const parsed = parseExpectedAction(value.action, value.args);
   if (parsed.type !== "action") throw new Error("Invalid expected audio action arguments");
   return parsed;
 }
 
 function expectedResponse(action: string, args: Record<string, unknown>): CommandResponse {
   if (action === "unsupported") return { type: "unsupported" };
-  const parsed = parseFunctionSelection({ name: action, args });
+  const parsed = parseExpectedAction(action, args);
   if (parsed.type !== "action") throw new Error(`Invalid expected action: ${action}`);
   return parsed;
 }
