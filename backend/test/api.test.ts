@@ -220,7 +220,8 @@ test("provider timeout and invalid function arguments stay inside the API contra
       body: JSON.stringify({ text: "Set an alarm" })
     })
   );
-  assert.deepEqual(body(invalidResponse), { type: "unsupported" });
+  assert.equal(invalidResponse.statusCode, 400);
+  assert.deepEqual(body(invalidResponse), { type: "error", reason: "bad_audio" });
 });
 
 test("unknown routes return a small no-store response", async () => {

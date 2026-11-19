@@ -45,7 +45,7 @@ Add each value through Vercel project settings. Apply them to Production and Pre
 
 - `GEMINI_API_KEY`: paid-tier Gemini key for production
 - `JWT_SIGNING_KEY`: random value with at least 32 characters
-- `GEMINI_MODEL`: `gemini-3.5-flash-lite`
+- `GEMINI_MODEL`: `gemini-3.1-flash-lite`
 - `GEMINI_THINKING_LEVEL`: `MINIMAL`
 - `GEMINI_TIMEOUT_MS`: `10000`
 

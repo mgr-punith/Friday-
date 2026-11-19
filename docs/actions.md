@@ -17,3 +17,5 @@ All actions return `Success(confirmation)`, `NeedsPermission(which)`, or `Failed
 Clock intents cannot prove the other app saved an alarm or timer, so confirmations say “Alarm request sent…” and “Timer request sent…”. Calling says “Calling…” after Android starts the call UI; it does not promise a connected call. Going Home says “Went to home screen”.
 
 The test screen and voice screen ask before placing a call. The backend validates Gemini-selected actions against this contract. The visible app records and sends a command after the user taps the microphone. Wake-phrase detection remains out of this milestone.
+
+For audio, Gemini can also select `unclear_command` when it hears silence, noise, music, or uncertain words. The backend returns `{"type":"error","reason":"bad_audio"}` and Android does not run an action. A clear unsupported request still returns `{"type":"unsupported"}`. Ringer changes include the exact command words inside the private Gemini function call; the backend checks for a matching silent, vibrate, or normal-mode phrase and removes those words from its response.

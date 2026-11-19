@@ -143,7 +143,10 @@ async function handleCommand(
 
   try {
     const result = await dependencies.assistant.select(input, now);
-    return commandSuccess(parseFunctionSelection(result.selection), result.durationMs);
+    const response = parseFunctionSelection(result.selection);
+    return response.type === "error"
+      ? commandError(400, response.reason, result.durationMs)
+      : commandSuccess(response, result.durationMs);
   } catch (error) {
     if (error instanceof AssistantProviderError) {
       const status = error.code === "timeout" ? 504 : 503;

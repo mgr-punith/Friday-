@@ -5,7 +5,7 @@ import { GeminiProvider, type FetchLike } from "../src/providers/gemini";
 import { StaticSecrets, createPcmWav } from "./helpers";
 
 const CONFIG = {
-  model: "gemini-3.5-flash-lite",
+  model: "gemini-3.1-flash-lite",
   thinkingLevel: "MINIMAL" as const,
   timeoutMs: 500
 };
@@ -23,7 +23,7 @@ test("sends a compact forced-function request for text", async () => {
   const provider = new GeminiProvider(CONFIG, new StaticSecrets(), fetcher);
   const result = await provider.select({ kind: "text", text: "Open camera" }, "2026-11-17T14:00:00+05:30");
 
-  assert.equal(capturedUrl.includes("gemini-3.5-flash-lite:generateContent"), true);
+  assert.equal(capturedUrl.includes("gemini-3.1-flash-lite:generateContent"), true);
   const request = JSON.parse(String(capturedInit?.body)) as Record<string, any>;
   assert.equal(request.toolConfig.functionCallingConfig.mode, "ANY");
   assert.equal(request.generationConfig.temperature, 0);
@@ -31,6 +31,11 @@ test("sends a compact forced-function request for text", async () => {
   assert.equal(request.generationConfig.thinkingConfig.thinkingLevel, "MINIMAL");
   assert.match(request.systemInstruction.parts[0].text, /Indian English pronunciation and phrasing/);
   assert.match(request.systemInstruction.parts[0].text, /double and triple digit words/);
+  assert.match(request.systemInstruction.parts[0].text, /Never guess an action/);
+  assert.equal(
+    request.tools[0].functionDeclarations.some((declaration: { name: string }) => declaration.name === "unclear_command"),
+    true
+  );
   assert.equal(request.contents[0].parts[1].text, "Open camera");
   assert.deepEqual(result.selection, { name: "open_app", args: { name: "Camera" } });
 });

@@ -142,6 +142,7 @@ class SpeechEndDetector(
     private val minimumDynamicFrames: Int = 6,
     private val minimumStrongFrames: Int = 10,
     private val minimumVoicedFrames: Int = minOf(6, minimumCommandFrames),
+    private val minimumVoicedPercent: Int = 35,
 ) {
     private var candidateSpeechFrames = 0
     private var candidateStrongFrames = 0
@@ -166,7 +167,8 @@ class SpeechEndDetector(
     val hasClearCommand: Boolean
         get() = hasSpeech && speechFrames >= minimumCommandFrames &&
             strongFrames >= minimumStrongFrames && dynamicFrames >= minimumDynamicFrames &&
-            voicedFrames >= minimumVoicedFrames
+            voicedFrames >= minimumVoicedFrames &&
+            voicedFrames * 100 >= speechFrames * minimumVoicedPercent
     val isCalibrated: Boolean
         get() = frameIndex >= calibrationFrames
 
