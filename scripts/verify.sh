@@ -18,6 +18,14 @@ fi
 
 ./gradlew assembleDebug assembleRelease test lintDebug --console=plain "$@"
 
+# A recording import target belongs only in debug builds.
+if rg -l 'AudioEvalImportActivity|Friday audio test' \
+    app/build/intermediates/merged_manifest/release \
+    app/build/intermediates/merged_manifests/release; then
+    printf '%s\n' 'The release manifest includes the debug recording importer.' >&2
+    exit 1
+fi
+
 shopt -s nullglob
 friday_release_apks=(app/build/outputs/apk/release/*.apk)
 if (( ${#friday_release_apks[@]} == 0 )); then

@@ -4,7 +4,11 @@ Hey Friday is a small, fast Android voice assistant for phone commands: calls, a
 
 ## Current milestone
 
-Milestone 4 adds Android entry points around the existing voice loop. You can keep a silent “Friday ready” notification, add a Quick Settings tile or home-screen widget, and choose Friday as the power-button assistant. Each entry point opens the visible app and starts one recording. The microphone stays off until you tap an entry point or invoke the selected assistant.
+In milestone 5, we measure command accuracy and latency before changing the production model or audio format. Use the evaluation harness to compare two Gemini models with a Groq two-step alternative. It reports median, P95, maximum latency, failure counts, and machine-readable results. See [model measurements](docs/model-notes.md). Production still uses Gemini 3.1 Flash-Lite.
+
+Debug builds include an audio import target for developer recordings shared from the phone's recorder. These test files stay in app-specific storage until removed. Release builds exclude the importer, and normal voice capture does not save audio. See [recording tests](docs/testing.md).
+
+Milestone 4 added Android entry points around the existing voice loop. You can keep a silent “Friday ready” notification, add a Quick Settings tile or home-screen widget, and choose Friday as the power-button assistant. Each entry point opens the visible app and starts one recording. The microphone stays off until you tap an entry point or invoke the selected assistant.
 
 Tap the microphone to record one 16 kHz command. Friday warms the Vercel Function while you speak, uploads a trimmed WAV, receives one validated action, then runs it from the visible activity. The app registers an anonymous install ID in the background and refreshes its token before expiry. Successful actions can use Android TextToSpeech for a short confirmation. Friday keeps the on-screen confirmation when no English TTS engine is available.
 
@@ -12,7 +16,7 @@ One Vercel Function in Mumbai accepts 16 kHz WAV or debug text, calls Gemini thr
 
 The native Kotlin framework-Views app includes phone actions and permission setup. The action test screen takes typed inputs and performs calls, clock requests, app launches, Home navigation, and ringer changes. Contacts and launcher labels are resolved on a worker thread and stay on the device. Weak matches fail; ambiguous matches ask for a choice. Calls require a final confirmation showing the resolved target. Missing permissions, invalid inputs, and unavailable Android handlers return short feedback.
 
-Friday treats each request as a phone command, selects one supported action, resolves device data on the phone, and completes the action from the visible UI. If the request needs a feature outside the current action set, the app shows a Friday-styled popup with the commands available now. It does not claim that an unavailable feature ran.
+Friday treats each request as a phone command, selects one supported action, resolves device data on the phone, and completes the action from the visible UI. If the request needs a feature outside the current action set, the main screen says “That feature isn't built yet”. Friday does not open a modal or claim that the action ran.
 
 Setup shows Friday's disclosure before each microphone, contacts, or phone permission prompt. Silent mode has a separate disclosure before Android's Notification Policy settings. The microphone disclosure explains that recorded commands go to Friday's Vercel backend and Google Gemini, and that Friday does not store audio. Access is optional and can be managed later. Friday uses compact graphite controls and its own dialogs. Clock confirmations report that a request was sent, and Home navigation never claims another app was closed. See [the action contract](docs/actions.md).
 

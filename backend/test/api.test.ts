@@ -189,6 +189,21 @@ test("rate limiting fails closed before Gemini", async () => {
   assert.equal(assistant.calls.length, 0);
 });
 
+test("production rejects benchmark M4A uploads before selecting an action", async () => {
+  const { api, assistant } = harness();
+  const response = await api.handle(event("POST", "/v1/command", {
+    headers: {
+      authorization: `Bearer ${token()}`,
+      "content-type": "audio/mp4",
+      "x-now": "2026-11-17T14:00:00+05:30"
+    },
+    body: Buffer.from("benchmark audio").toString("base64"),
+    isBase64Encoded: true
+  }));
+  assert.equal(response.statusCode, 400);
+  assert.equal(assistant.calls.length, 0);
+});
+
 test("provider timeout and invalid function arguments stay inside the API contract", async () => {
   const timedOut = harness();
   timedOut.assistant.failure = new AssistantProviderError("timeout", 6000);

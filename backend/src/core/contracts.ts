@@ -1,5 +1,7 @@
+export type AudioMimeType = "audio/wav" | "audio/mp4";
+
 export type CommandInput =
-  | { readonly kind: "audio"; readonly bytes: Uint8Array; readonly mimeType: "audio/wav" }
+  | { readonly kind: "audio"; readonly bytes: Uint8Array; readonly mimeType: AudioMimeType }
   | { readonly kind: "text"; readonly text: string };
 
 export interface FunctionSelection {

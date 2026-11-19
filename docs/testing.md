@@ -35,7 +35,32 @@ sam build --template-file template.yaml
 
 The Node tests mock Gemini, Redis, DynamoDB, and SSM. They cover JWT tampering and expiry, WAV structure, Vercel request adaptation, Vercel route configuration, authentication, input limits, action validation, one-call enforcement, Gemini retry and timeout handling, blocked installs, and atomic usage limits. `npm run build` fails if either backend bundle exceeds 5 MB. Vercel runs the platform build after the repository is linked; the local check does not need project credentials.
 
-`npm run eval` sends the phrases in [test-phrases.md](test-phrases.md) to the configured Gemini model. It needs a key in ignored `backend/.env`, uses real quota, and prints accuracy plus median and P95 Gemini latency. CI does not run it because no real key belongs in GitHub checks.
+`npm run eval` sends the phrases in [test-phrases.md](test-phrases.md) to the selected evaluation provider. Copy `backend/.env.eval.example` to ignored `backend/.env` and add the required development key. The run uses real quota and prints overall accuracy, accuracy among completed responses, failures, median, P95, maximum latency, and a `SUMMARY_JSON` line. End-to-end latency includes wrong results, request failures, and timeouts. Stage latency includes stages that returned. CI does not run the evaluation because no real key belongs in GitHub checks.
+
+Use `EVAL_OFFSET` and `EVAL_LIMIT` to resume a rate-limited suite without repeating earlier requests. Case numbers follow the selected manifest or phrase table. An offset of 10 starts at case 11. Keep a copy of each chunk's summary; the runner does not merge chunks.
+
+Evaluation accepts capitalization, spacing, and accents that Android's name matcher handles. It ignores visual separators in phone numbers and the optional app name in Home navigation. It still rejects changed phone-number digits, different names, wrong timer or alarm values, wrong actions, and noise that selects an action. Output includes case numbers and mismatch categories, with no command text or transcripts.
+
+Use the same phrase file, private WAV manifest, request delay, and timeout for each model comparison. Change only the provider or model variables between runs:
+
+```bash
+cd backend
+
+EVAL_PROVIDER=gemini GEMINI_MODEL=gemini-3.1-flash-lite npm run eval
+EVAL_PROVIDER=gemini GEMINI_MODEL=<second-audio-capable-model> npm run eval
+EVAL_PROVIDER=groq npm run eval
+```
+
+The Groq text run measures only action classification. Use `npm run eval:audio` for the full sequential path through Whisper Large V3 Turbo and the action model. Node uses plain `fetch` for these requests. This code adds no production dependency and does not change the deployed provider.
+
+For the AAC upload experiment, run each audio suite once with WAV and once with M4A:
+
+```bash
+EVAL_AUDIO_FORMAT=wav npm run eval:audio -- ../docs/indian-english-audio-eval.json
+EVAL_AUDIO_FORMAT=m4a npm run eval:audio -- ../docs/indian-english-audio-eval.json
+```
+
+The M4A run calls local `ffmpeg` with mono 16 kHz AAC at 32 kbit/s before the API timing begins. It reports upload sizes with accuracy and latency. These numbers exclude conversion time, phone recording, Friday backend limits, and Android actions. Friday's Android app and production backend still accept WAV only.
 
 Use real recordings to measure Indian English audio accuracy. Copy [indian-english-audio-eval.example.json](indian-english-audio-eval.example.json) to `docs/indian-english-audio-eval.json`, record 10 to 20 commands as 16 kHz mono 16-bit PCM WAV files under `docs/private-audio/`, and run:
 
@@ -45,6 +70,10 @@ npm run eval:audio -- ../docs/indian-english-audio-eval.json
 ```
 
 Git ignores the manifest and recordings. Keep names in the manifest aligned with the words you spoke. The result measures action and argument accuracy from audio; the text evaluation does not measure accent recognition.
+
+Debug builds include a “Friday audio test” target in Android's Share menu. Sharing an audio file imports up to 5 MB into Friday's app-specific `files/audio-eval/recording.audio` folder. ADB can pull this file for local tests. The import does not send audio to a backend or perform a phone action. The release manifest must exclude this activity; `scripts/verify.sh` enforces that boundary. Normal voice commands remain in memory and do not use this storage.
+
+For recordings with several commands, check each clip's start and end before labeling it. Keep unclear extra speech out of scored cases. Test silence and noise with `{"type":"error","reason":"bad_audio"}` as the expectation. The backend benchmark does not prove the phone's local speech detector rejected the same clip.
 
 ## Phone checklist
 
