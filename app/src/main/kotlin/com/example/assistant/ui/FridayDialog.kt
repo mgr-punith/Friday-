@@ -105,10 +105,10 @@ object FridayDialog {
             )
             background = AppUi.surface(context, 16, R.color.surface, R.color.border)
         }
-        content.addView(AppUi.text(activity, title, 20f, bold = true), AppUi.params(activity, 8))
+        content.addView(AppUi.text(activity, title, 18f, bold = true), AppUi.params(activity, 8))
         val body = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         body.addView(
-            AppUi.text(activity, message, 15f, secondary = true).apply {
+            AppUi.text(activity, message, 14f, secondary = true).apply {
                 importantForAccessibility = TextView.IMPORTANT_FOR_ACCESSIBILITY_YES
             },
             AppUi.params(activity, 16),

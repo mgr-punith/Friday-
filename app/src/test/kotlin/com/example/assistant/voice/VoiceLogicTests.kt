@@ -4,6 +4,9 @@ import com.example.assistant.actions.PhoneAction
 import com.example.assistant.actions.RingerMode
 import com.example.assistant.entry.EntryPointPolicy
 import com.example.assistant.ui.OrbMotionMath
+import com.example.assistant.ui.ActionPresentation
+import com.example.assistant.ui.TabNavigation
+import com.example.assistant.ui.Destination
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.random.Random
@@ -31,6 +34,36 @@ object VoiceLogicTests {
                 "$name rejects malformed arguments",
             )
         }
+
+        val tabs = TabNavigation()
+        expect(tabs.current == Destination.HOME, "Main navigation starts on Home")
+        expect(!tabs.select(Destination.HOME), "Reselecting Home does not reload its view")
+        expect(tabs.select(Destination.SETTINGS), "Settings changes the visible tab")
+        expect(!tabs.select(Destination.SETTINGS), "Reselecting Settings preserves its scroll state")
+        expect(tabs.select(Destination.HOME), "Returning Home changes the visible tab")
+        expect(tabs.current == Destination.HOME, "Returning Home preserves the navigation destination")
+
+        val speech = SpeechSession()
+        val firstSpeech = speech.begin()
+        expect(speech.accepts(firstSpeech), "The current utterance can report playback")
+        speech.cancel()
+        expect(!speech.accepts(firstSpeech), "Cancelled TTS cannot restart playback after engine startup")
+        val replacementSpeech = speech.begin()
+        expect(!speech.finish(firstSpeech), "A stale completion cannot stop a replacement utterance")
+        expect(speech.accepts(replacementSpeech), "Replacement speech stays active")
+        expect(speech.finish(replacementSpeech), "The current completion ends playback")
+        expect(!speech.finish(replacementSpeech), "Duplicate TTS completion is ignored")
+        expect(!speech.accepts(null), "Missing TTS identity cannot update the screen")
+        expect(ActionPresentation.describe(PhoneAction.SetTimer(3_661)) == "Set timer · 1 hour 1 minute 1 second",
+            "The request card preserves mixed timer units")
+        expect(ActionPresentation.describe(PhoneAction.SetTimer(60)) == "Set timer · 1 minute",
+            "The request card omits zero timer units")
+        expect(ActionPresentation.describe(PhoneAction.SetAlarm(6, 5)) == "Set alarm · 06:05",
+            "The request card preserves alarm minutes")
+        expect(ActionPresentation.describe(PhoneAction.CloseApp("Calculator")) == "Go to home screen",
+            "The request card does not claim to close another app")
+        expect(ActionPresentation.describe(PhoneAction.SetRingerMode(RingerMode.SILENT)) == "Turn on silent mode",
+            "The request card describes silent without DND")
 
         val samples = shortArrayOf(0, 1, -1, 32767, -32768, 1400, -2200)
         val wav = WavEncoder.encode(samples)
@@ -83,6 +116,9 @@ object VoiceLogicTests {
         expect(emptyLevel == PcmProcessor.Level(0f, 0f, 0f, 0f), "Empty audio produces zero levels")
         val tone = ShortArray(320) { index -> (sin(2.0 * PI * index / 16.0) * 9_000).toInt().toShort() }
         val toneLevel = PcmProcessor().analyze(tone)
+        val playbackLevel = PcmProcessor().analyze(tone, analyzeVoicing = false)
+        expect(playbackLevel.copy(voicing = toneLevel.voicing) == toneLevel,
+            "TTS playback keeps identical energy and spectrum while skipping speech classification")
         expect(toneLevel.amplitude in 0.1f..1f, "Speech-level PCM produces normalized amplitude")
         expect(toneLevel.low in 0f..1f && toneLevel.mid in 0f..1f && toneLevel.high in 0f..1f, "Spectrum levels stay normalized")
         expect(toneLevel.rms in 0.05f..0.3f, "Analyzer exposes raw RMS for speech detection")

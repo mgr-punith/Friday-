@@ -15,6 +15,8 @@
     <color name="control_primary">#D9DEEF</color>
     <color name="control_primary_text">#15171B</color>
     <color name="control_pressed">#4B5268</color>
+    <color name="navigation_surface">#24262B</color>
+    <color name="navigation_selected">#3B3E45</color>
 
     <color name="orb_glow">#8A9BEF</color>
     <color name="orb_base_light">#8497E9</color>

@@ -18,6 +18,11 @@ class FridayBackendClient(
     private val appContext = context.applicationContext
     private val identity = InstallIdentity(appContext)
     private val baseUrl = BackendEndpoint.normalize(baseUrl)
+    @Volatile private var activeCommand: HttpURLConnection? = null
+
+    fun cancelCommand() {
+        activeCommand?.disconnect()
+    }
 
     fun warmAsync() {
         Thread {
@@ -50,20 +55,24 @@ class FridayBackendClient(
     }
 
     @Throws(IOException::class)
-    fun sendCommand(wavBytes: ByteArray): CommandResult {
+    fun sendCommand(wavBytes: ByteArray, cancelled: () -> Boolean = { false }): CommandResult {
         require(VoicePayload.isValid(wavBytes)) { "invalid_wav" }
+        checkCancellation(cancelled)
         if (!hasNetwork()) throw IOException("offline")
         var token = ensureToken(force = false)
-        var result = sendAuthorized(wavBytes, token)
+        checkCancellation(cancelled)
+        var result = sendAuthorized(wavBytes, token, cancelled)
         if (result.response == VoiceCommandResponse.Error(VoiceCommandResponse.Reason.UNAUTHORIZED)) {
+            checkCancellation(cancelled)
             identity.clearToken()
             token = ensureToken(force = true)
-            result = sendAuthorized(wavBytes, token)
+            checkCancellation(cancelled)
+            result = sendAuthorized(wavBytes, token, cancelled)
         }
         return result
     }
 
-    private fun sendAuthorized(wavBytes: ByteArray, token: String): CommandResult {
+    private fun sendAuthorized(wavBytes: ByteArray, token: String, cancelled: () -> Boolean): CommandResult {
         val started = SystemClock.elapsedRealtime()
         val connection = connection("/v1/command", "POST", CONNECT_TIMEOUT_MS, READ_TIMEOUT_MS).apply {
             setRequestProperty("content-type", "audio/wav")
@@ -72,17 +81,27 @@ class FridayBackendClient(
             setFixedLengthStreamingMode(wavBytes.size)
             doOutput = true
         }
-        return connection.useResponse { value ->
-            value.outputStream.use { it.write(wavBytes) }
-            val code = value.responseCode
-            val body = value.responseBody(code)
-            val serverTiming = value.getHeaderField("Server-Timing")
-            val response = VoiceProtocol.parseCommand(body, serverTiming)
-            CommandResult(
-                response,
-                CommandTimings(SystemClock.elapsedRealtime() - started, VoiceProtocol.parseServerDuration(serverTiming)),
-            )
+        activeCommand = connection
+        return try {
+            connection.useResponse { value ->
+                checkCancellation(cancelled)
+                value.outputStream.use { it.write(wavBytes) }
+                val code = value.responseCode
+                val body = value.responseBody(code)
+                val serverTiming = value.getHeaderField("Server-Timing")
+                val response = VoiceProtocol.parseCommand(body, serverTiming)
+                CommandResult(
+                    response,
+                    CommandTimings(SystemClock.elapsedRealtime() - started, VoiceProtocol.parseServerDuration(serverTiming)),
+                )
+            }
+        } finally {
+            if (activeCommand === connection) activeCommand = null
         }
+    }
+
+    private fun checkCancellation(cancelled: () -> Boolean) {
+        if (cancelled()) throw IOException("cancelled")
     }
 
     @Synchronized
