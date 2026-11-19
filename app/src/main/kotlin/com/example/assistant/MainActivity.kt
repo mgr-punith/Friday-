@@ -2,21 +2,14 @@ package com.example.assistant
 
 import android.Manifest
 import android.app.Activity
-import android.app.role.RoleManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
-import android.provider.Settings
 import android.util.Log
-import android.view.Gravity
 import android.view.View
-import android.view.ViewGroup
 import android.widget.Button
-import android.widget.FrameLayout
-import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.TextView
 import com.example.assistant.actions.ActionResult
 import com.example.assistant.actions.AndroidActionExecutor
@@ -24,10 +17,12 @@ import com.example.assistant.actions.RequiredAccess
 import com.example.assistant.entry.EntryPointPolicy
 import com.example.assistant.entry.FridayEntryPoints
 import com.example.assistant.entry.ReadyNotification
-import com.example.assistant.ui.AppUi
 import com.example.assistant.ui.AssistantOrbView
-import com.example.assistant.ui.FridayDialog
 import com.example.assistant.ui.MicButtonView
+import com.example.assistant.ui.VoiceSurface
+import com.example.assistant.ui.ActionPresentation
+import com.example.assistant.ui.Destination
+import com.example.assistant.ui.TabHostView
 import com.example.assistant.voice.CommandResult
 import com.example.assistant.voice.ConfirmationSpeaker
 import com.example.assistant.voice.CaptureResult
@@ -45,10 +40,10 @@ import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
-import kotlin.math.min
 import kotlin.math.sin
 
-class MainActivity : Activity() {
+open class MainActivity : Activity() {
+    protected open val compactSurface = false
     private enum class VoiceState { IDLE, LISTENING, PROCESSING, ACTION }
 
     private lateinit var orb: AssistantOrbView
@@ -56,8 +51,17 @@ class MainActivity : Activity() {
     private lateinit var micLabel: TextView
     private lateinit var detail: TextView
     private lateinit var permissionButton: Button
-    private lateinit var readyNotificationButton: Button
-    private lateinit var assistantRoleButton: Button
+    private lateinit var surface: VoiceSurface
+    private var tabHost: TabHostView? = null
+    private var settingsPanel: SettingsPanel? = null
+    private var settingsBackRegistered = false
+    private val settingsBack = if (Build.VERSION.SDK_INT >= 33) SettingsBackHandler(this) {
+        selectDestination(Destination.HOME)
+    } else null
+    private var lastConfirmation: String? = null
+    private var speaking = false
+    private var speechAvailable = true
+    private var speechAudioSeen = false
     private lateinit var backend: FridayBackendClient
     private lateinit var actionExecutor: AndroidActionExecutor
     private lateinit var actionRunner: VoiceActionRunner
@@ -65,8 +69,8 @@ class MainActivity : Activity() {
     private var activeRecorder: VoiceRecorder? = null
     private val worker: ExecutorService = Executors.newSingleThreadExecutor()
     private var state = VoiceState.IDLE
-    private var resumed = false
-    private var generation = 0
+    @Volatile private var resumed = false
+    @Volatile private var generation = 0
     private var listenStartedMs = 0L
     private var lastRecordMs = 0L
     private var lastUploadMs = 0L
@@ -81,8 +85,12 @@ class MainActivity : Activity() {
         backend = FridayBackendClient(this)
         actionExecutor = AndroidActionExecutor(this)
         actionRunner = VoiceActionRunner(this, ::onActionResult)
-        confirmationSpeaker = ConfirmationSpeaker(this)
+        confirmationSpeaker = ConfirmationSpeaker(this, ::onSpeechState, ::onSpeechAudio) { available ->
+            speechAvailable = available
+            if (!available) surface.replay.visibility = View.GONE
+        }
         setContentView(createContentView())
+        if (savedInstanceState?.getBoolean("settings_selected") == true) selectDestination(Destination.SETTINGS)
         consumeEntryPointIntent(intent)
         if (BuildConfig.DEBUG && intent.getBooleanExtra(DEBUG_ORB_VOICE_EXTRA, false)) startOrbVoiceDemo()
         backend.registerInBackground()
@@ -96,9 +104,14 @@ class MainActivity : Activity() {
         super.onResume()
         resumed = true
         restoreReadyNotificationIfNeeded()
-        updateReadyNotificationButton()
-        updateAssistantRoleButton()
+        settingsPanel?.refresh()
         maybeStartFromEntryPoint()
+        if (BuildConfig.DEBUG) {
+            intent.getStringExtra("debug_ui_state")?.let { scenario ->
+                intent.removeExtra("debug_ui_state")
+                showDebugState(scenario)
+            }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -106,6 +119,12 @@ class MainActivity : Activity() {
         setIntent(intent)
         consumeEntryPointIntent(intent)
         maybeStartFromEntryPoint()
+        if (BuildConfig.DEBUG) {
+            intent.getStringExtra("debug_ui_state")?.let { scenario ->
+                intent.removeExtra("debug_ui_state")
+                showDebugState(scenario)
+            }
+        }
     }
 
     @Deprecated("Android Activity result compatibility for the dependency-free framework UI")
@@ -125,7 +144,27 @@ class MainActivity : Activity() {
         super.onPause()
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean("settings_selected", tabHost?.destination == Destination.SETTINGS)
+        super.onSaveInstanceState(outState)
+    }
+
+    override fun onKeyUp(keyCode: Int, event: android.view.KeyEvent?): Boolean {
+        if (keyCode == android.view.KeyEvent.KEYCODE_BACK &&
+            tabHost?.destination == Destination.SETTINGS) {
+            selectDestination(Destination.HOME)
+            return true
+        }
+        return super.onKeyUp(keyCode, event)
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        settingsPanel?.onPermissionResult(requestCode, grantResults)
+    }
+
     override fun onDestroy() {
+        if (settingsBackRegistered) settingsBack?.unregister()
         generation++
         activeRecorder?.stop()
         activeRecorder = null
@@ -138,105 +177,43 @@ class MainActivity : Activity() {
     }
 
     private fun createContentView(): View {
-        val screen = ScrollView(this).apply {
-            isFillViewport = true
-            setBackgroundColor(getColor(R.color.screen_background))
-            overScrollMode = View.OVER_SCROLL_NEVER
-        }
-        val frame = FrameLayout(this)
-        val contentWidth = min(dp(440), resources.displayMetrics.widthPixels)
-        val content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(20), dp(20), dp(32))
-        }
-        frame.addView(
-            content,
-            FrameLayout.LayoutParams(contentWidth, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            },
+        surface = VoiceSurface(
+            this, compactSurface,
+            onMic = ::onMicPressed,
+            onCancel = { cancelVoiceWork(resetUi = true) },
+            onPermissions = { launchSetup(resumeAfterSetup = false) },
+            onClose = { finish() },
+            onReplay = { lastConfirmation?.let(confirmationSpeaker::speak) },
         )
-        screen.addView(frame, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        content.addView(AppUi.text(this, "Friday", 24f, bold = true), linearParams(bottom = 4))
-        content.addView(AppUi.text(this, "Phone commands", 14f, secondary = true), linearParams(bottom = 20))
+        orb = surface.orb
+        micButton = surface.mic
+        micLabel = surface.title
+        detail = surface.detail
+        permissionButton = surface.permission
+        if (compactSurface) return surface
+        return TabHostView(this, surface, createSettings = {
+            SettingsPanel(this) { launchSetup(resumeAfterSetup = false) }.also {
+                settingsPanel = it
+                it.refresh()
+            }.view
+        }, onSelect = ::selectDestination).also { tabHost = it }
+    }
 
-        orb = AssistantOrbView(this).apply {
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+    private fun selectDestination(destination: Destination) {
+        val host = tabHost ?: return
+        if (host.destination == destination) return
+        if (destination == Destination.SETTINGS) cancelVoiceWork(resetUi = state != VoiceState.IDLE)
+        host.select(destination)
+        settingsPanel?.refresh()
+        if (Build.VERSION.SDK_INT >= 33) {
+            if (destination == Destination.SETTINGS && !settingsBackRegistered) {
+                settingsBack?.register()
+                settingsBackRegistered = true
+            } else if (destination == Destination.HOME && settingsBackRegistered) {
+                settingsBack?.unregister()
+                settingsBackRegistered = false
+            }
         }
-        val orbStage = FrameLayout(this).apply {
-            addView(
-                orb,
-                FrameLayout.LayoutParams(dp(176), dp(176)).apply { gravity = Gravity.CENTER },
-            )
-        }
-        content.addView(
-            orbStage,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(200)).apply {
-                bottomMargin = dp(8)
-            },
-        )
-
-        detail = AppUi.text(this, IDLE_DETAIL, 14f, secondary = true).apply {
-            gravity = Gravity.CENTER
-            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
-        }
-        micButton = MicButtonView(this).apply {
-            contentDescription = "Start listening"
-            setOnClickListener { onMicPressed() }
-        }
-        micLabel = AppUi.text(this, IDLE_LABEL, 15f, bold = true).apply {
-            gravity = Gravity.CENTER
-            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
-        }
-        permissionButton = AppUi.button(this, "Manage permissions", AppUi.ButtonTone.QUIET) {
-            startActivity(Intent(this, PermissionsActivity::class.java))
-        }.apply { visibility = View.GONE }
-
-        content.addView(
-            micButton,
-            LinearLayout.LayoutParams(dp(64), dp(64)).apply {
-                gravity = Gravity.CENTER_HORIZONTAL
-                bottomMargin = dp(6)
-            },
-        )
-        content.addView(micLabel, linearParams(bottom = 4))
-        content.addView(detail, linearParams(bottom = 4))
-        content.addView(permissionButton, linearParams(bottom = 20))
-
-        content.addView(AppUi.sectionLabel(this, "Quick access"), linearParams(bottom = 8))
-        readyNotificationButton = AppUi.navigationButton(
-            this,
-            "Ready notification",
-            "Off",
-        ) { toggleReadyNotification() }
-        content.addView(readyNotificationButton, linearParams(bottom = 8))
-        assistantRoleButton = AppUi.navigationButton(
-            this,
-            "Power button assistant",
-            "Choose Friday as your assistant",
-        ) { requestAssistantRole() }
-        content.addView(assistantRoleButton, linearParams(bottom = 20))
-
-        content.addView(AppUi.sectionLabel(this, "Phone actions"), linearParams(bottom = 8))
-        content.addView(
-            AppUi.navigationButton(
-                this,
-                "Try a phone action",
-                "Calls, alarms, apps and sound mode",
-            ) { startActivity(Intent(this, ActionDebugActivity::class.java)) },
-            linearParams(bottom = 8),
-        )
-        content.addView(
-            AppUi.navigationButton(
-                this,
-                "Permissions",
-                "Microphone, contacts, calls and silent mode",
-            ) { startActivity(Intent(this, PermissionsActivity::class.java)) },
-            linearParams(bottom = 20),
-        )
-
-        screen.isFocusableInTouchMode = true
-        screen.requestFocus()
-        return screen
     }
 
     private fun consumeEntryPointIntent(source: Intent) {
@@ -248,6 +225,7 @@ class MainActivity : Activity() {
 
     private fun maybeStartFromEntryPoint() {
         if (!resumed || !pendingAutoListen || state != VoiceState.IDLE) return
+        selectDestination(Destination.HOME)
         val setupSeen = getSharedPreferences("friday", MODE_PRIVATE).getBoolean("setup_seen", false)
         val microphoneGranted = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         if (EntryPointPolicy.shouldRequestSetup(setupSeen, setupPromptOpen)) {
@@ -278,124 +256,31 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun toggleReadyNotification() {
-        when (readyNotificationState()) {
-            EntryPointPolicy.ReadyNotificationState.ON -> {
-                ReadyNotification.setEnabled(this, false)
-                updateReadyNotificationButton()
-                return
-            }
-            EntryPointPolicy.ReadyNotificationState.BLOCKED -> {
-                openNotificationSettings()
-                return
-            }
-            EntryPointPolicy.ReadyNotificationState.OFF -> Unit
-        }
-        if (!notificationsAllowed()) {
-            FridayDialog.show(
-                this,
-                "Ready notification",
-                "Friday keeps one silent notification with a Tap to speak shortcut. The microphone stays off until you tap it.",
-                positive = "Allow notifications",
-                negative = "Not now",
-            ) {
-                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), READY_NOTIFICATION_PERMISSION_REQUEST)
-            }
+    private fun onMicPressed() {
+        if (speaking) {
+            confirmationSpeaker.stop()
             return
         }
-        ReadyNotification.setEnabled(this, true)
-        updateReadyNotificationButton()
-    }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode != READY_NOTIFICATION_PERMISSION_REQUEST) return
-        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
-            ReadyNotification.setEnabled(this, true)
-            updateReadyNotificationButton()
-        } else {
-            FridayDialog.show(
-                this,
-                "Notifications off",
-                "Allow Friday notifications in Android Settings to keep the Tap to speak shortcut.",
-                positive = "Open settings",
-                negative = "Not now",
-            ) { openNotificationSettings() }
-        }
-    }
-
-    private fun updateReadyNotificationButton() {
-        if (!::readyNotificationButton.isInitialized) return
-        val detail = when (readyNotificationState()) {
-            EntryPointPolicy.ReadyNotificationState.OFF -> "Off · Tap to turn on"
-            EntryPointPolicy.ReadyNotificationState.ON -> "On · Tap to turn off"
-            EntryPointPolicy.ReadyNotificationState.BLOCKED -> "Blocked · Tap to manage"
-        }
-        AppUi.setNavigationText(
-            readyNotificationButton,
-            "Ready notification",
-            detail,
-        )
-    }
-
-    private fun readyNotificationState(): EntryPointPolicy.ReadyNotificationState =
-        EntryPointPolicy.readyNotificationState(ReadyNotification.isEnabled(this), notificationsAllowed())
-
-    private fun notificationsAllowed(): Boolean = Build.VERSION.SDK_INT < 33 ||
-        checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-
-    private fun openNotificationSettings() {
-        try {
-            startActivity(
-                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                    .putExtra(Settings.EXTRA_APP_PACKAGE, packageName),
-            )
-        } catch (_: RuntimeException) {
-            showError("Notification settings unavailable")
-        }
-    }
-
-    private fun requestAssistantRole() {
-        if (Build.VERSION.SDK_INT >= 29) {
-            val roles = getSystemService(RoleManager::class.java)
-            if (roles?.isRoleAvailable(RoleManager.ROLE_ASSISTANT) == true) {
-                startActivity(roles.createRequestRoleIntent(RoleManager.ROLE_ASSISTANT))
-                return
-            }
-        }
-        try {
-            startActivity(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS))
-        } catch (_: RuntimeException) {
-            showError("Assistant settings unavailable")
-        }
-    }
-
-    private fun updateAssistantRoleButton() {
-        if (!::assistantRoleButton.isInitialized) return
-        val selected = Build.VERSION.SDK_INT >= 29 &&
-            getSystemService(RoleManager::class.java)?.isRoleHeld(RoleManager.ROLE_ASSISTANT) == true
-        AppUi.setNavigationText(
-            assistantRoleButton,
-            "Power button assistant",
-            if (selected) "Selected · Long-press power to speak" else "Choose Friday as your assistant",
-        )
-    }
-
-    private fun onMicPressed() {
         when (state) {
             VoiceState.IDLE -> startListening()
             VoiceState.LISTENING -> {
-                micLabel.text = "Finishing command"
-                detail.text = "Processing starts after recording stops."
+                micLabel.text = "Finishing recording"
+                detail.text = "One moment."
                 micButton.isEnabled = false
+                surface.controlLabel.text = "Finishing"
                 activeRecorder?.stop()
             }
-            VoiceState.PROCESSING, VoiceState.ACTION -> Unit
+            VoiceState.PROCESSING, VoiceState.ACTION -> cancelVoiceWork(resetUi = true)
         }
     }
 
     private fun startListening() {
         if (!resumed) return
+        confirmationSpeaker.stop()
+        lastConfirmation = null
+        surface.showRequest(null)
+        surface.replay.visibility = View.GONE
+        surface.cancel.visibility = View.VISIBLE
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             showPermission(RequiredAccess.MICROPHONE)
             return
@@ -406,9 +291,11 @@ class MainActivity : Activity() {
         permissionButton.visibility = View.GONE
         micButton.isEnabled = true
         micButton.setActive(true)
+        micButton.showStop(true)
+        surface.controlLabel.text = "Tap to finish"
         micButton.contentDescription = "Stop listening"
-        micLabel.text = "Starting microphone"
-        detail.text = "Speak when Listening appears."
+        micLabel.text = "Starting microphone…"
+        detail.text = "Wait for Listening."
         detail.setTextColor(getColor(R.color.text_secondary))
         orb.setState(AssistantOrbView.State.LISTENING)
         backend.warmAsync()
@@ -453,7 +340,7 @@ class MainActivity : Activity() {
     private fun showListeningReady() {
         if (state != VoiceState.LISTENING) return
         micLabel.text = "Listening"
-        detail.text = "Speak one phone command."
+        detail.text = "I'm listening."
     }
 
     private fun sendRecording(request: Int, recording: RecordedCommand) {
@@ -461,15 +348,19 @@ class MainActivity : Activity() {
         lastRecordMs = SystemClock.elapsedRealtime() - listenStartedMs
         state = VoiceState.PROCESSING
         micButton.setActive(false)
-        micButton.isEnabled = false
-        micButton.contentDescription = "Processing command"
-        micLabel.text = "Working"
-        detail.text = "Friday is checking the command."
+        micButton.isEnabled = true
+        micButton.showStop(true)
+        micButton.contentDescription = "Cancel command"
+        surface.controlLabel.text = "Tap to cancel"
+        surface.cancel.visibility = View.INVISIBLE
+        micLabel.text = "Working on it"
+        detail.text = "You can cancel while you wait."
         detail.setTextColor(getColor(R.color.text_secondary))
         orb.setState(AssistantOrbView.State.PROCESSING)
         worker.execute {
+            if (!isCurrent(request)) return@execute
             val result = try {
-                backend.sendCommand(recording.wavBytes)
+                backend.sendCommand(recording.wavBytes) { !isCurrent(request) }
             } catch (error: SocketTimeoutException) {
                 logCommandFailure(error)
                 runIfCurrent(request) { showError(VoiceFailureCopy.forOutcome(VoiceUiOutcome.TIMEOUT)) }
@@ -496,8 +387,9 @@ class MainActivity : Activity() {
             VoiceUiOutcome.ACTION -> {
                 val response = result.response as VoiceCommandResponse.Action
                 state = VoiceState.ACTION
-                micLabel.text = "Checking this phone"
-                detail.text = "Friday is preparing the action."
+                surface.showRequest(ActionPresentation.describe(response.action))
+                micLabel.text = "Preparing action"
+                detail.text = "Checking this phone."
                 worker.execute {
                     val prepared = actionExecutor.prepare(response.action)
                     runIfCurrent(request) { actionRunner.handle(prepared) }
@@ -539,6 +431,11 @@ class MainActivity : Activity() {
         permissionButton.visibility = View.GONE
         micButton.isEnabled = true
         micButton.setActive(false)
+        micButton.showStop(false)
+        surface.cancel.visibility = View.GONE
+        surface.controlLabel.text = "Tap to speak"
+        lastConfirmation = message
+        surface.replay.visibility = if (speechAvailable) View.VISIBLE else View.INVISIBLE
         micButton.contentDescription = "Start listening"
         micLabel.text = "Done"
         detail.text = message
@@ -552,8 +449,12 @@ class MainActivity : Activity() {
         permissionButton.visibility = View.GONE
         micButton.isEnabled = true
         micButton.setActive(false)
+        micButton.showStop(false)
+        surface.cancel.visibility = View.INVISIBLE
+        surface.replay.visibility = View.GONE
+        surface.controlLabel.text = "Tap to retry"
         micButton.contentDescription = "Start listening"
-        micLabel.text = "Try again"
+        micLabel.text = if (message == "That feature isn't built yet") "Can't do that yet" else "Try again"
         detail.text = message
         detail.setTextColor(getColor(R.color.error))
         orb.setState(AssistantOrbView.State.ERROR)
@@ -567,6 +468,10 @@ class MainActivity : Activity() {
         state = VoiceState.IDLE
         micButton.isEnabled = true
         micButton.setActive(false)
+        micButton.showStop(false)
+        surface.cancel.visibility = View.INVISIBLE
+        surface.replay.visibility = View.GONE
+        surface.controlLabel.text = "Tap to speak"
         micButton.contentDescription = "Start listening"
         micLabel.text = "Permission needed"
         detail.text = when (access) {
@@ -582,6 +487,8 @@ class MainActivity : Activity() {
 
     private fun cancelVoiceWork(resetUi: Boolean) {
         generation++
+        confirmationSpeaker.stop()
+        backend.cancelCommand()
         activeRecorder?.stop()
         activeRecorder = null
         actionRunner.cancel()
@@ -589,15 +496,72 @@ class MainActivity : Activity() {
     }
 
     private fun resetIdle() {
+        lastConfirmation = null
         state = VoiceState.IDLE
         permissionButton.visibility = View.GONE
         micButton.isEnabled = true
         micButton.setActive(false)
+        micButton.showStop(false)
+        surface.cancel.visibility = View.INVISIBLE
+        surface.replay.visibility = View.GONE
+        surface.controlLabel.text = "Tap to speak"
+        surface.showRequest(null)
         micButton.contentDescription = "Start listening"
         micLabel.text = IDLE_LABEL
         detail.text = IDLE_DETAIL
         detail.setTextColor(getColor(R.color.text_secondary))
         orb.setState(AssistantOrbView.State.IDLE)
+    }
+
+    private fun onSpeechState(active: Boolean) {
+        speaking = active && resumed && state == VoiceState.IDLE
+        speechAudioSeen = false
+        if (!resumed || state != VoiceState.IDLE) return
+        micButton.showStop(speaking)
+        micButton.setActive(speaking)
+        micButton.contentDescription = if (speaking) "Stop speaking" else "Start listening"
+        surface.controlLabel.text = if (speaking) "Tap to stop voice" else "Tap to speak"
+        surface.cancel.visibility = if (lastConfirmation != null) View.GONE else View.INVISIBLE
+        surface.replay.visibility = if (speaking || lastConfirmation == null || !speechAvailable) View.INVISIBLE else View.VISIBLE
+        micLabel.text = if (speaking) "Speaking" else "Done"
+        orb.setState(if (speaking) AssistantOrbView.State.SPEAKING else AssistantOrbView.State.SUCCESS)
+        if (BuildConfig.DEBUG) Log.d(VOICE_LOG_TAG, "ttsSpeaking=$speaking")
+    }
+
+    private fun onSpeechAudio(level: PcmProcessor.Level) {
+        if (speaking && resumed) {
+            orb.setAudioSignal(level.rms, level.low, level.mid, level.high)
+            if (BuildConfig.DEBUG && !speechAudioSeen) {
+                speechAudioSeen = true
+                Log.d(VOICE_LOG_TAG, "ttsAudioAvailable=true")
+            }
+        }
+    }
+
+    /** Debug-only visual QA. These states never execute a phone action. */
+    private fun showDebugState(scenario: String) {
+        if (!BuildConfig.DEBUG) return
+        selectDestination(Destination.HOME)
+        cancelVoiceWork(resetUi = true)
+        when (scenario) {
+            "success", "speaking" -> {
+                surface.showRequest("Set timer · 10 minutes")
+                showResult("Preview: Timer request sent for 10 minutes")
+                if (scenario == "success") confirmationSpeaker.stop()
+            }
+            "error" -> showError("No internet. Connect and try again.")
+            "unsupported" -> showUnsupported()
+            "permission" -> showPermission(RequiredAccess.MICROPHONE)
+            "processing" -> {
+                state = VoiceState.PROCESSING
+                micButton.showStop(true)
+                micButton.contentDescription = "Cancel command"
+                surface.controlLabel.text = "Tap to cancel"
+                micLabel.text = "Working on it"
+                detail.text = "You can cancel while you wait."
+                orb.setState(AssistantOrbView.State.PROCESSING)
+            }
+        }
     }
 
     private fun runIfCurrent(request: Int, action: () -> Unit) {
@@ -624,7 +588,7 @@ class MainActivity : Activity() {
         val runnable = object : Runnable {
             override fun run() {
                 val elapsed = SystemClock.elapsedRealtime() - startedAt
-                if (elapsed >= DEBUG_ORB_VOICE_DURATION_MS || isFinishing || isDestroyed) {
+                if (elapsed >= DEBUG_ORB_VOICE_DURATION_MS || !resumed || isFinishing || isDestroyed) {
                     orb.setState(AssistantOrbView.State.IDLE)
                     orbDemoRunnable = null
                     return
@@ -645,22 +609,21 @@ class MainActivity : Activity() {
         orb.post(runnable)
     }
 
-    private fun linearParams(top: Int = 0, bottom: Int = 0): LinearLayout.LayoutParams =
-        LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            topMargin = dp(top)
-            bottomMargin = dp(bottom)
-        }
-
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
-
     private companion object {
         const val IDLE_LABEL = "Talk to Friday"
-        const val IDLE_DETAIL = "Tap the microphone and speak."
+        const val IDLE_DETAIL = "Tap the microphone to start."
         const val VOICE_LOG_TAG = "FridayVoice"
         const val DEBUG_ORB_VOICE_EXTRA = "debug_orb_voice"
         const val DEBUG_ORB_VOICE_DURATION_MS = 4_000L
         const val DEBUG_ORB_FRAME_MS = 32L
-        const val READY_NOTIFICATION_PERMISSION_REQUEST = 202
         const val SETUP_REQUEST = 203
+    }
+
+    @android.annotation.SuppressLint("NewApi")
+    private class SettingsBackHandler(private val activity: Activity, onBack: () -> Unit) {
+        private val callback = android.window.OnBackInvokedCallback(onBack)
+        fun register() = activity.onBackInvokedDispatcher.registerOnBackInvokedCallback(
+            android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, callback)
+        fun unregister() = activity.onBackInvokedDispatcher.unregisterOnBackInvokedCallback(callback)
     }
 }

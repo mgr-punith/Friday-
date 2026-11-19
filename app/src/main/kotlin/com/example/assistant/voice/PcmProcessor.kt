@@ -16,7 +16,7 @@ class PcmProcessor(
         val voicing: Float = 0f,
     )
 
-    fun analyze(samples: ShortArray, count: Int = samples.size): Level {
+    fun analyze(samples: ShortArray, count: Int = samples.size, analyzeVoicing: Boolean = true): Level {
         val safeCount = count.coerceIn(0, samples.size)
         if (safeCount == 0) return Level(0f, 0f, 0f, 0f)
         var sumSquares = 0.0
@@ -38,7 +38,7 @@ class PcmProcessor(
         val high = normalizeLevel((highDelta / max(1, safeCount - 1)) / Short.MAX_VALUE * 3.5)
         val low = normalizeLevel((lowDelta / max(1, safeCount - 1)) / Short.MAX_VALUE * 2.3)
         val mid = normalizeLevel(amplitude * 1.15 - low * 0.28 - high * 0.18)
-        return Level(amplitude, low, mid, high, rms.toFloat(), voicedCorrelation(samples, safeCount))
+        return Level(amplitude, low, mid, high, rms.toFloat(), if (analyzeVoicing) voicedCorrelation(samples, safeCount) else 0f)
     }
 
     fun crop(samples: ShortArray, count: Int, start: Int, endExclusive: Int): ShortArray {

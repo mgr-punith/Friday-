@@ -3,12 +3,12 @@ package com.example.assistant.entry
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import com.example.assistant.MainActivity
+import com.example.assistant.AssistantActivity
 
 object FridayEntryPoints {
     const val EXTRA_START_LISTENING = "start_listening"
 
-    fun listenIntent(context: Context): Intent = Intent(context, MainActivity::class.java).apply {
+    fun listenIntent(context: Context): Intent = Intent(context, AssistantActivity::class.java).apply {
         putExtra(EXTRA_START_LISTENING, true)
         addFlags(EntryPointPolicy.notificationTapIntentFlags())
     }

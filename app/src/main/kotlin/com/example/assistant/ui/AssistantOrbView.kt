@@ -86,9 +86,9 @@ class AssistantOrbView @JvmOverloads constructor(
         targetLow = 0f
         targetMid = 0f
         targetHigh = 0f
-        if (nextState == State.LISTENING) {
+        if (nextState == State.LISTENING || nextState == State.SPEAKING) {
             visualNoiseFloor = OrbMotionMath.DEFAULT_NOISE_FLOOR
-            calibrationFramesRemaining = VISUAL_CALIBRATION_FRAMES
+            calibrationFramesRemaining = if (nextState == State.LISTENING) VISUAL_CALIBRATION_FRAMES else 0
         }
         if (nextState == State.IDLE || nextState == State.SUCCESS || nextState == State.ERROR) {
             voiceEnergy = 0f
@@ -493,8 +493,8 @@ class AssistantOrbView @JvmOverloads constructor(
                     + sin(surface.x * 1.8 - time * (0.31 + activity * 0.84) + 1.3)
                         * (0.06 + mid * 0.14)
                     + broadNoise * (0.11 + activity * 0.19);
-                float flowY = surface.y + surface.x * 0.26 - bend - drift;
-                float width = 0.27 + activity * 0.10 + bass * 0.055;
+                float flowY = surface.y - surface.x * 0.24 - bend - drift;
+                float width = 0.20 + activity * 0.10 + bass * 0.055;
                 float band = exp(-flowY * flowY / (width * width));
                 float secondY = surface.y - surface.x * 0.34
                     + sin(surface.y * 3.0 - time * (0.38 + activity * 0.96) + 2.2)
@@ -517,9 +517,11 @@ class AssistantOrbView @JvmOverloads constructor(
                 color = mix(color, pearl.rgb, silk * (0.10 + activity * 0.11 + treble * 0.06));
                 float2 lightPosition = p - float2(-0.30, -0.40);
                 float light = exp(-dot(lightPosition, lightPosition) * 4.5);
-                color = mix(color, pearl.rgb, light * 0.21);
+                color = mix(color, pearl.rgb, light * 0.20);
                 float shade = smoothstep(0.32, 1.2, length(p - float2(-0.16, -0.23)));
-                color = mix(color, shadow.rgb, shade * 0.34);
+                color = mix(color, shadow.rgb, shade * 0.48);
+                float lightFacing = max(0.0, dot(float3(p, depth), normalize(float3(-0.45, -0.55, 0.85))));
+                color *= half(0.72 + lightFacing * 0.36);
                 return half4(color, 1.0);
             }
         """

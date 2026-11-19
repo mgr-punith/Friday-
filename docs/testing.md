@@ -106,3 +106,17 @@ Install with `./gradlew installDebug` and launch Friday. Use a test phone and kn
 | Spoken confirmation | Complete a harmless action with an English TTS engine installed and confirm Friday speaks the short on-screen result once. Disable or remove the TTS engine on a suitable test device and confirm Friday keeps the on-screen result without crashing. |
 
 Mark untested cases explicitly. Passing JVM checks or dispatching an Android intent does not prove the target app completed its work.
+
+## Voice UI regression checks
+
+Install a debug APK on an unlocked phone, then run:
+
+```bash
+python3 scripts/ui-phone-check.py --serial DEVICE_SERIAL --adb /path/to/adb
+```
+
+The script checks the launcher, icon bottom navigation with selected tabs, compact assistant panel, processing cancellation, unsupported and error messages, permission recovery, interpreted action, panel dismissal, microphone lifecycle, 150% text, landscape, and both system themes. It uses debug preview states without executing phone commands. It restores text size, rotation, and system theme in a `finally` block. Screenshots, the latest hierarchy, and the report go to `/tmp/friday-ui-check` by default. Keep the phone untouched during the run.
+
+The release manifest check in `scripts/verify.sh` keeps the assistant panel and permission screens private. Debug builds expose the panel for ADB visual tests; release builds do not. Phone regression checks assert that tab switches retain the same Activity instance, Settings scroll, and the latest Home result. Reselecting a tab does not launch a page, and Android Back returns to Home. JVM tests cover tab reselection and TTS cancellation, replacement and duplicate callbacks, timer and alarm formatting, and honest Home-navigation copy.
+
+Manual playback checks: run a successful command, confirm the spoken result matches the visible result, stop speech with the square control, replay it, and start a new recording. Check that an old utterance cannot resume after leaving the app. Engines that do not supply PCM callbacks show the speaking state with a frozen orb. No English TTS engine should leave the result readable and hide replay.

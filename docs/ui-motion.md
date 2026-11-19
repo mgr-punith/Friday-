@@ -10,10 +10,12 @@ On API 33+ hardware canvases, a small AGSL shader compresses coordinates across 
 | Preview | Stronger internal flow with a visible preview message | Optional UI demonstration; microphone is off |
 | Listening | Quiet frames stay frozen. Speech energy and low/mid/high balance drive the internal flow. | Active microphone capture after a tap |
 | Processing | The last speech motion settles into a frozen frame. | Backend request and local action preparation |
-| Speaking | Gentle internal movement responds to audio input | Reserved for spoken confirmations |
+| Speaking | Playback callbacks show the state. PCM energy moves the light fields when the device TTS engine supplies audio. | Short spoken confirmations |
 | Success | Frozen light fields; a short confirmation supplies meaning | Reserved for an action Android confirmed |
 | Error | Frozen light fields; a short recovery message supplies meaning | Reserved for an action that failed or needs recovery |
 
-Idle, Listening, Processing, Success, and Error are connected to the visible app voice loop. Raw microphone RMS crosses an adaptive room-noise gate before it can move the orb. Low, mid, and high energy alter the shape of that movement. Friday reports success only after Android accepts the requested action. Wake detection remains separate and is not implemented in this milestone.
+Idle, Listening, Processing, Speaking, Success, and Error are connected to the visible app voice loop. Raw microphone RMS crosses an adaptive room-noise gate before it can move the orb. Low, mid, and high energy alter the shape of that movement. Friday reports success only after Android accepts the requested action. Wake detection remains separate and is not implemented in this milestone.
 
 Animation pauses while the view or app is hidden or detached. The clock resumes without advancing through the hidden interval. Android's reduced-motion setting freezes the orb while text continues to show status. State transitions never resize or shift the sphere.
+
+Voice controls remain fixed below the scrolling orb, status, and interpreted action. The same surface serves the launcher and compact assistant panel. Listening exposes a finish control and a separate Cancel button. Processing exposes a cancel control; cancelling disconnects the command request and rejects late action results. Speaking exposes stop and replay controls. TTS callbacks carry an utterance identity so a cancelled or replaced utterance cannot update the screen. Friday schedules supplied PCM energy against playback start and clears it on stop, completion, or leaving the screen. Engines that omit PCM callbacks retain the speaking label with a frozen orb.

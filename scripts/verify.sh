@@ -18,6 +18,8 @@ fi
 
 ./gradlew assembleDebug assembleRelease test lintDebug --console=plain "$@"
 
+python3 scripts/check-release-manifest.py
+
 # A recording import target belongs only in debug builds.
 if rg -l 'AudioEvalImportActivity|Friday audio test' \
     app/build/intermediates/merged_manifest/release \
