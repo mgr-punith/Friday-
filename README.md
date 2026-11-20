@@ -66,3 +66,11 @@ sam build --template-file template.yaml
 The Android verification script runs dependency-free Python tool tests, builds debug and release APKs, runs action, voice and debug wake checks, runs debug lint, then enforces the 15 MB release APK limit. The voice checks cover WAV structure, silence trimming, speech-end detection, response parsing, malformed arguments, token refresh rules, and backend URL validation. `npm run verify` type-checks the backend, runs mocked tests, checks `vercel.json`, and creates size-limited Vercel and Lambda bundles. GitHub CI also validates and builds the AWS fallback. Vercel runs its platform build for each Git-connected preview and production deployment. See [the testing checklist](docs/testing.md) and [backend deployment guide](docs/backend-deployment.md).
 
 The placeholder package is `com.example.assistant`. The app targets Android API 37 and supports API 26 and newer.
+
+This repository is public. Enable its credential hooks once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The commit hook scans the staged files. The push hook scans the history of each branch you send, including earlier file versions you deleted. Both checks report file locations and hide matched values. Run `python3 scripts/check-secrets.py` to check tracked files and new files before staging; Git ignores your local `.env`. Run `python3 scripts/check-secrets.py --history HEAD` before a manual push. The Credential check workflow runs the same history scan on GitHub. It covers recognised provider keys, credential literals, private keys and private config filenames; it cannot identify every possible secret format. Use placeholder values in examples and keep real values in the deployment environment. Do not bypass a failed check. The scanner permits a few existing dummy test values by exact hash and file path; it does not exclude test files.

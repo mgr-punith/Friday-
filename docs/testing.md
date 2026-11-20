@@ -6,6 +6,12 @@ Add a repeatable test when a build or feature failure has a deterministic reprod
 
 ## Repeatable build checks
 
+Enable the local credential hooks with `git config core.hooksPath .githooks`. Before committing, run `python3 scripts/check-secrets.py --staged`; before pushing, run `python3 scripts/check-secrets.py --history HEAD`. The hooks enforce those checks for normal Git commands. The push hook scans each outgoing branch's history, so deleting a credential in a later commit does not hide it. The separate Credential check workflow scans history on pushes and pull requests. CI runs after publication; the local hooks provide the check before publication.
+
+`python3 scripts/check-secrets.py` checks tracked working files and nonignored new files. It skips ignored local files such as `.env`. Checks print filenames, line numbers and categories, without matched values. They cover recognised provider key formats, literal credential configuration, private key files and private config paths. Examples may contain placeholders. A few existing mock values have exact hash/path exceptions; test files still undergo the scan. Pattern checks cannot identify every secret format. Do not bypass failures or print a detected value during review.
+
+On 20 November 2026, the working files and committed history passed. `python3 -m unittest discover -s scripts -p 'test_*.py'` passed **82 tests**, with four optional native tests skipped. The 12 credential regressions cover provider patterns, private files, configuration lookups, dummy fixture boundaries, staged bytes that differ from the working copy, deleted credentials in history, identical blobs under private filenames, missing history, malformed push updates, and actual local commit/push rejection in temporary repositories. The first test run caught an environment lookup treated as a literal; the corrected classifier passed that regression. Hook shell syntax and the workflow's YAML parse passed. These changes add no app dependency or asset and do not change the APK.
+
 Run from the repository root:
 
 ```bash

@@ -4,6 +4,7 @@ set -euo pipefail
 friday_repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd -- "$friday_repo_dir"
 
+python3 scripts/check-secrets.py
 python3 -m unittest discover -s scripts -p 'test_*.py'
 
 if rg -n --glob '*.{kt,java,kts,xml}' \
