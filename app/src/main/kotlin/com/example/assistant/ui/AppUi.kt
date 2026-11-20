@@ -27,21 +27,29 @@ import kotlin.math.min
 object AppUi {
     enum class ButtonTone { PRIMARY, SECONDARY, QUIET }
 
-    fun screen(activity: Activity, title: String, subtitle: String): LinearLayout {
-        val (scroll, content) = scrollContent(activity, title, subtitle, back = true)
+    fun screen(activity: Activity, title: String, subtitle: String, onBack: () -> Unit = { activity.finish() }): LinearLayout {
+        val (scroll, content) = scrollContent(activity, title, subtitle, back = true, onBack = onBack)
         activity.setContentView(scroll)
         return content
     }
 
-    fun scrollContent(activity: Activity, title: String, subtitle: String, back: Boolean = false): Pair<ScrollView, LinearLayout> {
+    fun scrollContent(
+        activity: Activity,
+        title: String,
+        subtitle: String,
+        back: Boolean = false,
+        onBack: () -> Unit = { activity.finish() },
+    ): Pair<ScrollView, LinearLayout> {
         val content = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(activity, 20), dp(activity, 20), dp(activity, 20), dp(activity, 32))
+            setPadding(dp(activity, 16), dp(activity, 12), dp(activity, 16), dp(activity, 16))
         }
-        if (back) content.addView(iconButton(activity, R.drawable.ic_arrow_back, "Back") { activity.finish() },
-            LinearLayout.LayoutParams(dp(activity, 48), dp(activity, 48)).apply { bottomMargin = dp(activity, 12) })
-        content.addView(text(activity, title, 20f, bold = true), params(activity, 6))
-        content.addView(text(activity, subtitle, 13f, secondary = true), params(activity, 24))
+        if (back) content.addView(backButton(activity, onBack),
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = dp(activity, 8)
+            })
+        content.addView(text(activity, title, 19f, bold = true), params(activity, if (subtitle.isBlank()) 16 else 4))
+        if (subtitle.isNotBlank()) content.addView(text(activity, subtitle, 12f, secondary = true), params(activity, 16))
         val holder = FrameLayout(activity).apply {
             addView(content, FrameLayout.LayoutParams(
                 min(activity.resources.displayMetrics.widthPixels, dp(activity, 560)), ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -59,7 +67,7 @@ object AppUi {
     fun text(
         context: Context,
         value: String,
-        size: Float = 14f,
+        size: Float = 13f,
         bold: Boolean = false,
         secondary: Boolean = false,
     ): TextView = TextView(context).apply {
@@ -72,7 +80,7 @@ object AppUi {
     }
 
     fun sectionLabel(context: Context, label: String): TextView =
-        text(context, label, 12f, bold = true, secondary = true).apply { letterSpacing = 0.02f }
+        text(context, label, 11f, bold = true, secondary = true).apply { letterSpacing = 0.02f }
 
     fun button(
         context: Context,
@@ -82,16 +90,24 @@ object AppUi {
     ): Button = Button(context).apply {
         text = label
         isAllCaps = false
-        textSize = 14f
+        textSize = 13f
         typeface = geist(context, bold = false)
         gravity = Gravity.CENTER
         minHeight = dp(context, 48)
         minWidth = dp(context, 88)
-        setPadding(dp(context, 16), dp(context, 10), dp(context, 16), dp(context, 10))
+        setPadding(dp(context, 12), dp(context, 8), dp(context, 12), dp(context, 8))
         setTextColor(context.getColor(if (tone == ButtonTone.PRIMARY) R.color.control_primary_text else R.color.text_primary))
         background = controlBackground(context, tone, 12)
         setOnClickListener { onClick() }
     }
+
+    fun backButton(context: Context, onClick: () -> Unit): Button =
+        button(context, context.getString(R.string.back), ButtonTone.QUIET, onClick).apply {
+            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            setPadding(dp(context, 8), dp(context, 10), dp(context, 12), dp(context, 10))
+            setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_chevron_left, 0, 0, 0)
+            compoundDrawablePadding = dp(context, 4)
+        }
 
     fun navigationButton(
         context: Context,
@@ -101,8 +117,8 @@ object AppUi {
     ): Button = button(context, "", ButtonTone.SECONDARY, onClick).apply {
         typeface = geist(context, bold = false)
         gravity = Gravity.START or Gravity.CENTER_VERTICAL
-        minHeight = dp(context, 66)
-        setPadding(dp(context, 16), dp(context, 10), dp(context, 16), dp(context, 10))
+        minHeight = dp(context, 60)
+        setPadding(dp(context, 12), dp(context, 8), dp(context, 12), dp(context, 8))
         compoundDrawablePadding = dp(context, 12)
         setCompoundDrawablesRelativeWithIntrinsicBounds(0, 0, R.drawable.ic_chevron_right, 0)
         setNavigationText(this, title, detail)
@@ -115,7 +131,7 @@ object AppUi {
             contentDescription = label
             minimumWidth = dp(context, 48)
             minimumHeight = dp(context, 48)
-            setPadding(dp(context, 13), dp(context, 13), dp(context, 13), dp(context, 13))
+            setPadding(dp(context, 14), dp(context, 14), dp(context, 14), dp(context, 14))
             background = controlBackground(context, ButtonTone.QUIET, 24)
             setOnClickListener { onClick() }
         }
@@ -141,17 +157,17 @@ object AppUi {
     fun styleField(field: EditText) {
         field.apply {
             typeface = geist(context, bold = false)
-            textSize = 14f
+            textSize = 13f
             minHeight = dp(context, 48)
-            setPadding(dp(context, 14), dp(context, 10), dp(context, 14), dp(context, 10))
+            setPadding(dp(context, 12), dp(context, 8), dp(context, 12), dp(context, 8))
             setTextColor(context.getColor(R.color.text_primary))
             setHintTextColor(context.getColor(R.color.text_tertiary))
             background = surface(context, 12, R.color.field_background, R.color.border)
         }
     }
 
-    fun notice(context: Context, value: String): TextView = text(context, value, 13f).apply {
-        setPadding(dp(context, 14), dp(context, 12), dp(context, 14), dp(context, 12))
+    fun notice(context: Context, value: String): TextView = text(context, value, 12f).apply {
+        setPadding(dp(context, 12), dp(context, 8), dp(context, 12), dp(context, 8))
         background = surface(context, 12, R.color.surface_muted, R.color.border)
     }
 

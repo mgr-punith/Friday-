@@ -3,6 +3,7 @@ package com.example.assistant.entry
 import android.content.Context
 import android.os.Bundle
 import android.service.voice.VoiceInteractionSession
+import com.example.assistant.DebugTools
 
 class FridayVoiceSession(context: Context) : VoiceInteractionSession(context) {
     override fun onCreate() {
@@ -12,7 +13,7 @@ class FridayVoiceSession(context: Context) : VoiceInteractionSession(context) {
 
     override fun onShow(args: Bundle?, showFlags: Int) {
         super.onShow(args, showFlags)
-        startAssistantActivity(FridayEntryPoints.listenIntent(context))
+        DebugTools.prepareAssistantIntent(args, FridayEntryPoints.listenIntent(context))?.let(::startAssistantActivity)
         finish()
     }
 }

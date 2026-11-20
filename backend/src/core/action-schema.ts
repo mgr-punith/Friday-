@@ -2,7 +2,7 @@ import type { FunctionSelection } from "./contracts";
 
 export const SYSTEM_PROMPT =
   "You control an Android phone. The user speaks English. Pick exactly one function. " +
-  "The speaker may use Indian English pronunciation and phrasing. Preserve spoken contact and app names. " +
+  "The speaker may use Indian English pronunciation and phrasing. Require a clear request, not a keyword mentioned in conversation. " +
   "Interpret double and triple digit words in phone numbers. " +
   "For audio, use unclear_command for silence, noise, music, or words you cannot understand. Never guess an action. " +
   "Use unsupported only for a clear request outside the supported actions. Never answer questions. " +
@@ -12,16 +12,16 @@ export const SYSTEM_PROMPT =
 export const FUNCTION_DECLARATIONS = [
   {
     name: "call_contact",
-    description: "Call a saved contact by name.",
+    description: "Call, phone, or ring a saved contact when asked to place a call.",
     parameters: {
       type: "object",
-      properties: { name: { type: "string", description: "Spoken contact name." } },
+      properties: { name: { type: "string", description: "Full name as spoken, without the call verb." } },
       required: ["name"]
     }
   },
   {
     name: "call_number",
-    description: "Call a spoken phone number.",
+    description: "Call or dial a spoken phone number.",
     parameters: {
       type: "object",
       properties: { number: { type: "string", description: "Phone number as spoken." } },
@@ -52,10 +52,10 @@ export const FUNCTION_DECLARATIONS = [
   },
   {
     name: "open_app",
-    description: "Open an installed app by its spoken name.",
+    description: "Open, launch, start, or go to a named Android app.",
     parameters: {
       type: "object",
-      properties: { name: { type: "string", description: "Spoken app name." } },
+      properties: { name: { type: "string", description: "Full app name as spoken (e.g. Google Chrome), without the launch verb." } },
       required: ["name"]
     }
   },

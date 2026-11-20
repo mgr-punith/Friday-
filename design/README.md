@@ -1,5 +1,7 @@
 # Friday visual direction
 
+Use [the UI guide](ui-guide.md) for spacing, text sizes, icon sizes and navigation. Apply it through the shared framework controls before adding screen-specific values.
+
 The images in `reference/` are the owner-approved visual references for Friday. They are design references only and must not ship in the APK.
 
 ## Source references
@@ -21,7 +23,7 @@ The images in `reference/` are the owner-approved visual references for Friday. 
 - The orb has no border, outline, ring, particle, filament, or neon decoration.
 - Respect the system animator/reduced-motion setting.
 - Use bundled Geist for app text. The variable font comes from Google Fonts under the SIL Open Font License; keep `docs/licenses/Geist-OFL.txt` with the source.
-- Use Untitled UI's free outline icons for interface actions. Friday currently includes Microphone 01, Chevron Right, Arrow Left, X Close, Home Line, and Settings 01 as Android vectors. Do not add the React package to the app.
+- Use Untitled UI's free outline icons for interface actions. Friday includes Microphone 01, Chevron Left/Right, X Close, Home Line, and Settings 01 as Android vectors. Back controls use a 24 dp left chevron followed by “Back”, with a 48 dp or larger tap target. Do not add the React package to the app.
 
 Options shown in the theme reference are placeholders. Navigation, commands, routines, and settings will be selected in later milestones.
 
@@ -40,10 +42,12 @@ The launcher screen contains a small Friday header, the Aurora orb, status text,
 
 Status and results can scroll above the fixed controls. The interpreted action appears under “Understood” after the backend responds. This text comes from action arguments, not speech transcription. Use the same type scale and semantic colors in both surfaces. Keep suggestion chips and chat inputs absent.
 
-Typography uses 20 sp screen headings, 18 sp compact assistant status, 13 sp body copy, 14 sp controls, and 11 sp bottom-tab labels. Text follows Android font scaling; controls keep 48 dp or larger touch targets. Landscape places voice controls beside scrolling status content.
+Typography uses 19 sp screen headings, 17 sp compact assistant status, 12 sp body copy, 13 sp controls, and 11 sp bottom-tab labels. Small labels retain an 11 sp floor. Text follows Android font scaling; controls keep 48 dp or larger touch targets. Landscape places voice controls beside scrolling status content.
 
-The owner’s navigation reference uses a graphite capsule and a small selected-icon pill. Friday applies that treatment to its Home and Settings destinations, with 21 dp Untitled UI icons. The home orb uses a 168 dp view; the drawn sphere occupies 70% of that view. The microphone sits above the navigation capsule. The language/footer caption is removed.
+The owner’s navigation reference uses a graphite capsule and a small selected-icon pill. Friday applies that treatment to its Home and Settings destinations, with 19 dp Untitled UI icons. Info and close controls use 20 dp icons inside 48 dp targets. The home orb uses a 168 dp view; the drawn sphere occupies 70% of that view. The microphone sits above the navigation capsule. The language/footer caption is removed.
 
 ## Navigation for future tabs
+
+The debug **Start Friday** screen uses two native radio choices: **Hey Friday** and **Tap to speak**. Keep only the option names in the rows. A 48 dp Untitled UI info button opens a small anchored popup with the explanation. Opening help does not change the choice. Use one primary button to apply the selection. Keep the required microphone disclosure separate from optional help. The silent wake notification uses Untitled UI Pause Circle and Play Circle icons with 48 dp targets.
 
 Main destinations use `TabHostView` inside one Activity. Create each page once and keep its view attached while hidden. Switch visibility and update the shared navigation capsule; do not start a new Activity or rebuild the page on a tab tap. Reselecting the active tab does nothing. Keep scroll position and completed results. Stop microphone and pending voice actions before hiding Home. Deeper tools and permission disclosures can use separate Activities with Android Back navigation. API 33+ registers the native back callback while Settings is selected; API 26–32 handles the legacy Back key.

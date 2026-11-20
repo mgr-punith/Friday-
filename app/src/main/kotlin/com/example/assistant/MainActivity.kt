@@ -2,6 +2,7 @@ package com.example.assistant
 
 import android.Manifest
 import android.app.Activity
+import android.app.KeyguardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
@@ -13,6 +14,9 @@ import android.widget.Button
 import android.widget.TextView
 import com.example.assistant.actions.ActionResult
 import com.example.assistant.actions.AndroidActionExecutor
+import com.example.assistant.actions.DeviceLock
+import com.example.assistant.actions.LockedActionPolicy
+import com.example.assistant.actions.PhoneAction
 import com.example.assistant.actions.RequiredAccess
 import com.example.assistant.entry.EntryPointPolicy
 import com.example.assistant.entry.FridayEntryPoints
@@ -79,6 +83,7 @@ open class MainActivity : Activity() {
     private var pendingAutoListen = false
     private var setupPromptOpen = false
     private var resumeListeningAfterSetup = false
+    private var unlockRequired = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -87,7 +92,10 @@ open class MainActivity : Activity() {
         actionRunner = VoiceActionRunner(this, ::onActionResult)
         confirmationSpeaker = ConfirmationSpeaker(this, ::onSpeechState, ::onSpeechAudio) { available ->
             speechAvailable = available
-            if (!available) surface.replay.visibility = View.GONE
+            if (!available) {
+                surface.replay.visibility = View.GONE
+                if (lastConfirmation != null) DebugTools.recoverAfterResult(this, 3_000)
+            }
         }
         setContentView(createContentView())
         if (savedInstanceState?.getBoolean("settings_selected") == true) selectDestination(Destination.SETTINGS)
@@ -102,28 +110,38 @@ open class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        DebugTools.onAssistantVisible(this)
         resumed = true
+        logEntryLifecycle("resume")
         restoreReadyNotificationIfNeeded()
         settingsPanel?.refresh()
         maybeStartFromEntryPoint()
-        if (BuildConfig.DEBUG) {
-            intent.getStringExtra("debug_ui_state")?.let { scenario ->
-                intent.removeExtra("debug_ui_state")
-                showDebugState(scenario)
-            }
-        }
+        maybeShowDebugState()
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        DebugTools.cancelErrorRecovery(this)
         setIntent(intent)
         consumeEntryPointIntent(intent)
         maybeStartFromEntryPoint()
-        if (BuildConfig.DEBUG) {
-            intent.getStringExtra("debug_ui_state")?.let { scenario ->
-                intent.removeExtra("debug_ui_state")
-                showDebugState(scenario)
-            }
+        maybeShowDebugState()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        logEntryLifecycle(if (hasFocus) "focus" else "blur")
+        if (hasFocus) {
+            maybeStartFromEntryPoint()
+            maybeShowDebugState()
+        }
+    }
+
+    private fun maybeShowDebugState() {
+        if (!BuildConfig.DEBUG || !resumed || !hasWindowFocus()) return
+        intent.getStringExtra("debug_ui_state")?.let { scenario ->
+            intent.removeExtra("debug_ui_state")
+            showDebugState(scenario)
         }
     }
 
@@ -139,9 +157,16 @@ open class MainActivity : Activity() {
     }
 
     override fun onPause() {
+        logEntryLifecycle("pause")
         resumed = false
         cancelVoiceWork(resetUi = true)
+        DebugTools.onAssistantHidden(this)
         super.onPause()
+    }
+
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        if (DebugTools.onAssistantInteraction(this)) surface.controlLabel.text = RETRY_CONTROL_LABEL
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -173,6 +198,7 @@ open class MainActivity : Activity() {
         actionRunner.cancel()
         confirmationSpeaker.shutdown()
         worker.shutdownNow()
+        DebugTools.onAssistantHidden(this)
         super.onDestroy()
     }
 
@@ -181,7 +207,7 @@ open class MainActivity : Activity() {
             this, compactSurface,
             onMic = ::onMicPressed,
             onCancel = { cancelVoiceWork(resetUi = true) },
-            onPermissions = { launchSetup(resumeAfterSetup = false) },
+            onPermissions = { if (unlockRequired) requestPhoneUnlock() else launchSetup(resumeAfterSetup = false) },
             onClose = { finish() },
             onReplay = { lastConfirmation?.let(confirmationSpeaker::speak) },
         )
@@ -218,13 +244,24 @@ open class MainActivity : Activity() {
 
     private fun consumeEntryPointIntent(source: Intent) {
         if (source.getBooleanExtra(FridayEntryPoints.EXTRA_START_LISTENING, false)) {
+            // A screen-off launch can pause before its window gains focus. Keep
+            // the single-use wake token until the command UI can accept capture.
             pendingAutoListen = true
             source.removeExtra(FridayEntryPoints.EXTRA_START_LISTENING)
         }
     }
 
     private fun maybeStartFromEntryPoint() {
-        if (!resumed || !pendingAutoListen || state != VoiceState.IDLE) return
+        if (!resumed || !hasWindowFocus() || !pendingAutoListen || state != VoiceState.IDLE) return
+        if (!DebugTools.allowAutoListen(this, intent)) {
+            pendingAutoListen = false
+            return
+        }
+        if (BuildConfig.DEBUG && intent.hasExtra("debug_ui_state")) {
+            pendingAutoListen = false
+            maybeShowDebugState()
+            return
+        }
         selectDestination(Destination.HOME)
         val setupSeen = getSharedPreferences("friday", MODE_PRIVATE).getBoolean("setup_seen", false)
         val microphoneGranted = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
@@ -240,8 +277,18 @@ open class MainActivity : Activity() {
         }
     }
 
+    private fun logEntryLifecycle(event: String) {
+        if (BuildConfig.DEBUG && compactSurface) {
+            Log.d(VOICE_LOG_TAG, "entry=$event resumed=$resumed focused=${hasWindowFocus()} pending=$pendingAutoListen")
+        }
+    }
+
     @Suppress("DEPRECATION")
     private fun launchSetup(resumeAfterSetup: Boolean) {
+        if (DeviceLock.isLocked(this)) {
+            showUnlockRequired()
+            return
+        }
         if (resumeAfterSetup) resumeListeningAfterSetup = true
         if (setupPromptOpen) return
         setupPromptOpen = true
@@ -276,6 +323,8 @@ open class MainActivity : Activity() {
 
     private fun startListening() {
         if (!resumed) return
+        unlockRequired = false
+        DebugTools.cancelErrorRecovery(this)
         confirmationSpeaker.stop()
         lastConfirmation = null
         surface.showRequest(null)
@@ -386,6 +435,11 @@ open class MainActivity : Activity() {
         when (result.response.uiOutcome()) {
             VoiceUiOutcome.ACTION -> {
                 val response = result.response as VoiceCommandResponse.Action
+                if (DeviceLock.requiresUnlock(this, response.action)) {
+                    showUnlockRequired()
+                    return
+                }
+                if (LockedActionPolicy.requiresUnlock(response.action, locked = true)) DebugTools.hideFromLockScreen(this)
                 state = VoiceState.ACTION
                 surface.showRequest(ActionPresentation.describe(response.action))
                 micLabel.text = "Preparing action"
@@ -420,6 +474,7 @@ open class MainActivity : Activity() {
             )
         }
         when (result) {
+            ActionResult.NeedsUnlock -> showUnlockRequired()
             is ActionResult.Success -> showResult(result.confirmation)
             is ActionResult.Failed -> showError(result.reason)
             is ActionResult.NeedsPermission -> showPermission(result.which)
@@ -427,6 +482,8 @@ open class MainActivity : Activity() {
     }
 
     private fun showResult(message: String) {
+        DebugTools.cancelErrorRecovery(this)
+        unlockRequired = false
         state = VoiceState.IDLE
         permissionButton.visibility = View.GONE
         micButton.isEnabled = true
@@ -442,9 +499,11 @@ open class MainActivity : Activity() {
         detail.setTextColor(getColor(R.color.text_primary))
         orb.setState(AssistantOrbView.State.SUCCESS)
         confirmationSpeaker.speak(message)
+        DebugTools.recoverAfterResult(this, if (speechAvailable) 12_000 else 3_000)
     }
 
     private fun showError(message: String) {
+        unlockRequired = false
         state = VoiceState.IDLE
         permissionButton.visibility = View.GONE
         micButton.isEnabled = true
@@ -452,12 +511,13 @@ open class MainActivity : Activity() {
         micButton.showStop(false)
         surface.cancel.visibility = View.INVISIBLE
         surface.replay.visibility = View.GONE
-        surface.controlLabel.text = "Tap to retry"
+        surface.controlLabel.text = RETRY_CONTROL_LABEL
         micButton.contentDescription = "Start listening"
         micLabel.text = if (message == "That feature isn't built yet") "Can't do that yet" else "Try again"
         detail.text = message
         detail.setTextColor(getColor(R.color.error))
         orb.setState(AssistantOrbView.State.ERROR)
+        if (DebugTools.recoverAfterError(this)) surface.controlLabel.text = WAKE_RECOVERY_CONTROL_LABEL
     }
 
     private fun showUnsupported() {
@@ -465,6 +525,12 @@ open class MainActivity : Activity() {
     }
 
     private fun showPermission(access: RequiredAccess) {
+        if (DeviceLock.isLocked(this)) {
+            showUnlockRequired()
+            return
+        }
+        unlockRequired = false
+        DebugTools.cancelErrorRecovery(this)
         state = VoiceState.IDLE
         micButton.isEnabled = true
         micButton.setActive(false)
@@ -482,10 +548,66 @@ open class MainActivity : Activity() {
         }
         detail.setTextColor(getColor(R.color.text_primary))
         permissionButton.visibility = View.VISIBLE
+        permissionButton.text = "Manage permissions"
         orb.setState(AssistantOrbView.State.ERROR)
     }
 
+    private fun showUnlockRequired(speak: Boolean = true) {
+        DebugTools.cancelErrorRecovery(this)
+        state = VoiceState.IDLE
+        lastConfirmation = null
+        unlockRequired = true
+        surface.showRequest(null)
+        surface.cancel.visibility = View.INVISIBLE
+        surface.replay.visibility = View.GONE
+        micButton.isEnabled = true
+        micButton.setActive(false)
+        micButton.showStop(false)
+        micButton.contentDescription = "Start listening"
+        surface.controlLabel.setText(R.string.tap_to_speak)
+        micLabel.setText(R.string.unlock_to_continue)
+        detail.setText(R.string.unlock_then_ask_again)
+        detail.setTextColor(getColor(R.color.text_primary))
+        permissionButton.setText(R.string.unlock_phone)
+        permissionButton.visibility = View.VISIBLE
+        orb.setState(AssistantOrbView.State.IDLE)
+        if (speak) confirmationSpeaker.speak(getString(R.string.unlock_then_ask_again))
+        DebugTools.recoverAfterResult(this, 8_000)
+    }
+
+    private fun requestPhoneUnlock() {
+        DebugTools.cancelErrorRecovery(this)
+        confirmationSpeaker.stop()
+        val keyguard = getSystemService(KeyguardManager::class.java)
+        if (keyguard == null) {
+            showUnlockRequired(speak = false)
+            return
+        }
+        try {
+            keyguard.requestDismissKeyguard(this, object : KeyguardManager.KeyguardDismissCallback() {
+                override fun onDismissSucceeded() {
+                    if (isFinishing || isDestroyed) return
+                    if (DeviceLock.isLocked(this@MainActivity)) {
+                        showUnlockRequired(speak = false)
+                    } else {
+                        // Discard the blocked command. A fresh request still gets normal call confirmation.
+                        resetIdle()
+                        DebugTools.hideFromLockScreen(this@MainActivity)
+                        detail.setText(R.string.ask_command_again)
+                        if (compactSurface) finish()
+                    }
+                }
+
+                override fun onDismissCancelled() { if (!isFinishing && !isDestroyed) showUnlockRequired(speak = false) }
+                override fun onDismissError() { if (!isFinishing && !isDestroyed) showUnlockRequired(speak = false) }
+            })
+        } catch (_: RuntimeException) {
+            showUnlockRequired(speak = false)
+        }
+    }
+
     private fun cancelVoiceWork(resetUi: Boolean) {
+        DebugTools.cancelErrorRecovery(this)
         generation++
         confirmationSpeaker.stop()
         backend.cancelCommand()
@@ -496,6 +618,7 @@ open class MainActivity : Activity() {
     }
 
     private fun resetIdle() {
+        unlockRequired = false
         lastConfirmation = null
         state = VoiceState.IDLE
         permissionButton.visibility = View.GONE
@@ -521,11 +644,13 @@ open class MainActivity : Activity() {
         micButton.setActive(speaking)
         micButton.contentDescription = if (speaking) "Stop speaking" else "Start listening"
         surface.controlLabel.text = if (speaking) "Tap to stop voice" else "Tap to speak"
+        if (unlockRequired) return
         surface.cancel.visibility = if (lastConfirmation != null) View.GONE else View.INVISIBLE
         surface.replay.visibility = if (speaking || lastConfirmation == null || !speechAvailable) View.INVISIBLE else View.VISIBLE
         micLabel.text = if (speaking) "Speaking" else "Done"
         orb.setState(if (speaking) AssistantOrbView.State.SPEAKING else AssistantOrbView.State.SUCCESS)
         if (BuildConfig.DEBUG) Log.d(VOICE_LOG_TAG, "ttsSpeaking=$speaking")
+        if (lastConfirmation != null) DebugTools.recoverAfterResult(this, if (speaking) 12_000 else 1_200)
     }
 
     private fun onSpeechAudio(level: PcmProcessor.Level) {
@@ -550,8 +675,33 @@ open class MainActivity : Activity() {
                 if (scenario == "success") confirmationSpeaker.stop()
             }
             "error" -> showError("No internet. Connect and try again.")
+            "no-command" -> showError("I couldn't hear a clear command")
+            "missing-app" -> {
+                surface.showRequest("Open inbox")
+                showError("I couldn't find that app")
+            }
             "unsupported" -> showUnsupported()
             "permission" -> showPermission(RequiredAccess.MICROPHONE)
+            "lock-call", "lock-app", "lock-timer", "lock-sound" -> {
+                val action = when (scenario) {
+                    "lock-call" -> PhoneAction.CallNumber("5550100")
+                    "lock-app" -> PhoneAction.OpenApp("Private test app")
+                    "lock-timer" -> PhoneAction.SetTimer(120)
+                    else -> PhoneAction.SetRingerMode(com.example.assistant.actions.RingerMode.VIBRATE)
+                }
+                // Labeled policy check: prepare real dispatch, without executing its Android effect or a cloud request.
+                state = VoiceState.ACTION
+                val prepared = actionExecutor.prepare(action)
+                if (prepared is AndroidActionExecutor.Preparation.Finished) onActionResult(prepared.result, 0)
+                else if (scenario == "lock-call" && prepared is AndroidActionExecutor.Preparation.Ready) {
+                    actionRunner.handle(prepared.copy(run = { ActionResult.Success("Preview: No call placed") }))
+                }
+                else {
+                    showResult("Preview: Lock-screen action allowed")
+                    confirmationSpeaker.stop()
+                    DebugTools.recoverAfterResult(this, 6_000)
+                }
+            }
             "processing" -> {
                 state = VoiceState.PROCESSING
                 micButton.showStop(true)
@@ -612,6 +762,8 @@ open class MainActivity : Activity() {
     private companion object {
         const val IDLE_LABEL = "Talk to Friday"
         const val IDLE_DETAIL = "Tap the microphone to start."
+        const val RETRY_CONTROL_LABEL = "Tap to retry"
+        const val WAKE_RECOVERY_CONTROL_LABEL = "Returning to Hey Friday"
         const val VOICE_LOG_TAG = "FridayVoice"
         const val DEBUG_ORB_VOICE_EXTRA = "debug_orb_voice"
         const val DEBUG_ORB_VOICE_DURATION_MS = 4_000L

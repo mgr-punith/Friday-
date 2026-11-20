@@ -21,6 +21,10 @@ android {
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
     }
   }
+  // Opt-in native trial artifacts. No library or model enters the release source set.
+  providers.gradleProperty("wakeTrialNativeDir").orNull?.let { nativeDir ->
+    sourceSets.getByName("debug").jniLibs.srcDir(file(nativeDir))
+  }
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_17
     targetCompatibility = JavaVersion.VERSION_17
@@ -62,11 +66,22 @@ val voiceLogicTest by tasks.registering(JavaExec::class) {
     configurations.named("debugUnitTestRuntimeClasspath"),
   )
 }
+val wakeTrialLogicTest by tasks.registering(JavaExec::class) {
+  group = "verification"
+  description = "Runs dependency-free checks for the debug wake-detector trial."
+  dependsOn("compileDebugUnitTestKotlin")
+  mainClass.set("com.example.assistant.debug.wake.WakeTrialLogicTests")
+  classpath(
+    layout.buildDirectory.dir("intermediates/built_in_kotlinc/debug/compileDebugKotlin/classes"),
+    layout.buildDirectory.dir("intermediates/built_in_kotlinc/debugUnitTest/compileDebugUnitTestKotlin/classes"),
+    configurations.named("debugUnitTestRuntimeClasspath"),
+  )
+}
 tasks.matching { it.name == "test" || it.name == "check" }.configureEach {
-  dependsOn(actionLogicTest, voiceLogicTest)
+  dependsOn(actionLogicTest, voiceLogicTest, wakeTrialLogicTest)
 }
 // There is no JUnit dependency; the JavaExec task above runs our JVM checks.
 tasks.withType<Test>().configureEach {
   enabled = false
-  dependsOn(actionLogicTest, voiceLogicTest)
+  dependsOn(actionLogicTest, voiceLogicTest, wakeTrialLogicTest)
 }

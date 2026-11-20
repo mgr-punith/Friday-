@@ -32,6 +32,11 @@ test("sends a compact forced-function request for text", async () => {
   assert.match(request.systemInstruction.parts[0].text, /Indian English pronunciation and phrasing/);
   assert.match(request.systemInstruction.parts[0].text, /double and triple digit words/);
   assert.match(request.systemInstruction.parts[0].text, /Never guess an action/);
+  assert.match(request.systemInstruction.parts[0].text, /Require a clear request, not a keyword mentioned in conversation/);
+  const openApp = request.tools[0].functionDeclarations.find((declaration: { name: string }) => declaration.name === "open_app");
+  const callContact = request.tools[0].functionDeclarations.find((declaration: { name: string }) => declaration.name === "call_contact");
+  assert.match(openApp.parameters.properties.name.description, /Full app name as spoken/);
+  assert.match(callContact.parameters.properties.name.description, /without the call verb/);
   assert.equal(
     request.tools[0].functionDeclarations.some((declaration: { name: string }) => declaration.name === "unclear_command"),
     true

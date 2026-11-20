@@ -18,8 +18,8 @@ import java.util.Locale
 class AndroidActionExecutor(private val activity: Activity) {
     sealed interface Preparation {
         /** Invoke on the UI thread after any user choice or confirmation. */
-        data class Ready(val confirmationTarget: String? = null, val run: () -> ActionResult) : Preparation
-        data class Choice(val question: String, val options: List<ChoiceOption>) : Preparation
+        data class Ready(val action: PhoneAction, val confirmationTarget: String? = null, val run: () -> ActionResult) : Preparation
+        data class Choice(val action: PhoneAction, val question: String, val options: List<ChoiceOption>) : Preparation
         data class Finished(val result: ActionResult) : Preparation
     }
 
@@ -27,13 +27,14 @@ class AndroidActionExecutor(private val activity: Activity) {
 
     /** Worker-safe. Reads local providers and builds intents; never starts an action. */
     fun prepare(action: PhoneAction): Preparation {
+        if (DeviceLock.requiresUnlock(activity, action)) return Preparation.Finished(ActionResult.NeedsUnlock)
         action.validationError()?.let { return Preparation.Finished(ActionResult.Failed(it)) }
         return try {
             when (action) {
                 is PhoneAction.CallContact -> prepareContact(action)
                 is PhoneAction.OpenApp -> prepareApp(action)
-                is PhoneAction.CallNumber -> Preparation.Ready(confirmationTarget = action.number) { runAction(action) }
-                else -> Preparation.Ready { runAction(action) }
+                is PhoneAction.CallNumber -> Preparation.Ready(action, confirmationTarget = action.number) { runAction(action) }
+                else -> Preparation.Ready(action) { runAction(action) }
             }
         } catch (_: SecurityException) {
             Preparation.Finished(permissionAfterFailure(action))
@@ -53,7 +54,7 @@ class AndroidActionExecutor(private val activity: Activity) {
         callPermissionFailure(needsContacts = true)?.let { return Preparation.Finished(it) }
         val contacts = readContacts()
             ?: return Preparation.Finished(ActionResult.Failed("Contacts unavailable"))
-        return when (val match = NameMatcher.match(action.name, contacts.map { it.name })) {
+        return when (val match = NameMatcher.matchContact(action.name, contacts.map { it.name })) {
             is MatchResult.Matched -> prepareContactNumbers(action, contacts[match.index])
             is MatchResult.Ambiguous -> {
                 val matching = match.indices.map { contacts[it] }
@@ -79,7 +80,7 @@ class AndroidActionExecutor(private val activity: Activity) {
                     }
                     ChoiceOption(label, readyCall(action, number.number, contact.name))
                 }
-                Preparation.Choice("Which contact?", options)
+                Preparation.Choice(action, "Which contact?", options)
             }
             MatchResult.NotFound -> Preparation.Finished(ActionResult.Failed("I couldn't find that contact"))
         }
@@ -89,6 +90,7 @@ class AndroidActionExecutor(private val activity: Activity) {
         val numbers = uniqueNumbers(contact)
         preferredNumber(numbers)?.let { return readyCall(action, it.number, contact.name) }
         return Preparation.Choice(
+            action,
             "Which number for ${contact.name}?",
             numbers.map { number ->
                 val suffix = number.number.takeLast(4)
@@ -109,7 +111,7 @@ class AndroidActionExecutor(private val activity: Activity) {
         if (numbers.size == 1) numbers.single() else numbers.filter { it.isDefault }.singleOrNull()
 
     private fun readyCall(action: PhoneAction.CallContact, number: String, name: String): Preparation.Ready =
-        Preparation.Ready(confirmationTarget = "$name · $number") {
+        Preparation.Ready(action, confirmationTarget = "$name · $number") {
             guarded(action) {
                 callPermissionFailure(needsContacts = true) ?: placeCall(number, name)
             }
@@ -121,12 +123,13 @@ class AndroidActionExecutor(private val activity: Activity) {
         val apps = manager.queryIntentActivities(query, PackageManager.MATCH_ALL)
             .distinctBy { it.activityInfo.packageName }
             .map { LauncherApp(it.loadLabel(manager).toString(), it.activityInfo.packageName) }
-        return when (val match = NameMatcher.match(action.name, apps.map { it.label })) {
+        return when (val match = AppNameMatcher.match(action.name, apps)) {
             is MatchResult.Matched -> readyApp(action, apps[match.index])
             is MatchResult.Ambiguous -> {
                 val matching = match.indices.map { apps[it] }
                 val duplicateNames = matching.groupingBy { NameMatcher.normalize(it.label) }.eachCount()
                 Preparation.Choice(
+                    action,
                     "Which app?",
                     matching.map { app ->
                         val label = if (duplicateNames[NameMatcher.normalize(app.label)] != 1) {
@@ -141,7 +144,7 @@ class AndroidActionExecutor(private val activity: Activity) {
     }
 
     private fun readyApp(action: PhoneAction.OpenApp, app: LauncherApp): Preparation.Ready =
-        Preparation.Ready {
+        Preparation.Ready(action) {
             guarded(action) {
                 val intent = activity.packageManager.getLaunchIntentForPackage(app.packageName)
                 if (intent == null) {
@@ -165,6 +168,7 @@ class AndroidActionExecutor(private val activity: Activity) {
     }
 
     private fun guarded(action: PhoneAction, effect: () -> ActionResult): ActionResult {
+        if (DeviceLock.requiresUnlock(activity, action)) return ActionResult.NeedsUnlock
         action.validationError()?.let { return ActionResult.Failed(it) }
         if (Looper.myLooper() != Looper.getMainLooper()) {
             return ActionResult.Failed("Open Friday to do that")
@@ -325,6 +329,4 @@ class AndroidActionExecutor(private val activity: Activity) {
     private data class Contact(val name: String, val numbers: MutableList<ContactNumber>)
 
     private data class ContactNumber(val number: String, val isDefault: Boolean)
-
-    private data class LauncherApp(val label: String, val packageName: String)
 }

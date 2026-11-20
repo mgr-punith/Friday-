@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.Dialog
 import com.example.assistant.actions.ActionResult
 import com.example.assistant.actions.AndroidActionExecutor
+import com.example.assistant.actions.DeviceLock
 import com.example.assistant.ui.FridayDialog
 
 /** Completes a prepared action from the visible assistant UI. */
@@ -14,6 +15,15 @@ class VoiceActionRunner(
     private var activeDialog: Dialog? = null
 
     fun handle(prepared: AndroidActionExecutor.Preparation) {
+        val action = when (prepared) {
+            is AndroidActionExecutor.Preparation.Ready -> prepared.action
+            is AndroidActionExecutor.Preparation.Choice -> prepared.action
+            is AndroidActionExecutor.Preparation.Finished -> null
+        }
+        if (action != null && DeviceLock.requiresUnlock(activity, action)) {
+            onResult(ActionResult.NeedsUnlock, 0L)
+            return
+        }
         when (prepared) {
             is AndroidActionExecutor.Preparation.Finished -> onResult(prepared.result, 0L)
             is AndroidActionExecutor.Preparation.Ready -> finish(prepared)
@@ -38,6 +48,10 @@ class VoiceActionRunner(
     }
 
     private fun finish(ready: AndroidActionExecutor.Preparation.Ready) {
+        if (DeviceLock.requiresUnlock(activity, ready.action)) {
+            onResult(ActionResult.NeedsUnlock, 0L)
+            return
+        }
         val target = ready.confirmationTarget
         if (target == null) {
             run(ready)

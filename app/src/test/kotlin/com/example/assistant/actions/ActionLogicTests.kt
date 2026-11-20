@@ -45,10 +45,84 @@ object ActionLogicTests {
         expect(NameMatcher.match("Roberto", listOf("Alexander", "Maria")) == MatchResult.NotFound, "Reject unrelated contacts")
         expect(NameMatcher.match(" ", listOf("Mom")) == MatchResult.NotFound, "Empty queries never select a contact")
         expect(NameMatcher.match("Mom", emptyList()) == MatchResult.NotFound, "Empty device lists are handled")
-        expect(matched("Clock", listOf("Clock", "Calendar"), 0), "Match a launcher app label")
-        expect(ambiguous("Clock", listOf("Clock", "Clock"), listOf(0, 1)), "Duplicate app labels need a choice")
         expect(NameMatcher.match("M".repeat(121), listOf("Mom")) == MatchResult.NotFound, "Reject unbounded matching input")
         expect(NameMatcher.match("Mom", listOf("Mom" + " ".repeat(121) + "Smith")) == MatchResult.NotFound, "Never match a truncated candidate")
+        expect(
+            NameMatcher.matchContact("Could you please ring Doctor Reddy, please?", listOf("Dr Reddy", "Dr Mehta")) ==
+                MatchResult.Matched(0),
+            "Separate the call verb from the doctor's name",
+        )
+        expect(
+            NameMatcher.matchContact("Call Punith", listOf("Puneet", "Arjun")) == MatchResult.Matched(0),
+            "Apply the existing spoken-name rules after a call verb",
+        )
+        expect(
+            NameMatcher.matchContact("Please call John", listOf("John Smith", "John Brown")) ==
+                MatchResult.Ambiguous(listOf(0, 1)),
+            "Calls still require a choice for shared names",
+        )
+        expect(
+            NameMatcher.matchContact("Call Al", listOf("Alex")) == MatchResult.NotFound,
+            "Call verbs do not weaken the contact threshold",
+        )
+        expect(
+            NameMatcher.matchContact("When I call Mom", listOf("Mom")) == MatchResult.NotFound,
+            "Do not pull a contact out of the middle of a sentence",
+        )
+
+        val chrome = LauncherApp("Chrome", "com.android.chrome")
+        val beta = LauncherApp("Chrome Beta", "com.chrome.beta")
+        val whatsapp = LauncherApp("WhatsApp", "com.whatsapp")
+        val phonePe = LauncherApp("PhonePe", "com.phonepe.app")
+        val otherApps = listOf(beta, chrome, whatsapp, phonePe)
+        expect(AppNameMatcher.match("Google Chrome", otherApps) == MatchResult.Matched(1), "Google Chrome opens stable Chrome")
+        expect(
+            AppNameMatcher.match("Could you open the Google Chrome app, please?", otherApps) == MatchResult.Matched(1),
+            "Find Chrome when the provider includes the launch phrase",
+        )
+        expect(AppNameMatcher.match("GoogleChrome", otherApps) == MatchResult.Matched(1), "Joined vendor and app name")
+        expect(AppNameMatcher.match("Google Chrome Beta", otherApps) == MatchResult.Matched(0), "Keep Chrome Beta distinct")
+        expect(AppNameMatcher.match("Google Chrome", listOf(beta)) == MatchResult.NotFound, "No fallback to Chrome Beta")
+        expect(AppNameMatcher.match("Google Chrome Beta", listOf(chrome)) == MatchResult.NotFound, "No fallback to stable Chrome")
+        expect(AppNameMatcher.match("Google", otherApps) == MatchResult.NotFound, "Google alone does not open Chrome")
+        expect(AppNameMatcher.match("Chrome settings", otherApps) == MatchResult.NotFound, "Do not discard a target qualifier")
+        expect(AppNameMatcher.match("Launch Whats App", otherApps) == MatchResult.Matched(2), "Spoken spaces in WhatsApp")
+        expect(AppNameMatcher.match("Phone Pe", otherApps) == MatchResult.Matched(3), "Spoken spaces in PhonePe")
+        val maps = listOf(LauncherApp("Maps", "com.example.othermaps"), LauncherApp("Maps", "com.google.android.apps.maps"))
+        expect(AppNameMatcher.match("Google Maps", maps) == MatchResult.Matched(1), "Brand disambiguates same-label apps")
+        expect(AppNameMatcher.match("Maps", maps) == MatchResult.Ambiguous(listOf(0, 1)), "Duplicate app labels need a choice")
+        expect(
+            AppNameMatcher.match("Calculator", listOf(LauncherApp("Simple Calculator", "com.example.calculator"))) ==
+                MatchResult.Matched(0),
+            "Keep matching a whole word in an installed app label",
+        )
+        expect(
+            AppNameMatcher.match("Open Camera", listOf(LauncherApp("Open Camera", "net.sourceforge.opencamera"))) ==
+                MatchResult.Matched(0),
+            "An installed app label can contain a launch verb",
+        )
+        expect(AppNameMatcher.match("Google Chrome", emptyList()) == MatchResult.NotFound, "Empty installed app list")
+        expect(AppNameMatcher.match(" ", otherApps) == MatchResult.NotFound, "Empty app name")
+        expect(AppNameMatcher.match("a".repeat(121), otherApps) == MatchResult.NotFound, "Bound app-name input")
+        expect(
+            AppNameMatcher.match("Chrome", listOf(chrome, LauncherApp("Chrome", "com.example.browser"))) ==
+                MatchResult.Ambiguous(listOf(0, 1)),
+            "A known alias must not hide duplicate exact app labels",
+        )
+        expect(
+            AppNameMatcher.match("Whats App", listOf(whatsapp, LauncherApp("Whats App", "com.example.spaced"))) ==
+                MatchResult.Matched(1),
+            "Prefer an exact installed label over space-insensitive matching",
+        )
+        expect(AppNameMatcher.match("app", otherApps) == MatchResult.NotFound, "A generic app keyword is not a name")
+        expect(
+            AppNameMatcher.match("I installed Chrome yesterday", otherApps) == MatchResult.NotFound,
+            "Do not pick an app from a keyword in conversation",
+        )
+        expect(
+            AppNameMatcher.match("Clock", listOf(LauncherApp("Clock", "com.example.clock"))) == MatchResult.Matched(0),
+            "Retain ordinary launcher-label matching",
+        )
 
         expect(normalizePhoneNumber("+91 (98765) 43210") == "+919876543210", "Normalize formatted international numbers")
         expect(normalizePhoneNumber("555-0100") == "5550100", "Normalize local numbers")
@@ -89,6 +163,28 @@ object ActionLogicTests {
             RingerModePolicy.requiredAccess(RingerMode.NORMAL, notificationPolicyGranted = false) == null,
             "Normal mode does not require Notification Policy access",
         )
+
+        val lockPolicyCases = listOf(
+            PhoneAction.CallContact("Test contact") to false,
+            PhoneAction.CallNumber("5550100") to false,
+            PhoneAction.SetAlarm(6, 30) to true,
+            PhoneAction.SetTimer(60) to false,
+            PhoneAction.OpenApp("Clock") to true,
+            PhoneAction.CloseApp() to true,
+            PhoneAction.SetRingerMode(RingerMode.SILENT) to false,
+            PhoneAction.SetRingerMode(RingerMode.VIBRATE) to false,
+            PhoneAction.SetRingerMode(RingerMode.NORMAL) to false,
+        )
+        lockPolicyCases.forEach { (action, requiresUnlock) ->
+            expect(
+                LockedActionPolicy.requiresUnlock(action, locked = true) == requiresUnlock,
+                "Locked action policy: $action",
+            )
+            expect(
+                !LockedActionPolicy.requiresUnlock(action, locked = false),
+                "Unlocked actions retain their existing permission and validation flow: $action",
+            )
+        }
         println("$checks action logic checks passed")
     }
 }

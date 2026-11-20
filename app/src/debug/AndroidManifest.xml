@@ -1,6 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- Keep the microphone prerequisite beside the debug-only service for lint. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <application>
+        <activity android:name=".debug.wake.WakeUsageActivity" android:exported="true" android:label="Start Friday" />
+        <activity android:name=".debug.wake.WakeTrialActivity" android:exported="true" android:label="Friday wake test" />
+        <service android:name=".debug.wake.WakeTrialService" android:exported="false" android:foregroundServiceType="microphone" android:stopWithTask="true" />
+        <receiver
+            android:name=".debug.wake.WakeTrialTestReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="com.example.assistant.debug.TRIGGER_WAKE_TEST" />
+            </intent-filter>
+        </receiver>
         <activity android:name=".AssistantActivity" android:exported="true" tools:replace="android:exported" />
         <activity
             android:name=".debug.AudioEvalImportActivity"
