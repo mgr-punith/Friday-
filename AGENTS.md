@@ -39,6 +39,7 @@ Anything else the user says gets a short "Sorry, I can't do that yet".
 8. **Never claim something was tested if it wasn't.** If the SDK, network, or a phone is not available in your environment, say so.
 9. **Be honest in confirmations.** Only say an action happened if it did.
 10. **Stop Slop is mandatory for all user-facing copy.** Apply the `stop-slop` skill whenever writing or reviewing app labels, dialogs, disclosures, errors, documentation, or release notes. Use direct, specific language. Remove filler, generic AI phrasing, dramatic contrasts, vague claims, and invented functionality.
+11. **This repository is public. Check for credentials before every commit and push.** Run `python3 scripts/check-secrets.py --staged` before committing and `python3 scripts/check-secrets.py --history HEAD` before pushing. Keep the repository's `.githooks` enabled with `git config core.hooksPath .githooks`. Do not bypass a failed check. Report filenames and line numbers only; never print a matched value. Keep secrets, private recordings, keys and local configuration out of Git.
 
 ## Architecture
 

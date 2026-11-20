@@ -10,7 +10,6 @@ import android.os.Bundle
 import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
-import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
@@ -63,6 +62,7 @@ class ActionDebugActivity : Activity() {
             this,
             "Phone actions",
             "Try an action on this phone. Calls ask you to confirm.",
+            onBack = ::navigateBack,
         )
         scroll = content.parent.parent as ScrollView
         body = LinearLayout(this).apply {
@@ -141,16 +141,7 @@ class ActionDebugActivity : Activity() {
         selectedTool = tool
         actionButtons.clear()
         body.removeAllViews()
-        body.addView(
-            AppUi.button(this, "All actions", AppUi.ButtonTone.QUIET) { showList() }.apply {
-                gravity = Gravity.START or Gravity.CENTER_VERTICAL
-                setPadding(0, AppUi.dp(context, 10), 0, AppUi.dp(context, 10))
-                setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_arrow_back, 0, 0, 0)
-                compoundDrawablePadding = AppUi.dp(context, 8)
-            },
-            AppUi.params(this, 16),
-        )
-        body.addView(AppUi.text(this, tool.title, 20f, bold = true), AppUi.params(this, 8))
+        body.addView(AppUi.text(this, tool.title, 19f, bold = true), AppUi.params(this, 8))
         when (tool) {
             Tool.CONTACT -> {
                 val name = field(body, "contact", "Contact name", "Name in your contacts")
@@ -161,7 +152,7 @@ class ActionDebugActivity : Activity() {
                 actionButton("Continue") { PhoneAction.CallNumber(number.text.toString()) }
             }
             Tool.ALARM -> {
-                body.addView(AppUi.text(this, "24-hour time", 14f, secondary = true), AppUi.params(this, 16))
+                body.addView(AppUi.text(this, "24-hour time", 13f, secondary = true), AppUi.params(this, 16))
                 val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
                 val hourColumn = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
                 val minuteColumn = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -191,7 +182,7 @@ class ActionDebugActivity : Activity() {
             }
             Tool.HOME -> {
                 body.addView(
-                    AppUi.text(this, "Return to your launcher. Other apps keep running in the background.", 15f, secondary = true),
+                    AppUi.text(this, "Return to your launcher. Other apps keep running in the background.", 14f, secondary = true),
                     AppUi.params(this, 20),
                 )
                 actionButton("Go to Home") { PhoneAction.CloseApp() }
@@ -206,7 +197,7 @@ class ActionDebugActivity : Activity() {
                             RingerMode.VIBRATE -> "Vibrate"
                             RingerMode.SILENT -> "Silent"
                         }
-                        textSize = 16f
+                        textSize = 15f
                         minHeight = AppUi.dp(context, 48)
                         setTextColor(getColor(R.color.text_primary))
                         buttonTintList = ColorStateList.valueOf(getColor(R.color.accent_soft))
@@ -241,7 +232,7 @@ class ActionDebugActivity : Activity() {
         type: Int = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_WORDS,
         initial: String = "",
     ): EditText {
-        val labelView = AppUi.text(this, label, 14f, secondary = true)
+        val labelView = AppUi.text(this, label, 13f, secondary = true)
         val input = EditText(this).apply {
             id = View.generateViewId()
             this.hint = hint
@@ -326,6 +317,7 @@ class ActionDebugActivity : Activity() {
     private fun showResult(result: ActionResult) {
         setBusy(false)
         val text = when (result) {
+            ActionResult.NeedsUnlock -> "Unlock your phone, then try again."
             is ActionResult.Success -> result.confirmation
             is ActionResult.Failed -> result.reason
             is ActionResult.NeedsPermission -> when (result.which) {

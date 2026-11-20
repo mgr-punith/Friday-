@@ -12,6 +12,7 @@
 | `Call Punith` | `call_contact` | `{"name":"Punith"}` |
 | `Call Puneet` | `call_contact` | `{"name":"Puneet"}` |
 | `Phone Pradeep` | `call_contact` | `{"name":"Pradeep"}` |
+| `Could you please call Puneet` | `call_contact` | `{"name":"Puneet"}` |
 | `Call Suresh Kumar` | `call_contact` | `{"name":"Suresh Kumar"}` |
 | `Ring Ananya` | `call_contact` | `{"name":"Ananya"}` |
 | `Call Doctor Reddy` | `call_contact` | `{"name":"Doctor Reddy"}` |
@@ -37,6 +38,9 @@
 | `Keep a timer for five minutes` | `set_timer` | `{"seconds":300}` |
 | `Put a timer of two minutes` | `set_timer` | `{"seconds":120}` |
 | `Open Camera` | `open_app` | `{"name":"Camera"}` |
+| `Open Google Chrome` | `open_app` | `{"name":"Google Chrome"}` |
+| `Could you launch Google Chrome Beta` | `open_app` | `{"name":"Google Chrome Beta"}` |
+| `Go to Google Maps please` | `open_app` | `{"name":"Google Maps"}` |
 | `Launch WhatsApp` | `open_app` | `{"name":"WhatsApp"}` |
 | `Open PhonePe` | `open_app` | `{"name":"PhonePe"}` |
 | `Open JioSaavn` | `open_app` | `{"name":"JioSaavn"}` |
@@ -56,6 +60,8 @@
 | `Normal sound mode` | `set_ringer_mode` | `{"mode":"normal"}` |
 | `Mute my phone` | `set_ringer_mode` | `{"mode":"silent"}` |
 | `What is the weather today` | `unsupported` | `{}` |
+| `I downloaded Google Chrome yesterday` | `unsupported` | `{}` |
+| `Should I call Mom` | `unsupported` | `{}` |
 | `Who is the prime minister` | `unsupported` | `{}` |
 | `Tell me a joke` | `unsupported` | `{}` |
 | `Search the web for coffee` | `unsupported` | `{}` |

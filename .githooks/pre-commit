@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+friday_repo_dir="$(git rev-parse --show-toplevel)"
+exec python3 "$friday_repo_dir/scripts/check-secrets.py" --staged

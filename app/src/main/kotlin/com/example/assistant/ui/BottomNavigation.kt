@@ -20,10 +20,10 @@ class BottomNavigation(context: Context, settingsSelected: Boolean, onHome: () -
     private data class Tab(val view: View, val pill: View, val icon: ImageView, val label: android.widget.TextView)
     private val tabs = ArrayList<Tab>(2)
     init {
-        setPadding(dp(24), dp(12), dp(24), dp(16))
+        setPadding(dp(16), dp(8), dp(16), dp(8))
         val capsule = LinearLayout(context).apply {
             gravity = Gravity.CENTER
-            setPadding(dp(8), dp(6), dp(8), dp(6))
+            setPadding(dp(8), dp(4), dp(8), dp(4))
             background = AppUi.surface(context, 32, R.color.navigation_surface, null)
         }
         fun addTab(label: String, icon: Int, selected: Boolean, onClick: () -> Unit) {
@@ -48,7 +48,7 @@ class BottomNavigation(context: Context, settingsSelected: Boolean, onHome: () -
                     imageTintList = ColorStateList.valueOf(context.getColor(
                         if (selected) R.color.text_primary else R.color.text_secondary))
                     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-                }, LayoutParams(dp(21), dp(21)).apply { gravity = Gravity.CENTER })
+                }, LayoutParams(dp(19), dp(19)).apply { gravity = Gravity.CENTER })
             }
             tab.addView(iconPill, LinearLayout.LayoutParams(dp(56), dp(30)))
             val labelView = AppUi.text(context, label, 11f, secondary = !selected).apply {

@@ -3,6 +3,7 @@ package com.example.assistant.voice
 import com.example.assistant.actions.PhoneAction
 import com.example.assistant.actions.RingerMode
 import com.example.assistant.entry.EntryPointPolicy
+import com.example.assistant.entry.AssistantSettingsTests
 import com.example.assistant.ui.OrbMotionMath
 import com.example.assistant.ui.ActionPresentation
 import com.example.assistant.ui.TabNavigation
@@ -398,6 +399,7 @@ object VoiceLogicTests {
         expectFailure("Backend URL credentials are rejected") { BackendEndpoint.normalize("https://user@friday.example") }.also { checks++ }
         expectFailure("Backend URL paths are rejected") { BackendEndpoint.normalize("https://friday.example/api") }.also { checks++ }
 
+        checks += AssistantSettingsTests.run()
         println("$checks voice logic checks passed")
     }
 

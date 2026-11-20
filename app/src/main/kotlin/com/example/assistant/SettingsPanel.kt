@@ -2,12 +2,15 @@ package com.example.assistant
 
 import android.Manifest
 import android.app.Activity
-import android.app.role.RoleManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
+import android.view.View
 import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.TextView
+import com.example.assistant.entry.AssistantSettings
 import com.example.assistant.entry.EntryPointPolicy
 import com.example.assistant.entry.ReadyNotification
 import com.example.assistant.ui.AppUi
@@ -15,33 +18,46 @@ import com.example.assistant.ui.FridayDialog
 
 class SettingsPanel(private val activity: Activity, onPermissions: () -> Unit) {
     private lateinit var readyNotificationButton: Button
-    private lateinit var assistantRoleButton: Button
+    private lateinit var assistantButton: Button
+    private lateinit var assistantFallback: Button
+    private lateinit var listeningSummary: TextView
+    private var pendingAssistantSettings = false
+    private var showAssistantFallback = false
 
     private val screen = AppUi.scrollContent(activity, "Settings", "Set up Friday on this phone.")
     val view = screen.first
 
     init {
         val content = screen.second
-        content.addView(AppUi.sectionLabel(activity, "Quick access"), AppUi.params(activity, 12))
+        DebugTools.addStartOptions(activity, content)
+        content.addView(AppUi.sectionLabel(activity, "Quick access"), AppUi.params(activity, 8))
         readyNotificationButton = AppUi.navigationButton(activity, "Ready notification", "") { toggleReadyNotification() }
         content.addView(readyNotificationButton, AppUi.params(activity, 8))
-        assistantRoleButton = AppUi.navigationButton(activity, "Power button assistant", "") { requestAssistantRole() }
-        content.addView(assistantRoleButton, AppUi.params(activity, 24))
-        content.addView(AppUi.sectionLabel(activity, "Phone access"), AppUi.params(activity, 12))
+        val assistantControls = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        assistantButton = AppUi.navigationButton(activity, "Default assistant", "") { openAssistantSettings() }
+        assistantControls.addView(assistantButton, AppUi.params(activity, 0))
+        assistantFallback = AppUi.button(activity, "Open Default apps") {
+            openAssistantSettings(AssistantSettings.Destination.DEFAULT_APPS)
+        }.apply { visibility = View.GONE }
+        assistantControls.addView(assistantFallback, AppUi.params(activity, 0).apply { topMargin = AppUi.dp(activity, 8) })
+        content.addView(assistantControls, AppUi.params(activity, 16))
+        content.addView(AppUi.sectionLabel(activity, "Phone access"), AppUi.params(activity, 8))
         content.addView(AppUi.navigationButton(activity, "Permissions", "Microphone, contacts, calls and silent mode") {
             onPermissions()
-        }, AppUi.params(activity, 24))
-        content.addView(AppUi.sectionLabel(activity, "Tools"), AppUi.params(activity, 12))
+        }, AppUi.params(activity, 16))
+        content.addView(AppUi.sectionLabel(activity, "Tools"), AppUi.params(activity, 8))
         content.addView(AppUi.navigationButton(activity, "Try a phone action", "Check calls, alarms, apps and sound mode") {
             activity.startActivity(Intent(activity, ActionDebugActivity::class.java))
-        }, AppUi.params(activity, 24))
-        content.addView(AppUi.text(activity, "Friday listens after you tap. Background listening is off.", 13f, secondary = true),
-            AppUi.params(activity, 0))
+        }, AppUi.params(activity, 16))
+        DebugTools.addSettings(activity, content)
+        listeningSummary = AppUi.text(activity, DebugTools.listeningSummary(), 12f, secondary = true)
+        content.addView(listeningSummary, AppUi.params(activity, 0))
     }
 
     fun refresh() {
         updateReadyNotificationButton()
-        updateAssistantRoleButton()
+        updateAssistantButton()
+        listeningSummary.text = DebugTools.listeningSummary()
     }
 
     private fun toggleReadyNotification() {
@@ -121,30 +137,30 @@ class SettingsPanel(private val activity: Activity, onPermissions: () -> Unit) {
         }
     }
 
-    private fun requestAssistantRole() {
-        if (Build.VERSION.SDK_INT >= 29) {
-            val roles = activity.getSystemService(RoleManager::class.java)
-            if (roles?.isRoleAvailable(RoleManager.ROLE_ASSISTANT) == true) {
-                activity.startActivity(roles.createRequestRoleIntent(RoleManager.ROLE_ASSISTANT))
-                return
-            }
-        }
-        try {
-            activity.startActivity(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS))
-        } catch (_: RuntimeException) {
-            showSettingsError("Assistant settings unavailable")
+    private fun openAssistantSettings(from: AssistantSettings.Destination = AssistantSettings.Destination.ASSISTANT) {
+        pendingAssistantSettings = true
+        if (AssistantSettings.open(activity, from) == null) {
+            pendingAssistantSettings = false
+            showAssistantFallback = true
+            updateAssistantButton()
+            showSettingsError("This phone doesn't allow Friday to open assistant settings.")
         }
     }
 
-    private fun updateAssistantRoleButton() {
-        if (!::assistantRoleButton.isInitialized) return
-        val selected = Build.VERSION.SDK_INT >= 29 &&
-            activity.getSystemService(RoleManager::class.java)?.isRoleHeld(RoleManager.ROLE_ASSISTANT) == true
+    private fun updateAssistantButton() {
+        if (!::assistantButton.isInitialized) return
+        val selected = AssistantSettings.isSelected(activity)
+        if (pendingAssistantSettings) {
+            showAssistantFallback = !selected
+            pendingAssistantSettings = false
+        }
+        if (selected) showAssistantFallback = false
         AppUi.setNavigationText(
-            assistantRoleButton,
-            "Power button assistant",
-            if (selected) "Selected · Long-press power to speak" else "Choose Friday as your assistant",
+            assistantButton,
+            "Default assistant",
+            if (selected) "Friday selected" else "Choose Friday in Android Settings",
         )
+        assistantFallback.visibility = if (showAssistantFallback) View.VISIBLE else View.GONE
     }
 
     private fun showSettingsError(message: String) {

@@ -97,7 +97,7 @@ try:
     tap(nodes, 'Settings')
     nodes = hierarchy()
     expect('Ready notification' in ' '.join(texts(nodes)), 'Settings preserves the ready notification control')
-    expect('Power button assistant' in ' '.join(texts(nodes)), 'Settings preserves assistant selection')
+    expect('Default assistant' in ' '.join(texts(nodes)), 'Settings preserves assistant selection')
     expect(any(node.get('content-desc') == 'Settings' and node.get('selected') == 'true' for node in nodes),
            'Settings navigation announces the selected tab')
     capture('settings')

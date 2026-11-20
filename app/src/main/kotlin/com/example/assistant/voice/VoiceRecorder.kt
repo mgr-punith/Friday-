@@ -7,6 +7,7 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Process
+import com.example.assistant.DebugTools
 import kotlin.math.max
 
 class VoiceRecorder(private val context: Context) {
@@ -27,6 +28,15 @@ class VoiceRecorder(private val context: Context) {
         onReady: () -> Unit = {},
         onLevel: (PcmProcessor.Level) -> Unit,
     ): CaptureResult {
+        DebugTools.beginCommandCapture()
+        try {
+            return recordCommand(onReady, onLevel)
+        } finally {
+            DebugTools.endCommandCapture()
+        }
+    }
+
+    private fun recordCommand(onReady: () -> Unit, onLevel: (PcmProcessor.Level) -> Unit): CaptureResult {
         if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             throw SecurityException("microphone_permission_missing")
         }

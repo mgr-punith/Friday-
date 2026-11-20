@@ -1,5 +1,6 @@
 package com.example.assistant
 
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
@@ -11,7 +12,13 @@ import com.example.assistant.ui.AppUi
 class AssistantActivity : MainActivity() {
     override val compactSurface = true
 
+    override fun onNewIntent(intent: Intent) {
+        DebugTools.configureLockedWindow(this)
+        super.onNewIntent(intent)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        DebugTools.configureLockedWindow(this)
         super.onCreate(savedInstanceState)
         window.apply {
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))

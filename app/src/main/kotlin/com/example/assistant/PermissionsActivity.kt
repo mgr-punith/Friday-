@@ -19,13 +19,14 @@ class PermissionsActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        DebugTools.onAssistantVisible(this)
         val content = AppUi.screen(
             this,
             "Permissions",
             "Choose which phone actions Friday can use.",
         )
         content.addView(
-            AppUi.notice(this, "Friday records after you tap the microphone. Background listening is off."),
+            AppUi.notice(this, DebugTools.permissionSummary()),
             AppUi.params(this, 20),
         )
         content.addView(AppUi.sectionLabel(this, "ACCESS"), AppUi.params(this, 8))
@@ -35,7 +36,7 @@ class PermissionsActivity : Activity() {
                 Manifest.permission.RECORD_AUDIO,
                 "Microphone",
                 "Voice input",
-                "Friday records one short command after you tap the microphone. It sends that audio to Friday’s Vercel backend and Google Gemini to choose a phone action. Friday does not store the audio. Background listening is off.",
+                DebugTools.microphoneDisclosure(),
             ),
             PermissionInfo(
                 Manifest.permission.READ_CONTACTS,
@@ -79,6 +80,11 @@ class PermissionsActivity : Activity() {
     override fun onResume() {
         super.onResume()
         updatePermissionLabels()
+    }
+
+    override fun onDestroy() {
+        DebugTools.onAssistantHidden(this)
+        super.onDestroy()
     }
 
     private fun showDisclosure(info: PermissionInfo) {

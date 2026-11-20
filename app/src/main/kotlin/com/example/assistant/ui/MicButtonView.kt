@@ -72,7 +72,7 @@ class MicButtonView @JvmOverloads constructor(
         if (stopIcon) {
             paint.style = Paint.Style.FILL
             paint.color = context.getColor(if (active) R.color.control_primary_text else R.color.text_primary)
-            val half = dp(8).toFloat()
+            val half = dp(7).toFloat()
             canvas.drawRoundRect(centerX - half, centerY - half, centerX + half, centerY + half,
                 dp(3).toFloat(), dp(3).toFloat(), paint)
         } else drawMicrophone(canvas, centerX, centerY, radius)
@@ -89,7 +89,7 @@ class MicButtonView @JvmOverloads constructor(
 
     private fun drawMicrophone(canvas: Canvas, centerX: Float, centerY: Float, radius: Float) {
         val color = context.getColor(if (active) R.color.mic_icon else R.color.text_primary)
-        val size = (radius * 1.08f).toInt()
+        val size = max(1, (radius * 1.08f).toInt() - dp(2))
         microphoneIcon.setTint(color)
         microphoneIcon.alpha = if (isEnabled) 255 else 100
         microphoneIcon.setBounds(

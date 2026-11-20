@@ -9,6 +9,7 @@ test("accepts every v1 action with valid arguments", () => {
     ["set_alarm", { hour: 6, minute: 30, label: "Run" }, { type: "action", action: "set_alarm", args: { hour: 6, minute: 30, label: "Run" } }],
     ["set_timer", { seconds: 90 }, { type: "action", action: "set_timer", args: { seconds: 90 } }],
     ["open_app", { name: "Camera" }, { type: "action", action: "open_app", args: { name: "Camera" } }],
+    ["open_app", { name: "Google Chrome" }, { type: "action", action: "open_app", args: { name: "Google Chrome" } }],
     ["close_app", {}, { type: "action", action: "close_app", args: {} }],
     [
       "set_ringer_mode",

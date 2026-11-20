@@ -35,6 +35,7 @@ object RingerModePolicy {
 sealed interface ActionResult {
     data class Success(val confirmation: String) : ActionResult
     data class NeedsPermission(val which: RequiredAccess) : ActionResult
+    data object NeedsUnlock : ActionResult
     data class Failed(val reason: String) : ActionResult
 }
 

@@ -26,13 +26,13 @@ class VoiceSurface(
         contentDescription = "Start listening"
         setOnClickListener { onMic() }
     }
-    val title = AppUi.text(activity, "Talk to Friday", if (compact) 18f else 20f)
-    val detail = AppUi.text(activity, "Tap the microphone to start.", 13f, secondary = true)
-    val controlLabel = AppUi.text(activity, "Tap to speak", 12f, secondary = true)
+    val title = AppUi.text(activity, "Talk to Friday", if (compact) 17f else 19f)
+    val detail = AppUi.text(activity, "Tap the microphone to start.", 12f, secondary = true)
+    val controlLabel = AppUi.text(activity, "Tap to speak", 11f, secondary = true)
     val permission = AppUi.button(activity, "Manage permissions", AppUi.ButtonTone.SECONDARY, onPermissions)
     val cancel = AppUi.button(activity, "Cancel", AppUi.ButtonTone.QUIET, onCancel)
     val replay = AppUi.button(activity, "Speak again", AppUi.ButtonTone.QUIET, onReplay)
-    private val request = AppUi.text(activity, "", 13f, secondary = true)
+    private val request = AppUi.text(activity, "", 12f, secondary = true)
     private val requestPanel = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
     private val statusScroll = ScrollView(activity)
 
@@ -46,33 +46,33 @@ class VoiceSurface(
         val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         val header = LinearLayout(activity).apply {
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(20), dp(8), dp(12), 0)
+            setPadding(dp(16), dp(4), dp(8), 0)
         }
-        header.addView(AppUi.text(activity, "Friday", 16f, bold = true),
+        header.addView(AppUi.text(activity, "Friday", 15f, bold = true),
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         if (compact) {
             header.addView(AppUi.iconButton(activity, R.drawable.ic_x_close, "Close assistant", onClose),
                 LinearLayout.LayoutParams(dp(48), dp(48)))
         }
-        column.addView(header, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64)))
+        column.addView(header, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)))
 
         val body = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(dp(24), dp(if (compact || landscape) 0 else 16), dp(24), dp(if (compact || landscape) 8 else 24))
+            setPadding(dp(16), dp(if (compact || landscape) 0 else 8), dp(16), dp(if (compact || landscape) 8 else 16))
         }
         val orbSize = if (landscape) 96 else if (compact) 120 else 168
         body.addView(orb, LinearLayout.LayoutParams(dp(orbSize), dp(orbSize)))
         title.gravity = Gravity.CENTER
         title.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
-        body.addView(title, AppUi.params(activity, if (landscape) 8 else 12))
+        body.addView(title, AppUi.params(activity, 8))
         detail.gravity = Gravity.CENTER
         detail.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
-        body.addView(detail, AppUi.params(activity, if (landscape) 8 else if (compact) 16 else 24))
+        body.addView(detail, AppUi.params(activity, if (landscape) 8 else 16))
         requestPanel.apply {
-            setPadding(dp(16), dp(14), dp(16), dp(14))
+            setPadding(dp(12), dp(12), dp(12), dp(12))
             background = AppUi.surface(activity, 16, R.color.surface_muted, null)
-            addView(AppUi.text(activity, "Understood", 12f, secondary = true), AppUi.params(activity, 6))
+            addView(AppUi.text(activity, "Understood", 11f, secondary = true), AppUi.params(activity, 6))
             addView(request, AppUi.params(activity, 0))
             visibility = View.GONE
         }
@@ -82,7 +82,7 @@ class VoiceSurface(
         val controls = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(dp(24), dp(8), dp(24), 0)
+            setPadding(dp(16), dp(8), dp(16), 0)
         }
         controls.addView(mic, LinearLayout.LayoutParams(dp(64), dp(64)).apply { gravity = Gravity.CENTER_HORIZONTAL })
         controlLabel.gravity = Gravity.CENTER

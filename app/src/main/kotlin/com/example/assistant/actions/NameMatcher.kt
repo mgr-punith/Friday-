@@ -16,7 +16,7 @@ object NameMatcher {
     private const val STRONG_MATCH = 0.86
     private const val AMBIGUITY_MARGIN = 0.06
     private const val COMPETING_MATCH = 0.80
-    private const val MAX_NAME_LENGTH = 120
+    internal const val MAX_NAME_LENGTH = 120
     private val marks = Regex("\\p{M}+")
     private val separators = Regex("[^\\p{L}\\p{N}]+")
     private val repeatedA = Regex("a{2,}")
@@ -24,6 +24,7 @@ object NameMatcher {
     private val repeatedI = Regex("i{2,}")
     private val terminalTh = Regex("th$")
     private val terminalSh = Regex("sh$")
+    private val callVerb = Regex("^(?:(?:can|could|would) you )?(?:please )?(?:call|phone|ring|dial) ")
 
     fun normalize(value: String): String {
         val decomposed = Normalizer.normalize(value, Normalizer.Form.NFD)
@@ -56,10 +57,19 @@ object NameMatcher {
         return resultFor(close)
     }
 
-    private fun resultFor(indices: List<Int>): MatchResult = if (indices.size == 1) {
-        MatchResult.Matched(indices.single())
-    } else {
-        MatchResult.Ambiguous(indices)
+    fun matchContact(query: String, candidates: List<String>): MatchResult {
+        val direct = match(query, candidates)
+        if (direct != MatchResult.NotFound || query.length > MAX_NAME_LENGTH) return direct
+        val spoken = normalize(query)
+        val name = callVerb.replaceFirst(spoken, "")
+        if (spoken == name) return direct
+        return match(name.removeSuffix(" please"), candidates)
+    }
+
+    internal fun resultFor(indices: List<Int>): MatchResult = when (indices.size) {
+        0 -> MatchResult.NotFound
+        1 -> MatchResult.Matched(indices.single())
+        else -> MatchResult.Ambiguous(indices)
     }
 
     private fun score(query: String, candidate: String): Double {

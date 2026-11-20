@@ -3,4 +3,9 @@
     <string name="widget_description">Tap to speak with Friday</string>
     <string name="widget_content_description">Open Friday and listen</string>
     <string name="tap_to_speak">Tap to speak</string>
+    <string name="back">Back</string>
+    <string name="unlock_to_continue">Unlock to continue</string>
+    <string name="unlock_then_ask_again">Unlock your phone, then ask again.</string>
+    <string name="unlock_phone">Unlock phone</string>
+    <string name="ask_command_again">Ask your command again.</string>
 </resources>
