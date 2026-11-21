@@ -163,6 +163,18 @@ object VoiceLogicTests {
         expect(toneLevel.rms in 0.05f..0.3f, "Analyzer exposes raw RMS for speech detection")
         val voicedTone = ShortArray(320) { index -> (sin(2.0 * PI * index / 100.0) * 9_000).toInt().toShort() }
         expect(PcmProcessor().analyze(voicedTone).voicing > 0.38f, "Speech-pitch audio has voiced correlation")
+        val lowerCorrelation = SpeechEndDetector(
+            minimumSpeechFrames = 3,
+            calibrationFrames = 0,
+            minimumCommandFrames = 3,
+            minimumDynamicFrames = 1,
+            minimumStrongFrames = 3,
+            minimumVoicedFrames = 3,
+        )
+        listOf(0.04f, 0.05f, 0.04f, 0.05f).forEach { rms ->
+            lowerCorrelation.add(PcmProcessor.Level(0f, 0f, 0f, 0f, rms, 0.25f))
+        }
+        expect(lowerCorrelation.hasClearCommand, "Speech with 0.25 voicing correlation passes the relaxed 0.20 threshold")
         val random = Random(42)
         val randomNoise = ShortArray(320) { random.nextInt(-9_000, 9_001).toShort() }
         expect(PcmProcessor().analyze(randomNoise).voicing < 0.38f, "Broadband noise lacks voiced correlation")

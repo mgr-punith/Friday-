@@ -270,6 +270,6 @@ class SpeechEndDetector(
         const val START_OFFSET_RMS = 0.003f
         const val CONTINUE_OFFSET_RMS = 0.003f
         const val DYNAMIC_RMS_DELTA = 0.0015f
-        const val MIN_VOICING_CORRELATION = 0.38f
+        const val MIN_VOICING_CORRELATION = 0.20f
     }
 }
