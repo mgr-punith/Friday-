@@ -100,6 +100,9 @@ class WakeTrialService : Service() {
             }
             return START_NOT_STICKY
         }
+        if (intent.getBooleanExtra(COMMAND_MODE, false)) {
+            com.puneet.friday.voice.ConfirmationSpeaker.warmUp(this)
+        }
         try {
             val notification = notification()
             if (Build.VERSION.SDK_INT >= 30) startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)

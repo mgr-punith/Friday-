@@ -7,7 +7,61 @@ import android.os.Looper
 import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.util.Log
 import java.util.Locale
+
+/** Keeps Android's optional TTS connection ready while the app process remains alive. */
+private object SharedTextToSpeech {
+    private val main = Handler(Looper.getMainLooper())
+    private val waiters = mutableListOf<(TextToSpeech?) -> Unit>()
+    private var engine: TextToSpeech? = null
+    private var starting = false
+    private var ready = false
+
+    fun prepare(context: Context) {
+        main.post { startIfNeeded(context.applicationContext) }
+    }
+
+    fun acquire(context: Context, callback: (TextToSpeech?) -> Unit) {
+        main.post {
+            if (ready) {
+                callback(engine)
+            } else {
+                waiters += callback
+                startIfNeeded(context.applicationContext)
+            }
+        }
+    }
+
+    private fun startIfNeeded(context: Context) {
+        if (ready || starting) return
+        starting = true
+        engine = TextToSpeech(context) { status ->
+            main.post {
+                val current = engine
+                starting = false
+                if (status == TextToSpeech.SUCCESS && current != null && current.setLanguage(Locale.ENGLISH) >= 0) {
+                    ready = true
+                    Log.i(TAG, "event=tts_ready")
+                    completeWaiters(current)
+                } else {
+                    current?.shutdown()
+                    if (engine === current) engine = null
+                    ready = false
+                    completeWaiters(null)
+                }
+            }
+        }
+    }
+
+    private fun completeWaiters(current: TextToSpeech?) {
+        val callbacks = waiters.toList()
+        waiters.clear()
+        callbacks.forEach { it(current) }
+    }
+
+    private const val TAG = "FridayVoice"
+}
 
 /** Optional device TTS, with cancellation and playback-timed PCM feedback. */
 class ConfirmationSpeaker(
@@ -26,12 +80,15 @@ class ConfirmationSpeaker(
     private var ready = false
     private var pending: Pair<String, String>? = null
     private var speaking = false
+    private var closed = false
     private var playbackStart = 0L
     private var queuedAudioMs = 0L
     private var sampleRate = 16_000
     private var channels = 1
     private var format = AudioFormat.ENCODING_PCM_16BIT
     private val frames = ArrayList<AudioFrame>()
+
+    fun warmUp() = SharedTextToSpeech.prepare(appContext)
 
     fun speak(message: String) {
         val text = message.trim().takeIf { it.isNotEmpty() } ?: return
@@ -53,35 +110,32 @@ class ConfirmationSpeaker(
     }
 
     fun shutdown() {
+        closed = true
         stop()
-        ready = false
-        starting = false
-        engine?.shutdown()
+        engine?.setOnUtteranceProgressListener(null)
         engine = null
-        main.removeCallbacksAndMessages(null)
+        ready = false
+        main.removeCallbacksAndMessages(audioCallbacks)
     }
 
     private fun start() {
         starting = true
-        engine = TextToSpeech(appContext) { status ->
-            main.post {
-                starting = false
-                val current = engine ?: return@post
-                if (status != TextToSpeech.SUCCESS || current.setLanguage(Locale.ENGLISH) < 0) {
-                    val id = pending?.second
-                    pending = null
-                    val notify = session.finish(id)
-                    current.shutdown()
-                    engine = null
-                    onAvailable(false)
-                    if (notify) onFinished()
-                    return@post
-                }
-                ready = true
-                onAvailable(true)
-                current.setOnUtteranceProgressListener(listener)
-                speakPending()
+        SharedTextToSpeech.acquire(appContext) { current ->
+            starting = false
+            if (closed) return@acquire
+            if (current == null) {
+                val id = pending?.second
+                pending = null
+                val notify = session.finish(id)
+                onAvailable(false)
+                if (notify) onFinished()
+                return@acquire
             }
+            engine = current
+            ready = true
+            onAvailable(true)
+            current.setOnUtteranceProgressListener(listener)
+            speakPending()
         }
     }
 
@@ -89,6 +143,7 @@ class ConfirmationSpeaker(
         val (text, id) = pending ?: return
         pending = null
         if (!session.accepts(id)) return
+        engine?.setOnUtteranceProgressListener(listener)
         if (engine?.speak(text, TextToSpeech.QUEUE_FLUSH, null, id) != TextToSpeech.SUCCESS) complete(id)
     }
 
@@ -157,4 +212,8 @@ class ConfirmationSpeaker(
     }
 
     private data class AudioFrame(val offsetMs: Long, val level: PcmProcessor.Level)
+
+    companion object {
+        fun warmUp(context: Context) = SharedTextToSpeech.prepare(context.applicationContext)
+    }
 }

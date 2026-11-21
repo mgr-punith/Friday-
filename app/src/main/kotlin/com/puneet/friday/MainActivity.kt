@@ -916,7 +916,7 @@ open class MainActivity : Activity() {
 
     private companion object {
         const val SIGN_IN_REQUEST = 108
-        const val WAKE_GREETING = "What can I do for you?"
+        const val WAKE_GREETING = "Ready?"
         const val IDLE_LABEL = "Talk to Friday"
         const val IDLE_DETAIL = "Tap the microphone to start."
         const val RETRY_CONTROL_LABEL = "Tap to retry"

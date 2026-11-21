@@ -22,7 +22,7 @@ A wake-opened debug panel closes three seconds after a no-clear-command or actio
 
 Cloud commands in the account-enabled APK require Google sign-in. The app uses Friday account credentials and the Vercel router rejects anonymous install tokens. See [account setup and deployment order](google-sign-in.md). Local debug action tools do not use cloud recognition.
 
-An accepted wake entry says “What can I do for you?” before command capture. Recording waits for the greeting's completion and a short speaker-tail gap. A missing or stalled TTS engine has a bounded fallback. Leaving the app or cancelling invalidates the pending recording. Ordinary tap entry points start capture without the wake greeting.
+An accepted wake entry says “Ready?” before command capture. The wake listener warms Android text-to-speech while it waits, and the shared engine stays available when the command panel opens. Recording waits for the greeting's completion and a short speaker-tail gap. A missing or stalled TTS engine has a bounded fallback. Leaving the app or cancelling invalidates the pending recording. Ordinary tap entry points start capture without the wake greeting.
 
 After success, Friday speaks one short result, such as “Done. Silent mode on”. Dispatch to Clock retains “Timer request sent…” or “Alarm request sent…”. The compact panel closes 1.2 seconds after speech ends, with a 12-second watchdog for a stalled engine. Without speech, it closes after the short readable delay. The full Home screen remains open. New commands, errors, permission requests, leaving the app and user interaction cancel that success close; no command is repeated by dismissal.
 
@@ -50,3 +50,5 @@ A wake-opened locked panel closes after its result or unlock reminder and permit
 For app and contact commands, Gemini returns the spoken name without words such as “open” or “call”. If those words reach the phone as part of the name, Friday can remove them from the start before matching. App names can differ from launcher labels or include spaces, as in “Whats App” for “WhatsApp”. Friday checks known product names against installed packages, so asking for Google Chrome does not open Chrome Beta. Contact matching keeps its existing thresholds and prompts.
 
 For audio, Gemini can also select `unclear_command` when it hears silence, noise, music, or uncertain words. The backend returns `{"type":"error","reason":"bad_audio"}` and Android does not run an action. A clear unsupported request still returns `{"type":"unsupported"}`. Ringer changes include the exact command words inside the private Gemini function call; the backend checks for a matching silent, vibrate, or normal-mode phrase and removes those words from its response.
+
+The phone's local speech gate now accepts a voicing correlation of 0.20 to capture less clearly voiced speech. This can also pass more background noise to the backend; the backend still rejects unclear audio.
