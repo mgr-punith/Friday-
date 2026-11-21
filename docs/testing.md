@@ -4,6 +4,26 @@
 
 Add a repeatable test when a build or feature failure has a deterministic reproduction. Keep hardware, OEM, permission-panel, launcher, and other device-only failures in the phone checklist with the exact reproduction steps. Do not mark a device case as automated coverage.
 
+## SAM clean-build regression, 21 November 2026
+
+After CI split the backend and AWS jobs, the AWS runner installed dependencies but had no generated `dist/handler.js`. The SAM Makefile only checked and copied that file, so the build failed at `test -f dist/handler.js`. The final Required checks job then reported `SAM: expected success, got failure`. That status check behaved as intended.
+
+The Makefile now runs `npm run build` before checking and copying the handler. The AWS job runs `npm run test:sam` before `sam build`. Two tests execute the real Make target in temporary workspaces using the installed dependencies: one starts without `dist` and verifies the packaged JavaScript, and one injects invalid source alongside a stale bundle and confirms that compilation failure stops packaging. These tests belong to CI and remain public. They require Make, but no AWS credentials, API calls or downloads. Vercel verification does not run them.
+
+Verification commands:
+
+```bash
+cd backend
+npm run test:sam
+npm run verify
+cd ..
+python3 -m unittest discover -s scripts -p 'test_*.py'
+python3 scripts/check-secrets.py
+git diff --check
+```
+
+Both SAM packaging tests, all 101 backend tests and all 38 Python tool tests passed. The Python regressions cover the exact failed-SAM status and require it to pass before the final status succeeds. The workflow YAML and SAM step order passed inspection. SAM CLI remains unavailable locally, so this verifies the Make target used by SAM; GitHub still runs the complete `sam validate` and `sam build`. Android files and dependencies did not change.
+
 ## Local phone tools
 
 The owner keeps phone automation, recording evaluations and experimental runtime builders in ignored `.local/tools/`. Commands below that use that path require the owner's local checkout; GitHub clones do not include those helpers. Git hooks, build guards and automated CI tests remain public. Existing versions of moved tools remain in Git history.

@@ -81,10 +81,14 @@ The SAM template, DynamoDB adapter, and SSM adapter remain in the repository. Ru
 
 ```bash
 cd backend
+npm ci
 npm run verify
+npm run test:sam
 sam validate --lint --template-file template.yaml
 sam build --template-file template.yaml
 ```
+
+After `npm ci`, the SAM Makefile builds its bundle from source before packaging `handler.js`. It does not require a previous `npm run build` or another CI job's artifacts. The build regression tests require Make and use installed dependencies without downloading packages or contacting AWS.
 
 The owner configures AWS credentials and runs `sam deploy`. Codex does not handle AWS credentials.
 

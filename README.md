@@ -63,6 +63,7 @@ The debug trial uses a user-started microphone foreground service, a persistent 
 cd backend
 npm ci
 npm run verify
+npm run test:sam
 sam validate --lint --template-file template.yaml
 sam build --template-file template.yaml
 ```

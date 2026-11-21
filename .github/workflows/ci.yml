@@ -116,6 +116,9 @@ jobs:
       - name: Validate SAM template
         run: sam validate --lint --template-file template.yaml
 
+      - name: Test SAM build regressions
+        run: npm run test:sam
+
       - name: Build SAM artifact
         run: sam build --template-file template.yaml --build-dir .aws-sam/build
 
