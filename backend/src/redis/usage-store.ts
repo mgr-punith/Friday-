@@ -102,6 +102,8 @@ export function createRedisClient(url: string, token: string): RedisEvalSender {
     token,
     cache: "no-store",
     enableTelemetry: false,
+    // Auth records and Lua compare-and-set require the original JSON string.
+    automaticDeserialization: false,
     keepAlive: true,
     readYourWrites: true,
     retry: { retries: 1, backoff: () => 50 }

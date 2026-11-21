@@ -4,7 +4,7 @@ GitHub CI selects suites from the changed paths. It compares a pull request with
 
 | Changed files | Required work |
 |---|---|
-| Android source, resources, Gradle configuration | Debug/release builds, Kotlin tests, lint, manifest and dependency checks, release APK size |
+| Android source, resources, Gradle configuration | Android Python regressions, debug/release builds, Kotlin tests, lint, manifest and dependency checks, release APK size |
 | Vercel, auth or Redis source and backend tests | Backend types, tests, Vercel configuration, bundles and entry check |
 | Shared backend code, backend dependencies, build files or SAM template | Backend checks plus SAM build regressions and AWS template validation/build |
 | Repository tooling | Python tool regressions; app guards also select Android |
@@ -12,6 +12,8 @@ GitHub CI selects suites from the changed paths. It compares a pull request with
 | Workflows, shared verification/security scripts, unknown files or unavailable Git history | Full suite |
 
 Manual **Run workflow** selects the full suite. CI checks related components together because changing a shared API can break a caller in an untouched file. It does not try to map individual functions to tests.
+
+The Android job runs `scripts/test_wake_trial.py` even when `FRIDAY_SKIP_TOOL_TESTS=1`. These tests check app source, debug components and manifest boundaries, so app-only changes need them. The separate tooling job runs the full Python suite when tooling changes. Changes to `scripts/wake_trial_checks.py` also select Android verification because the release manifest guard imports it.
 
 **Required checks** reports one final result. It fails if selection fails or a selected job fails, gets cancelled or gets skipped. Set that status and the separate **credentials** status as required checks in GitHub's branch rule. Existing required status names may need updating. This repository change does not alter GitHub branch settings.
 

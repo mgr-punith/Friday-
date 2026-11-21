@@ -2,7 +2,9 @@
 
 Friday requires a verified Google account before sending a cloud command. The Android app uses Credential Manager with the Google Play Services provider. Phones without that provider use browser OAuth once the owner configures its callback. Friday's backend remains on Vercel.
 
-This code has not been deployed. The production `/v1/auth/config` route returned 404 during the 21 November check. Installing the new APK alone cannot enable sign-in against that older deployment.
+The production `/v1/auth/config` route now returns 200 with a Web client ID; browser sign-in remains unconfigured. A 21 November phone test reached Google's account chooser, then failed during Friday's token exchange. A separate probe reproduced HTTP 503. The local Redis fix below still needs deployment before retrying that exchange.
+
+The Redis client must keep `automaticDeserialization: false`. Friday stores login and session records as JSON strings, and its Lua compare-and-set checks compare those exact bytes. Upstash's default JSON decoding returns an object, which the authentication store rejects. The regression test uses the installed Redis SDK with a mocked HTTP response and checks that reads preserve the stored string and pass it unchanged to the atomic update.
 
 ## Owner setup
 

@@ -30,7 +30,8 @@ class ChangeRoutingTests(unittest.TestCase):
     def test_docs_only_skip_builds_and_tools_remain_tested(self):
         self.assertEqual(self.selected("README.md", "docs/testing.md", "design/ui-guide.md", ".agents/skills/stop-slop/SKILL.md"), set())
         self.assertEqual(self.selected("scripts/test_wake_trial.py"), {"tooling"})
-        self.assertEqual(self.selected("scripts/check-app-dependencies.py"), {"android", "tooling"})
+        for path in ("scripts/check-app-dependencies.py", "scripts/check-release-manifest.py", "scripts/wake_trial_checks.py"):
+            self.assertEqual(self.selected(path), {"android", "tooling"})
 
     def test_workflows_security_and_unknown_paths_run_everything(self):
         for path in (".github/workflows/ci.yml", ".githooks/pre-commit", "scripts/check-secrets.py", "new-build-system/config.yml", "scripts/ci-changes.py"):

@@ -32,7 +32,7 @@ def select_checks(paths, force=False):
             selected["tooling"] = True
             if name in {"scripts/check-secrets.py", "scripts/test_check_secrets.py"} or name.startswith(".githooks/"):
                 return dict.fromkeys(SUITES, True)
-            if name in {"scripts/check-app-dependencies.py", "scripts/check-release-manifest.py"}:
+            if name in {"scripts/check-app-dependencies.py", "scripts/check-release-manifest.py", "scripts/wake_trial_checks.py"}:
                 selected["android"] = True
         elif name.startswith("design/") and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".svg", ".mp4"}:
             continue

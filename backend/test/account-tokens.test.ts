@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import test from "node:test";
 import { ACCESS_SECONDS, signAccess, verifyAccess } from "../src/auth/tokens";
 import { RedisAuthStore } from "../src/auth/store";
-import type { RedisEvalSender } from "../src/redis/usage-store";
+import { createRedisClient, type RedisEvalSender } from "../src/redis/usage-store";
 import { TEST_INSTALL_ID, TEST_NOW, TEST_SECRETS } from "./helpers";
 
 test("account JWTs expire, reject tampering and use an audience separate from install tokens", () => {
@@ -49,4 +49,29 @@ test("Redis auth rejects malformed or unavailable responses", async () => {
   const failed: RedisEvalSender = { async eval<T>(): Promise<T> { throw new Error("offline"); } };
   await assert.rejects(new RedisAuthStore(failed).get("session:test"), /offline/);
   await assert.rejects(new RedisAuthStore(failed).delete("session:test"), /offline/);
+});
+
+test("the real Redis client preserves authentication JSON bytes for reads and atomic updates", async context => {
+  // Keep whitespace and key order: the CAS script compares the original Redis string.
+  const stored = '{ "nonce": "test-nonce", "installId": "test-install" }';
+  const replies: unknown[] = [stored, 1, null];
+  const commands: unknown[][] = [];
+  context.mock.method(globalThis, "fetch", async (url: string | URL | Request, init?: RequestInit) => {
+    assert.equal(new URL(String(url)).origin, "https://redis.example.test");
+    const body = JSON.parse(String(init?.body)) as unknown[];
+    const pipelined = Array.isArray(body[0]);
+    const batch = pipelined ? body as unknown[][] : [body];
+    const responses = batch.map(command => {
+      commands.push(command);
+      return { result: replies.shift() };
+    });
+    return Response.json(pipelined ? responses : responses[0]);
+  });
+  const store = new RedisAuthStore(createRedisClient("https://redis.example.test", "example-redis-token"));
+  assert.equal(await store.get("login:test"), stored);
+  assert.equal(await store.compareAndSet("login:test", stored, null, 1), true);
+  assert.equal(await store.get("login:missing"), null);
+  assert.equal(commands[1]?.[3], "friday:auth:v1:login:test");
+  assert.equal(commands[1]?.[4], stored);
+  assert.equal(replies.length, 0);
 });

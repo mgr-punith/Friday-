@@ -4,6 +4,29 @@
 
 Add a repeatable test when a build or feature failure has a deterministic reproduction. Keep hardware, OEM, permission-panel, launcher, and other device-only failures in the phone checklist with the exact reproduction steps. Do not mark a device case as automated coverage.
 
+## Sign-in exchange regression, 21 November 2026
+
+The owner selected a Google account on the connected Vivo V2168, then saw Friday's generic connection error. The production backend returned 200 for a temporary login challenge and 503 for an exchange with an invalid dummy ID token. That probe used no Google account, real token or Gemini request.
+
+The Redis SDK decoded the saved login JSON into an object. `RedisAuthStore.get` requires the original string, so it rejected the result before Google token verification. The new test in `backend/test/account-tokens.test.ts` reproduces `invalid_auth_store_response` using the installed SDK with a mocked HTTP response. Setting `automaticDeserialization: false` fixes the test and preserves the original JSON bytes for Lua's atomic comparison. The test also checks missing records and compare-and-set arguments. Android now reports an unavailable sign-in service without attributing it to the phone's connection.
+
+`npm run verify` passed all 102 backend tests, type checks, configuration checks and bundle limits. `npm run test:sam` passed both packaging tests. `python3 -m unittest discover -s scripts -p 'test_*.py'` passed all 39 Python tests. The release dependency audit, manifest and APK guards, credential scan, shell syntax and `git diff --check` passed.
+
+The pinned Gradle 9.1.0 wrapper started a slow distribution download before it could run the offline build. That download was stopped. These commands used the existing cached Gradle 9.4.1 and passed both APK builds, all 510 Kotlin checks and debug lint with zero errors and 53 warnings:
+
+```bash
+friday_signin_gradle=/home/puneet/.gradle/wrapper/dists/gradle-9.4.1-bin/arn2x92ynaizyzdaamcbpbhtj/gradle-9.4.1/bin/gradle
+"$friday_signin_gradle" --offline --no-daemon --max-workers=1 -Dorg.gradle.jvmargs=-Xmx768m assembleDebug assembleRelease test lintDebug --console=plain -PwakeTrialNativeDir=/tmp/friday-package-native/android-debug-jni
+"$friday_signin_gradle" --offline --no-daemon --max-workers=1 -Dorg.gradle.jvmargs=-Xmx768m :app:dependencies --configuration releaseRuntimeClasspath --console=plain -PwakeTrialNativeDir=/tmp/friday-package-native/android-debug-jni > /tmp/friday-signin-fix-dependencies.log
+python3 scripts/check-app-dependencies.py /tmp/friday-signin-fix-dependencies.log
+python3 scripts/check-release-manifest.py
+python3 scripts/check-secrets.py
+bash -n scripts/verify.sh
+git diff --check
+```
+
+Debug APK: **6,255,145 bytes**. Unsigned release APK: **847,252 bytes**, below the 15 MB limit. The updated debug APK installed on the Vivo V2168 with `adb install -r app/build/outputs/apk/debug/app-debug.apk`. The local account checker passed all 10 signed-out UI, callback rejection and microphone-gate checks on that build. Production still needs the backend fix deployed; a successful real account exchange remains unverified.
+
 ## SAM clean-build regression, 21 November 2026
 
 After CI split the backend and AWS jobs, the AWS runner installed dependencies but had no generated `dist/handler.js`. The SAM Makefile only checked and copied that file, so the build failed at `test -f dist/handler.js`. The final Required checks job then reported `SAM: expected success, got failure`. That status check behaved as intended.

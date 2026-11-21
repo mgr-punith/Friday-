@@ -263,8 +263,9 @@ class SignInActivity : Activity() {
             error is UnknownHostException -> "No internet. Connect and try again."
             error.message == "login_busy" -> "Too many sign-in attempts. Try again later."
             error.message == "login_expired" -> "Sign-in expired. Try again."
+            error.message == "login_unavailable" -> "Friday's sign-in service is unavailable. Try again later."
             error is SignInRequired -> "Google couldn't verify this sign-in. Try again."
-            else -> "Couldn't sign in. Check your connection and try again."
+            else -> "Couldn't sign in. Try again."
         })
     }
 

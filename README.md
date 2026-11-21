@@ -8,6 +8,8 @@ See [the UI guide](design/ui-guide.md) for spacing, typography, icon sizes and B
 
 The account implementation now requires Google sign-in before cloud use, with Credential Manager/Play Services and a browser OAuth fallback. It needs the matching backend deployment before the new APK can sign in. See [Google sign-in setup and limits](docs/google-sign-in.md), [the expansion plan](docs/assistant-evolution-notes.md), and [the deferred voice comparison](docs/voice-provider-notes.md). Permanent profiles, memory and conversational answers remain future work.
 
+Sign-in reports an unavailable Friday backend separately from a missing internet connection. The [sign-in setup notes](docs/google-sign-in.md) track the Redis token-exchange fix that still needs deployment.
+
 The UI phase is merged. Friday keeps Home and Settings in one Activity, opens a compact assistant panel from shortcuts, and shows voice and playback controls. The current phase evaluates “Hey Friday” detectors. Sherpa, Vosk, PocketSphinx and the tested community microWakeWord model have not passed the accuracy check; tap shortcuts remain available. The current branch also improves local app-name matching for commands such as “Open Google Chrome”. See the [detector comparison](docs/wake-phrase-evaluation.md), [microWakeWord recording tests](docs/microwakeword-evaluation.md) and [model measurements](docs/model-notes.md). Production still uses Gemini 3.1 Flash-Lite and WAV.
 
 Debug builds include an audio import target for developer recordings shared from the phone's recorder. These test files stay in app-specific storage until removed. Release builds exclude the importer, and normal voice capture does not save audio. See [recording tests](docs/testing.md).
@@ -73,6 +75,8 @@ The Android verification script runs dependency-free Python tool tests, builds d
 Git hooks, build guards and CI tests stay in the repository. Phone automation, recording evaluations and experimental runtime builders stay in ignored `.local/tools/` on the owner's machine. A fresh clone does not include those local tools. Standard app builds and CI do not require them.
 
 [Change-based CI](docs/ci-checks.md) selects Android, backend, AWS and tooling suites from the modified files. Docs-only changes skip builds; security and workflow changes run the full suite. Credential checks still run on pushes and pull requests. Vercel skips app/docs-only deployments and runs backend verification before packaging a backend change. No additional GitHub secret is required.
+
+App-only changes run the Android Python regressions along with the app builds and Kotlin checks. CI skips unrelated Python tool tests for those changes.
 
 The Android package is `com.puneet.friday`. The app targets Android API 37 and supports API 26 and newer. Builds with this package install as a separate app from the earlier development build. Grant permissions and select Friday as the default assistant again; the earlier app's settings and downloaded wake model do not transfer. Android Google OAuth clients must use this package and the matching signing-certificate fingerprint.
 
