@@ -5,7 +5,9 @@ friday_repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd -- "$friday_repo_dir"
 
 python3 scripts/check-secrets.py
-python3 -m unittest discover -s scripts -p 'test_*.py'
+if [[ "${FRIDAY_SKIP_TOOL_TESTS:-0}" != "1" ]]; then
+    python3 -m unittest discover -s scripts -p 'test_*.py'
+fi
 
 if rg -n --glob '*.{kt,java,kts,xml}' \
     'android\.speech\.SpeechRecognizer|com\.google\.android\.gms|com\.google\.firebase|com\.google\.mlkit|software\.amazon\.awssdk|com\.amazonaws|material-icons-extended' \
@@ -20,6 +22,11 @@ if rg -n 'unsupportedDialog|"Feature not built yet"' app/src/main; then
 fi
 
 ./gradlew assembleDebug assembleRelease test lintDebug --console=plain "$@"
+
+friday_dependency_report="$(mktemp /tmp/friday-dependencies.XXXXXX)"
+trap 'rm -f -- "$friday_dependency_report"' EXIT
+./gradlew :app:dependencies --configuration releaseRuntimeClasspath --console=plain "$@" > "$friday_dependency_report"
+python3 scripts/check-app-dependencies.py "$friday_dependency_report"
 
 python3 scripts/check-release-manifest.py
 

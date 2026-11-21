@@ -7,7 +7,7 @@ The owner approved microWakeWord as the first phone trial on 19 November 2026, t
 Use the existing pinned native build helper. Keep its work directory outside the repository. It downloads pinned runtime sources and native build dependencies on its first run; it does not train or download a model. This uses the small inference runtime, without the rejected training workspace.
 
 ```bash
-python3 scripts/build-microwakeword-eval.py /tmp/friday-microwakeword-20261119 \
+python3 .local/tools/build-microwakeword-eval.py /tmp/friday-microwakeword-20261119 \
   --android-ndk "$ANDROID_HOME/ndk/27.1.12297006" \
   --abi arm64-v8a --debug-jni
 
@@ -28,7 +28,7 @@ The download uses jsDelivr's HTTPS mirror of the pinned GitHub revision. Both co
 Developers can still side-load the pinned model from the earlier evaluation:
 
 ```bash
-python3 scripts/install-wake-trial-model.py /path/to/hey_friday.tflite \
+python3 .local/tools/install-wake-trial-model.py /path/to/hey_friday.tflite \
   --serial DEVICE_SERIAL --adb /path/to/adb
 ```
 
@@ -54,7 +54,7 @@ The preference stores a choice, not permission to start from boot. After restart
 Run the phone check with the installed native debug build and approved private model:
 
 ```bash
-python3 scripts/wake-usage-phone-check.py --serial DEVICE_SERIAL --adb /path/to/adb
+python3 .local/tools/wake-usage-phone-check.py --serial DEVICE_SERIAL --adb /path/to/adb
 ```
 
 The checker opens both help popups, verifies exclusive selection and disclosure cancellation when consent is new, then tests notification Pause/Resume, repeated toggles, both system themes and Tap mode. It returns Home before notification Resume so a wake-opened panel cannot occupy the microphone during the background check. Its no-command preview uses the privileged debug broadcast receiver; launching the legacy preview Activity can bring an existing setup task forward on Android 11. It restores the system theme and ends with background wake listening off. `--controls-only` skips already-checked option help during a notification investigation. Large-text, rotation and reduced-motion checks require `--display-checks`; the default run changes none of those settings. The owner asked to stop large-font tests, so do not add that flag without a new request. The checker never submits a deliberate cloud command or measures recognition accuracy. Keep the phone untouched while it runs.
@@ -87,7 +87,7 @@ The lock-screen entry, metadata and wake service remain debug-only. The local ac
 Run the lock-screen regression after starting the listener through **Start Friday**:
 
 ```bash
-python3 scripts/locked-wake-phone-check.py --serial DEVICE_SERIAL --adb /path/to/adb
+python3 .local/tools/locked-wake-phone-check.py --serial DEVICE_SERIAL --adb /path/to/adb
 ```
 
 The checker keeps the phone locked, verifies microphone sample progress while the screen stays off, and injects four labeled previews. The call preview must show the normal target confirmation; the checker cancels it without tapping **Call**. Apps must show the unlock prompt without the requested app name. Timer and sound-mode previews must pass preparation. Each panel must close and permit another wake. The debug receiver accepts these previews only from a sender with Android's privileged `DUMP` permission, such as ADB shell. It cannot start the listener or run a phone action. Release builds exclude it.
@@ -100,7 +100,7 @@ The debug service captures mono 16 kHz PCM through `AudioRecord`, reuses a 320-s
 
 The worker owns the native handle from creation through cleanup. Stop interrupts capture; cleanup releases the recorder and native handle before another command can use the microphone. Generation-scoped state and a one-use wake request reject duplicate or stale launches. The selected `VoiceInteractionService` requests the existing assistant session; the wake service does not launch a background Activity directly. If that path is unavailable, the notification holds a one-use tap request. The screen polls state twice per second while visible and only redraws changed state. Elapsed time updates every five seconds. No ambient microphone audio or transcript enters storage or a backend request. After handoff, the existing recorder captures a fresh command for the existing backend flow.
 
-The debug build saves the latest **20 completed runs**, with the selected cutoff, mode, counts, up to **64 detection offsets**, opened-panel count, capture time and compute time, in private `files/wake-trial/run-history.json`. It marks injected test wakes separately. `adb shell dumpsys activity service com.example.assistant/.debug.wake.WakeTrialService` returns the current aggregate state while the service exists. The report contains no command text, contacts, audio or backend tokens. These metrics cannot label missed phrases or distinguish genuine speech from false triggers without known test attempts.
+The debug build saves the latest **20 completed runs**, with the selected cutoff, mode, counts, up to **64 detection offsets**, opened-panel count, capture time and compute time, in private `files/wake-trial/run-history.json`. It marks injected test wakes separately. `adb shell dumpsys activity service com.puneet.friday/.debug.wake.WakeTrialService` returns the current aggregate state while the service exists. The report contains no command text, contacts, audio or backend tokens. These metrics cannot label missed phrases or distinguish genuine speech from false triggers without known test attempts.
 
 Native attribution and license text live in the debug-only `wake-trial-licenses.txt` asset. The runtime adds no Google Play Services, Android speech recognizer, Gemini SDK or AWS SDK dependency.
 
@@ -111,11 +111,11 @@ python3 -m unittest discover -s scripts -p 'test_*.py'
 ./gradlew assembleDebug assembleRelease test lintDebug \
   -PwakeTrialNativeDir=/tmp/friday-microwakeword-20261119/android-debug-jni
 python3 scripts/check-release-manifest.py
-python3 scripts/wake-trial-phone-check.py \
+python3 .local/tools/wake-trial-phone-check.py \
   --serial DEVICE_SERIAL --adb /path/to/adb --lifecycle
-python3 scripts/wake-trial-layout-check.py \
+python3 .local/tools/wake-trial-layout-check.py \
   --serial DEVICE_SERIAL --adb /path/to/adb
-python3 scripts/wake-command-phone-check.py \
+python3 .local/tools/wake-command-phone-check.py \
   --serial DEVICE_SERIAL --adb /path/to/adb
 ```
 
@@ -152,7 +152,7 @@ On the connected Vivo V2168, API 34, the JNI replay of recording 3 returned **3.
 
 The phone checker removed its temporary private PCM and replay results and restored the approved model. The test ended with the microphone off. Nothing was pushed or deployed.
 
-`python3 scripts/wake-trial-layout-check.py --serial DEVICE_SERIAL --adb /path/to/adb` passed in portrait and landscape at 200% system text, with a reachable Start control of at least 48dp. Visual inspection confirmed the stopped screen and both large-text layouts. The checker restored the original font and rotation settings. Its first fast-swipe attempt flung past the Start control; short, slow drags fixed the checker without changing app layout.
+`python3 .local/tools/wake-trial-layout-check.py --serial DEVICE_SERIAL --adb /path/to/adb` passed in portrait and landscape at 200% system text, with a reachable Start control of at least 48dp. Visual inspection confirmed the stopped screen and both large-text layouts. The checker restored the original font and rotation settings. Its first fast-swipe attempt flung past the Start control; short, slow drags fixed the checker without changing app layout.
 
 ## Owner's live observation on 19 November 2026
 
@@ -176,13 +176,13 @@ The cached Gradle **9.4.1** executable passed these arguments; the pinned **9.1.
 
 The build passed **83 action**, **183 voice** and **70 wake-trial** checks, for **336 Kotlin checks**. Lint reported **0 errors and 39 warnings**. The first start needed host-cache access after the sandbox could not load `libnative-platform.so`. The native-enabled Python command documented above passed **49 tests**. `python3 scripts/check-release-manifest.py`, APK packaging checks and `git diff --check` passed.
 
-`python3 scripts/wake-command-phone-check.py --serial DEVICE_SERIAL --adb /path/to/adb --output /tmp/friday-wake-command-check/final` passed on the final installed APK. It checked system-assistant opening, wake-recorder release before command capture, resuming the same run after dismissal, forced notification fallback, notification Stop while paused, no resume after Stop, bounded saved metadata and stale wake rejection. Its two wake events were **synthetic**, and the saved report marks them as such. This check validates integration, not live wake recognition or a completed spoken command. The owner still needs to try the complete spoken wake and command sequence.
+`python3 .local/tools/wake-command-phone-check.py --serial DEVICE_SERIAL --adb /path/to/adb --output /tmp/friday-wake-command-check/final` passed on the final installed APK. It checked system-assistant opening, wake-recorder release before command capture, resuming the same run after dismissal, forced notification fallback, notification Stop while paused, no resume after Stop, bounded saved metadata and stale wake rejection. Its two wake events were **synthetic**, and the saved report marks them as such. This check validates integration, not live wake recognition or a completed spoken command. The owner still needs to try the complete spoken wake and command sequence.
 
 The first fallback check tapped Vivo's grouped preview, which expanded the group without opening the command panel. The checker now expands the group before tapping notification content. A second check encountered the shade's closing animation after notification launch; it now waits and retries when SystemUI has no matching control. The Python suite covers both control-selection cases. The corrected final phone check passed. The older count-only check also exposed task navigation that left the trial Activity above MainActivity. The checker now uses an explicit clear-top launch and verifies the resumed component; the Python suite covers the navigation arguments and real activity-dump examples. A weak reference to the bound assistant service removed the two new static-context lint warnings without suppressing them.
 
-The final count-only run passed `scripts/wake-trial-phone-check.py --serial DEVICE_SERIAL --adb /path/to/adb --pcm /tmp/friday-microwakeword-20261119/recording-4.pcm --expect-ms 16390 --lifecycle --output /tmp/friday-wake-command-check/count-only-verified`. It returned the expected **16.39-second** replay event and passed five JNI argument checks, missing/corrupt model rejection, live microphone start, Home, short screen-off capture, screen and notification Stop, restart and return to the verified foreground assistant.
+The final count-only run passed `.local/tools/wake-trial-phone-check.py --serial DEVICE_SERIAL --adb /path/to/adb --pcm /tmp/friday-microwakeword-20261119/recording-4.pcm --expect-ms 16390 --lifecycle --output /tmp/friday-wake-command-check/count-only-verified`. It returned the expected **16.39-second** replay event and passed five JNI argument checks, missing/corrupt model rejection, live microphone start, Home, short screen-off capture, screen and notification Stop, restart and return to the verified foreground assistant.
 
-`scripts/wake-trial-layout-check.py --serial DEVICE_SERIAL --adb /path/to/adb --output /tmp/friday-wake-command-check/layout` passed at **200% text** in portrait and landscape. Visual inspection confirmed a reachable Start control in both layouts. The checker restored font and rotation settings. A final service query found no wake service, and the private model hash still matched the approved model. The phone remains ready for the owner to tap Start; the tests left its wake microphone off.
+`.local/tools/wake-trial-layout-check.py --serial DEVICE_SERIAL --adb /path/to/adb --output /tmp/friday-wake-command-check/layout` passed at **200% text** in portrait and landscape. Visual inspection confirmed a reachable Start control in both layouts. The checker restored font and rotation settings. A final service query found no wake service, and the private model hash still matched the approved model. The phone remains ready for the owner to tap Start; the tests left its wake microphone off.
 
 Long listening sessions, battery drain, multi-speaker accuracy, physical secure-lock behavior and a seamless “Hey Friday, command” utterance remain unverified. Production wake listening remains disabled. No code was pushed or deployed.
 
@@ -203,7 +203,7 @@ Commands run for final verification:
 /home/puneet/.gradle/wrapper/dists/gradle-9.4.1-bin/arn2x92ynaizyzdaamcbpbhtj/gradle-9.4.1/bin/gradle --offline --no-daemon assembleDebug assembleRelease test lintDebug :app:dependencies --configuration releaseRuntimeClasspath --console=plain -PwakeTrialNativeDir=/tmp/friday-wake-error-recovery/android-debug-jni
 python3 -m unittest discover -s scripts -p 'test_*.py'
 python3 scripts/check-release-manifest.py
-python3 scripts/wake-command-phone-check.py --serial 192.168.1.15:42091 --adb /home/puneet/Android/Sdk/platform-tools/adb --output /tmp/friday-wake-error-recovery/phone-final-pass
+python3 .local/tools/wake-command-phone-check.py --serial 192.168.1.15:42091 --adb /home/puneet/Android/Sdk/platform-tools/adb --output /tmp/friday-wake-error-recovery/phone-final-pass
 git diff --check
 ```
 
@@ -213,12 +213,12 @@ The final phone checker passed on the Vivo V2168, API 34. It verified real silen
 
 ## Files changed for this trial
 
-- `app/src/debug/kotlin/com/example/assistant/debug/wake/`: detector/model checks, session state, foreground capture, test screen, JNI replay, microphone gate/handoff, assistant bridge and bounded metadata reports.
+- `app/src/debug/kotlin/com/puneet/friday/debug/wake/`: detector/model checks, session state, foreground capture, test screen, JNI replay, microphone gate/handoff, assistant bridge and bounded metadata reports.
 - `app/src/debug/cpp/FridayWakeJni.cpp` and `app/src/debug/assets/wake-trial-licenses.txt`: JNI bridge and native notices.
 - `app/src/debug/AndroidManifest.xml`, debug/release `DebugTools.kt` and `app/build.gradle.kts`: source-set isolation, service permissions, optional debug native path and wake-trial JVM checks.
 - `MainActivity.kt`, `PermissionsActivity.kt`, `SettingsPanel.kt`, `entry/FridayVoiceInteractionService.kt`, `entry/FridayVoiceSession.kt` and `voice/VoiceRecorder.kt`: debug entry, disclosures, assistant-session bridge and microphone ownership hooks. Release hooks contain no trial implementation.
-- `app/src/testDebug/kotlin/com/example/assistant/debug/wake/WakeTrialLogicTests.kt`: 93 dependency-free checks, including error recovery and cancellation.
-- `scripts/build-microwakeword-eval.py`, `install-wake-trial-model.py`, `wake-trial-phone-check.py`, `wake-command-phone-check.py`, `wake-trial-layout-check.py`, `wake_trial_checks.py`, `test_wake_trial.py` and `check-release-manifest.py`: reproducible build, private model installation, phone/layout tests and release guards.
+- `app/src/testDebug/kotlin/com/puneet/friday/debug/wake/WakeTrialLogicTests.kt`: 93 dependency-free checks, including error recovery and cancellation.
+- `.local/tools/build-microwakeword-eval.py`, `install-wake-trial-model.py`, `wake-trial-phone-check.py`, `wake-command-phone-check.py`, `wake-trial-layout-check.py`, `wake_trial_checks.py`, `test_wake_trial.py` and `check-release-manifest.py`: reproducible build, private model installation, phone/layout tests and release guards.
 - `README.md`, `docs/actions.md`, `docs/testing.md`, `docs/microwakeword-evaluation.md` and this guide: setup, behavior, results and remaining limits.
 
 Earlier app-name matching and backend changes remain in the worktree from the preceding task. This trial did not deploy them.

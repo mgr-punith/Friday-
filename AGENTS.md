@@ -31,6 +31,7 @@ Anything else the user says gets a short "Sorry, I can't do that yet".
 
 1. **Release APK must be 15 MB or less.** Check the size after every dependency or asset change and report it.
 2. **No required Google dependency on the device.** The app must work fully on a phone without Google Play Services. Do not use `com.google.android.gms`, `com.google.firebase`, ML Kit, Google Sign-In, `SpeechRecognizer`, or a Gemini SDK in the app. If an optional Google feature would help, ask the owner first, and it must be skippable with no change in behavior.
+   - **Account-phase exception approved on 21 November 2026:** use Google's official sign-in through Credential Manager and Google Play Services. Keep browser-based Google OAuth as the fallback for phones without Play Services. Google sign-in is required before cloud use in the planned account flow. Other Google SDK restrictions remain; dependency approval and release-size checks still apply. See [the account plan](docs/assistant-evolution-notes.md).
 3. **Secrets stay on the backend.** The app never holds a Gemini or AWS key, and no AWS SDK goes in the app. The only config value in the app is the backend URL. Never commit keys. `.env` files are gitignored.
 4. **Never ask for, store, or print AWS credentials.** Do not run `sam deploy` or any command that changes the AWS account unless the owner explicitly asks. The owner deploys.
 5. **Native Kotlin only.** No Flutter, React Native, or WebView-based UI.
@@ -40,6 +41,7 @@ Anything else the user says gets a short "Sorry, I can't do that yet".
 9. **Be honest in confirmations.** Only say an action happened if it did.
 10. **Stop Slop is mandatory for all user-facing copy.** Apply the `stop-slop` skill whenever writing or reviewing app labels, dialogs, disclosures, errors, documentation, or release notes. Use direct, specific language. Remove filler, generic AI phrasing, dramatic contrasts, vague claims, and invented functionality.
 11. **This repository is public. Check for credentials before every commit and push.** Run `python3 scripts/check-secrets.py --staged` before committing and `python3 scripts/check-secrets.py --history HEAD` before pushing. Keep the repository's `.githooks` enabled with `git config core.hooksPath .githooks`. Do not bypass a failed check. Report filenames and line numbers only; never print a matched value. Keep secrets, private recordings, keys and local configuration out of Git.
+12. **Keep phone debugging and manual testing tools local.** Put ADB helpers, recording evaluations and experimental runtime builders in gitignored `.local/tools/`. Commit Git hooks, build guards and automated tests required by CI. Do not make CI depend on ignored files.
 
 ## Architecture
 
@@ -97,7 +99,7 @@ AGENTS.md
 README.md
 ```
 
-Use the placeholder package `com.example.assistant`. The owner will rename it later.
+Use the owner-approved Android package `com.puneet.friday` for the application ID, Kotlin namespace and Android components.
 
 ## Android app
 
@@ -352,4 +354,4 @@ Plan for these from the start. They are easy now and painful to retrofit.
 - Whether to add web questions later (Gemini with Google Search grounding) and other languages.
 - Whether to pay for always-warm Lambda (provisioned concurrency) if the warm-up ping is not enough.
 - Whether to add offline speech recognition (downloaded model) so the most common commands work without internet.
-- Final app name and package name.
+- Final public app name. The owner selected Android package `com.puneet.friday`.

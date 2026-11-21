@@ -57,7 +57,7 @@ The final debug APK was installed with:
 Phone regression command:
 
 ```bash
-python3 scripts/ui-phone-check.py --serial 192.168.1.13:37375 --adb /home/puneet/Android/Sdk/platform-tools/adb
+python3 .local/tools/ui-phone-check.py --serial 192.168.1.13:37375 --adb /home/puneet/Android/Sdk/platform-tools/adb
 ```
 
 **33 phone UI checks passed in the publication recheck.** They cover selected navigation tabs, the same Activity instance, tab reselection, retained scroll and results, Android Back, compact states, cancellation, permission recovery, unsupported feedback, microphone lifecycle, 150% text, rotated landscape, and both system themes. Most result states use labelled debug previews and do not execute phone actions. Publication screenshots and the report are in `/tmp/friday-ui-publish-check`; temporary evidence may disappear after a reboot.
@@ -70,7 +70,7 @@ The phone also supplied `ttsSpeaking=true` and `ttsAudioAvailable=true` during a
 
 - JVM checks for TTS cancellation, replacement, duplicate completion, action descriptions, audio levels without speech classification, and tab reselection.
 - `scripts/check-release-manifest.py` verifies private assistant/permission entry points, predictive Back opt-in, absence of a separate Settings Activity, and exclusion of the debug recording importer.
-- `scripts/ui-phone-check.py` verifies device UI states and navigation with saved screenshots and restores temporary device settings.
+- `.local/tools/ui-phone-check.py` verifies device UI states and navigation with saved screenshots and restores temporary device settings.
 - Publication testing fixed the panel-dismissal assertion to ignore Friday widgets on the launcher; it now checks the active Activity and close control.
 - Phone tests caught result/control overflow and a missing microphone accessibility label after Activity recreation. Both were fixed and included in the final checks.
 - Build/lint checks caught the debug manifest override and legacy Back handling. The final build and phone Back check pass.
@@ -87,7 +87,7 @@ The phone also supplied `ttsSpeaking=true` and `ttsAudioAvailable=true` during a
 - `VoiceLogicTests.kt`, `scripts/verify.sh`, and the two new verification scripts.
 - README, `design/README.md`, `docs/testing.md`, and `docs/ui-motion.md` document the final behavior.
 
-Paths above are relative to `app/src/main/kotlin/com/example/assistant` unless another prefix is shown. Check `git status --short` for the full change list before resuming. Do not discard or overwrite the saved work.
+Paths above are relative to `app/src/main/kotlin/com/puneet/friday` unless another prefix is shown. Check `git status --short` for the full change list before resuming. Do not discard or overwrite the saved work.
 
 ## Work still outside this UI phase
 

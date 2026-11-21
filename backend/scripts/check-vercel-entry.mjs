@@ -1,4 +1,5 @@
 const requiredEnvironment = {
+  GOOGLE_WEB_CLIENT_ID: "123456789-test.apps.googleusercontent.com",
   GEMINI_MODEL: "gemini-test",
   GEMINI_API_KEY: "1234567890123456",
   JWT_SIGNING_KEY: "12345678901234567890123456789012",

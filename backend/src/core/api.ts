@@ -16,12 +16,14 @@ import {
   verifyInstallToken
 } from "./jwt";
 import { isFridayWav } from "./wav";
+import type { AccountGateway } from "../auth/api";
 
 const MAX_AUDIO_BYTES = 1_000_000;
 const MAX_TEXT_LENGTH = 500;
 
 export interface FunctionUrlEvent {
   readonly rawPath?: string;
+  readonly rawQueryString?: string;
   readonly headers?: Readonly<Record<string, string | undefined>>;
   readonly body?: string | null;
   readonly isBase64Encoded?: boolean;
@@ -47,6 +49,7 @@ export interface ApiDependencies {
   readonly usage: UsageLimitStore;
   readonly clock: Clock;
   readonly logger: SafeLogger;
+  readonly accounts?: AccountGateway;
 }
 
 export function createApi(dependencies: ApiDependencies) {
@@ -55,7 +58,12 @@ export function createApi(dependencies: ApiDependencies) {
       const method = event.requestContext?.http?.method?.toUpperCase() ?? "";
       const path = normalizePath(event.rawPath ?? "/");
 
+      if (path.startsWith("/v1/auth/")) {
+        return dependencies.accounts?.handle({ ...event, rawPath: path }) ?? json(503, { error: "unavailable" });
+      }
+
       if (method === "POST" && path === "/v1/register") {
+        if (dependencies.accounts) return json(401, { error: "sign_in_required" });
         return handleRegister(event, dependencies);
       }
       if (method === "GET" && path === "/v1/warm") {
@@ -124,9 +132,15 @@ async function handleCommand(
   }
 
   const token = bearerToken(header(event, "authorization"));
-  const installId = token
-    ? verifyInstallToken(token, secrets.jwtSigningKey, dependencies.clock.now())
-    : null;
+  let installId: string | null;
+  try {
+    const account = dependencies.accounts && token ? await dependencies.accounts.authorize(token) : null;
+    installId = dependencies.accounts ? account?.accountId ?? null
+      : token ? verifyInstallToken(token, secrets.jwtSigningKey, dependencies.clock.now()) : null;
+  } catch {
+    dependencies.logger.error("account_check_failed", requestId(event));
+    return commandError(503, "busy");
+  }
   if (!installId) return commandError(401, "unauthorized");
 
   const input = parseCommandInput(event);

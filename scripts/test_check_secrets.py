@@ -16,7 +16,7 @@ class CredentialPatternsTests(unittest.TestCase):
     def test_provider_keys_and_private_keys(self):
         values = [b"AIza" + b"a" * 35, b"gsk_" + b"a" * 48, b"ghp_" + b"a" * 36,
                   b"github_pat_" + b"a" * 60, b"AKIA" + b"A" * 16,
-                  b"-----BEGIN " + b"OPENSSH PRIVATE KEY-----"]
+                  b"-----BEGIN " + b"OPENSSH PRIVATE KEY-----", b"GOCSPX-" + b"A" * 28]
         for value in values:
             with self.subTest(length=len(value)):
                 self.assertTrue(CHECK.scan_bytes("source.txt", value))
@@ -26,6 +26,7 @@ class CredentialPatternsTests(unittest.TestCase):
         assignments = [b'GEMINI_API_KEY="' + value + b'"', b"AWS_SECRET_ACCESS_KEY=" + value,
                        b'export GROQ_API_KEY=' + value,
                        b'{"UPSTASH_REDIS_REST_KV_REST_API_TOKEN": "' + value + b'"}',
+                       b'GOOGLE_WEB_CLIENT_SECRET="' + value + b'"',
                        b'rediss://default:' + value + b'@example.com']
         for data in assignments:
             self.assertTrue(CHECK.scan_bytes("config.txt", data))
@@ -38,6 +39,8 @@ class CredentialPatternsTests(unittest.TestCase):
         self.assertFalse(CHECK.scan_bytes("backend/.env.example", b"GEMINI_API_KEY=replace-with-a-key"))
         self.assertFalse(CHECK.scan_bytes("source.py", b'GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")'))
         self.assertFalse(CHECK.scan_bytes("source.ts", b"GEMINI_API_KEY = process.env.GEMINI_API_KEY"))
+        self.assertFalse(CHECK.scan_bytes("backend/.env.example", b"GOOGLE_WEB_CLIENT_SECRET=replace-with-browser-client-secret"))
+        self.assertFalse(CHECK.scan_bytes("source.ts", b'GOOGLE_WEB_CLIENT_ID="123456789-test.apps.googleusercontent.com"'))
 
     def test_private_filenames_and_identical_example_contents(self):
         for name in ("backend/.env", "backend/.env.production", ".aws/credentials", "upload.jks", "private.pem"):

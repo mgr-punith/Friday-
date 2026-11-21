@@ -4,6 +4,45 @@
 
 Add a repeatable test when a build or feature failure has a deterministic reproduction. Keep hardware, OEM, permission-panel, launcher, and other device-only failures in the phone checklist with the exact reproduction steps. Do not mark a device case as automated coverage.
 
+## Local phone tools
+
+The owner keeps phone automation, recording evaluations and experimental runtime builders in ignored `.local/tools/`. Commands below that use that path require the owner's local checkout; GitHub clones do not include those helpers. Git hooks, build guards and automated CI tests remain public. Existing versions of moved tools remain in Git history.
+
+Run CI tool checks with `python3 -m unittest discover -s scripts -p 'test_*.py'`. On 21 November, all 37 passed after the separation. The local helper suite uses `python3 -m unittest discover -s .local/tools -p 'test_*.py'`: 64 passed and four desktop-native checks skipped because no native test library was configured. The Android packaging checks run in CI without importing a phone helper.
+
+## Account and voice feedback verification, 21 November 2026
+
+The account phase adds the approved Credential Manager/Google login dependencies, browser fallback, backend account sessions and sign-out. The sign-in screen uses the existing Geist font and graphite theme, with a Google account card, the official Google mark, a primary Continue with Google control, a browser alternative and a tap-to-open disclosure. The owner approved these login dependencies; unrelated Google services remain excluded.
+
+Commands run:
+
+```bash
+friday_account_gradle=/home/puneet/.gradle/wrapper/dists/gradle-9.4.1-bin/arn2x92ynaizyzdaamcbpbhtj/gradle-9.4.1/bin/gradle
+"$friday_account_gradle" --no-daemon --max-workers=1 -Dorg.gradle.jvmargs=-Xmx768m assembleDebug assembleRelease test lintDebug --console=plain -PwakeTrialNativeDir=/tmp/friday-package-native/android-debug-jni
+"$friday_account_gradle" --offline --no-daemon --max-workers=1 -Dorg.gradle.jvmargs=-Xmx768m :app:dependencies --configuration releaseRuntimeClasspath --console=plain > /tmp/friday-login-dependencies-current.log
+python3 scripts/check-app-dependencies.py /tmp/friday-login-dependencies-current.log
+python3 scripts/check-release-manifest.py
+python3 -m unittest discover -s scripts -p 'test_*.py'
+python3 -m unittest discover -s .local/tools -p 'test_*.py'
+cd backend
+npm run verify
+node --test --test-isolation=none build-test/test/*.test.js scripts/*.test.mjs
+```
+
+Both APK builds passed, along with **510 Kotlin checks**: 101 action, 220 voice and 189 wake. Lint reported zero errors and 53 warnings. The release dependency allowlist and private-entry-point checks passed. ZIP checks confirmed that the release excludes native wake libraries, models and audio fixtures, and that the debug runtime has the expected JNI symbols. Debug APK: **6,255,145 bytes**. Unsigned release APK: **847,212 bytes**. These runs used cached Gradle 9.4.1; they do not verify installation of the wrapper's pinned 9.1.0 distribution.
+
+Backend verification passed **101 individual tests**, including Google RSA/JWKS checks, nonce/audience rejection, replay/expiry, refresh and logout races, account quotas, anonymous-token rejection, Redis failures and browser PKCE. It produced a **112,986-byte Vercel bundle** and **756,108-byte Lambda bundle**. SAM CLI was unavailable locally; template validation/build remain CI checks. The AWS adapter still uses the previous install-token protocol and cannot serve the account-enabled APK.
+
+The verified debug APK installed on the Vivo V2168 running Android 14. The local account checker passed **10 checks**: sign-in controls, account disclosure, malformed OAuth callbacks, cancellation, the signed-out command gate and no active recording. No test selected a Google account or granted sensitive permissions.
+
+The speech preview checker passed **14 checks** for TTS start/completion, keeping full Home open, closing a compact result after speech, retaining a manual error panel, greeting playback and single completion, and preventing recording while signed out. Its saved event sequence confirms that the compact TTS callback precedes dismissal. These are labelled previews: they send no command and execute no phone action. They do not verify audible quality, spoken wake accuracy or the signed-in command loop.
+
+The first preview attempts exposed two test-environment issues: the Vivo filtered debug-priority markers, and the helper requested `dumpsys window windows`, which omitted the current-focus field. Debug-only markers now use info priority; the helper queries the full window dump and waits for focus. Local regressions cover short/full component names and rejection of background activity records. A failed early dependency-report lookup also selected a prior failed build log; the fresh offline dependency report passed the allowlist.
+
+Google ID 1.2.1 failed compilation because its Kotlin metadata required a newer compiler. The approved dependency now pins compatible 1.1.1, with a CI guard against restoring the incompatible version. No compiler-check bypass was added. Missing Google credentials now have an explicit browser sign-in message, and CI treats Credential Manager misuse as a fatal lint finding.
+
+Real Google login remains unverified: production `/v1/auth/config` returned 404 before this phase's backend deployment. Deploy the backend, verify the OAuth client/signing identity, then test sign-in, a command, refresh and sign-out on the phone. Browser login also needs its Web-client secret and matching callback configuration. See [Google sign-in setup](google-sign-in.md). No code was committed, pushed or deployed during this verification.
+
 ## Repeatable build checks
 
 Enable the local credential hooks with `git config core.hooksPath .githooks`. Before committing, run `python3 scripts/check-secrets.py --staged`; before pushing, run `python3 scripts/check-secrets.py --history HEAD`. The hooks enforce those checks for normal Git commands. The push hook scans each outgoing branch's history, so deleting a credential in a later commit does not hide it. The separate Credential check workflow scans history on pushes and pull requests. CI runs after publication; the local hooks provide the check before publication.
@@ -20,13 +59,13 @@ Run from the repository root:
 
 The script runs the dependency-free Python tool tests with `python3 -m unittest discover -s scripts -p 'test_*.py'`, then `./gradlew assembleDebug assembleRelease test lintDebug --console=plain`, reports each release APK size, and fails if any exceeds 15,000,000 bytes. Extra Gradle arguments are forwarded, for example `./scripts/verify.sh --offline`. Release APKs are unsigned until local signing is configured.
 
-`./gradlew test` invokes three JavaExec tasks. `:app:actionLogicTest` runs the pure Kotlin action checks in `app/src/test/kotlin/com/example/assistant/actions/ActionLogicTests.kt`. `:app:voiceLogicTest` runs the audio and backend-contract checks in `app/src/test/kotlin/com/example/assistant/voice/VoiceLogicTests.kt`. `:app:wakeTrialLogicTest` runs the debug wake-state and private-model installation checks in `app/src/testDebug/`. These tasks require no JUnit or additional dependency. A failed assertion exits with an error.
+`./gradlew test` invokes three JavaExec tasks. `:app:actionLogicTest` runs the pure Kotlin action checks in `app/src/test/kotlin/com/puneet/friday/actions/ActionLogicTests.kt`. `:app:voiceLogicTest` runs the audio and backend-contract checks in `app/src/test/kotlin/com/puneet/friday/voice/VoiceLogicTests.kt`. `:app:wakeTrialLogicTest` runs the debug wake-state and private-model installation checks in `app/src/testDebug/`. These tasks require no JUnit or additional dependency. A failed assertion exits with an error.
 
 The action checks cover name normalization, exact and fuzzy matching, ambiguous candidates, weak-match rejection, bounded inputs, phone-number formatting and unsafe dial strings, alarm ranges, timer durations, and typed action validation. The voice checks cover canonical WAV headers, format rejection, upload size, silence trimming, speech detection, normalized audio levels, silence-stop behavior, every action response, malformed and extra arguments, backend error responses, `Server-Timing`, token refresh rules, HTTPS backend URL validation, entry-point auto-listen gates, and Quick Settings API boundaries.
 
 The verification script also scans the Android source for banned device dependencies and APIs. This guard covers the earlier assistant-service regression that referenced `SpeechRecognizer`, which Friday must not use.
 
-These checks do not execute Android permissions, microphone hardware, network requests, contacts providers, clock apps, calls, or ringer changes. Record phone results separately. Review `./gradlew :app:dependencies` after dependency changes to confirm the app remains free of Google service and AWS SDK dependencies.
+These checks do not execute Android permissions, microphone hardware, network requests, contacts providers, clock apps, calls, or ringer changes. Record phone results separately. Review `./gradlew :app:dependencies` after dependency changes. The approved Google-login exception has a dependency allowlist in `scripts/check-app-dependencies.py`; unrelated Google SDKs and AWS SDKs remain excluded.
 
 ### Local build environment regression
 
@@ -36,11 +75,36 @@ That verification used cached Gradle 9.4.1 with `--offline --no-daemon assembleD
 
 During the 20 November model-setup check, one build process ended with status 143 during lint without a compiler diagnostic. Do not count that attempt as a successful verification. Repeat the unfinished check and record its final exit status. This is an environment reproduction, not an automated app test.
 
+## Android package verification, 21 November 2026
+
+The owner selected `com.puneet.friday`. The application ID, Kotlin namespace/source directories, assistant service XML, native JNI exports and phone-check scripts now use that package. A comparison against the previous source confirmed that the Android changes affect package references only. The renamed build installs as a separate app; permissions, assistant selection, settings and the private wake model need setup again.
+
+Commands run with the cached Gradle installation:
+
+```bash
+friday_package_gradle=/home/puneet/.gradle/wrapper/dists/gradle-9.4.1-bin/arn2x92ynaizyzdaamcbpbhtj/gradle-9.4.1/bin/gradle
+"$friday_package_gradle" --offline --no-daemon --max-workers=1 -Dorg.gradle.jvmargs=-Xmx768m assembleRelease test lintDebug :app:dependencies --configuration releaseRuntimeClasspath --console=plain
+python3 .local/tools/build-microwakeword-eval.py /tmp/friday-package-native --android-ndk /home/puneet/Android/Sdk/ndk/27.1.12297006 --abi arm64-v8a --reuse-dependencies /tmp/friday-package-native/cached-dependencies --debug-jni
+"$friday_package_gradle" --offline --no-daemon --max-workers=1 -Dorg.gradle.jvmargs=-Xmx768m assembleDebug --console=plain -PwakeTrialNativeDir=/tmp/friday-package-native/android-debug-jni
+python3 -m unittest discover -s scripts -p 'test_*.py'
+python3 scripts/check-release-manifest.py
+python3 scripts/check-secrets.py
+git diff --check
+```
+
+The native build used the existing pinned dependencies, with archive hashes checked against the pinned CMake file. The build passed **489 Kotlin checks**: 101 action, 199 voice and 189 wake. Lint reported **0 errors and 40 warnings**. The Python suite passed **85 tests** and skipped four optional desktop-native tests. No app dependency, model or permission was added. Release runtime dependencies remain Kotlin stdlib and annotations.
+
+The signed debug APK takes **2,004,175 bytes** and the unsigned release APK takes **229,524 bytes**. AAPT2 confirmed `com.puneet.friday` in both packaged manifests. Packaging checks confirmed model exclusion, private release entry points and the ARM64 debug runtime's three renamed JNI exports. The native runtime takes **748,128 bytes**. Debug signing still uses the existing certificate.
+
+The new JNI packaging guard rejected the earlier debug APK's runtime, which exports methods for the previous package. Its regression covers a different package and a missing native method. A temporary signing check also exposed an outdated assumption about SDK tool output: SDK 37 labels the certificate `V2 Signer`, while older versions use `Signer #1`. The shared certificate check and regressions now accept both labels, reject public-key digests as certificate evidence and reject missing, wrong or additional signing certificates.
+
+No phone was connected during this verification. Installation, assistant selection, permissions and wake behavior under the new app identity still need a phone check. Google login is not implemented; the Android OAuth client must use the new package and this build's certificate fingerprint. The existing Web client ID remains valid.
+
 ## Wake detector experiments
 
 See [the detector comparison](wake-phrase-evaluation.md) for pinned models, commands and measured failures. No detector has passed the accuracy check. Release builds do not start an ambient microphone listener; the opt-in debug trial has a separate guide below. The Python tests cover evaluation inputs, counts and native-error cleanup with mocks. They need no model downloads and do not measure wake recognition. The PocketSphinx ARM64 native link regression, including the required `-llog` flag, has a separate reproduction in the comparison. Native CLI execution on the Vivo establishes model loading and WAV decoding, without foreground-service or battery coverage.
 
-The [microWakeWord follow-up](microwakeword-evaluation.md) covers recordings 3 and 4, a pinned community Friday model, native runtime size and the Android file-decoding check. `scripts/build-microwakeword-eval.py` keeps native sources and artifacts outside the app. The Python suite skips four compiled-interface tests unless `FRIDAY_MICRO_NATIVE_LIBRARY` points to a desktop test library. CI does not download a wake model or compile the experimental runtime. The opt-in debug APK can include the runtime; Start Friday can download its pinned model after a user tap. Developer side-loading remains available. Release builds exclude both.
+The [microWakeWord follow-up](microwakeword-evaluation.md) covers recordings 3 and 4, a pinned community Friday model, native runtime size and the Android file-decoding check. `.local/tools/build-microwakeword-eval.py` keeps native sources and artifacts outside the app. The Python suite skips four compiled-interface tests unless `FRIDAY_MICRO_NATIVE_LIBRARY` points to a desktop test library. CI does not download a wake model or compile the experimental runtime. The opt-in debug APK can include the runtime; Start Friday can download its pinned model after a user tap. Developer side-loading remains available. Release builds exclude both.
 
 ### First-phone Hey Friday setup
 
@@ -49,7 +113,7 @@ The [microWakeWord follow-up](microwakeword-evaluation.md) covers recordings 3 a
 On a connected ARM64 phone with the wake-enabled debug APK, stop Hey Friday and run:
 
 ```bash
-python3 scripts/wake-model-setup-phone-check.py --serial DEVICE_SERIAL --adb /path/to/adb
+python3 .local/tools/wake-model-setup-phone-check.py --serial DEVICE_SERIAL --adb /path/to/adb
 ```
 
 The checker backs up the private model and wake-choice preferences, simulates first-phone setup, downloads and verifies the real pinned model, checks that download alone starts no microphone, declines the separate enable disclosure, and repeats setup with a corrupt model. It tests leaving during transfer and retry, then restores the original model and preferences with the listener off. It changes no credentials, Android permissions, text size or display settings. Screenshots and a report stay under `/tmp/friday-wake-model-setup-check`.
@@ -69,7 +133,7 @@ The final build used the cached Gradle distribution because the repository's pin
   -PwakeTrialNativeDir=/tmp/friday-wake-error-recovery/android-debug-jni
 python3 -m unittest discover -s scripts -p 'test_*.py'
 python3 scripts/check-release-manifest.py
-python3 scripts/wake-model-setup-phone-check.py \
+python3 .local/tools/wake-model-setup-phone-check.py \
   --serial 192.168.1.15:42091 --adb /home/puneet/Android/Sdk/platform-tools/adb
 git diff --check
 ```
@@ -101,7 +165,7 @@ Verification commands:
   -PwakeTrialNativeDir=/tmp/friday-wake-error-recovery/android-debug-jni
 python3 -m unittest discover -s scripts -p 'test_*.py'
 python3 scripts/check-release-manifest.py
-python3 scripts/wake-usage-phone-check.py \
+python3 .local/tools/wake-usage-phone-check.py \
   --serial adb-5e5f8889-85EmCi._adb-tls-connect._tcp \
   --adb /home/puneet/Android/Sdk/platform-tools/adb --controls-only \
   --output /tmp/friday-realme-wake-verified
@@ -131,7 +195,7 @@ Commands:
   -PwakeTrialNativeDir=/tmp/friday-wake-error-recovery/android-debug-jni
 python3 -m unittest discover -s scripts -p 'test_*.py'
 python3 scripts/check-release-manifest.py
-python3 scripts/assistant-setup-phone-check.py \
+python3 .local/tools/assistant-setup-phone-check.py \
   --serial adb-5e5f8889-85EmCi._adb-tls-connect._tcp \
   --adb /home/puneet/Android/Sdk/platform-tools/adb \
   --exercise-selection --resume-hey-friday \
@@ -234,7 +298,7 @@ Mark untested cases explicitly. Passing JVM checks or dispatching an Android int
 
 The local app-name regression covers brand names, spaces in spoken names, launch-verb wrappers and ambiguity. In the 19 November 2026 Vivo API 34 check, the previous debug APK rejected “Google Chrome” in Phone actions; the updated APK opened `com.android.chrome` for both “Google Chrome” and “Open the Google Chrome app please”. The absent Chrome Beta returned app-not-found feedback without opening stable Chrome. This tests local app resolution, not microphone recognition. The backend prompt changes need deployment before they affect spoken commands. After deployment, record the phrases above in your own voice.
 
-Run `python3 scripts/app-name-phone-check.py --serial <adb-address> --adb <path-to-adb>` on the unlocked test phone with Chrome installed. The script opens Chrome through Friday's Phone actions screen and returns to Home. It checks for the expected app before reporting success.
+Run `python3 .local/tools/app-name-phone-check.py --serial <adb-address> --adb <path-to-adb>` on the unlocked test phone with Chrome installed. The script opens Chrome through Friday's Phone actions screen and returns to Home. It checks for the expected app before reporting success.
 
 ## Voice UI regression checks
 
@@ -243,7 +307,7 @@ Run `python3 scripts/app-name-phone-check.py --serial <adb-address> --adb <path-
 Before the spacing changes, the Vivo API 34 notification run passed real microphone start, Pause releasing the service, Resume from the background, repeated toggles, both system notification themes, and removal of the listener and notifications after choosing Tap to speak. It used separate notification IDs for the active service and paused notification. The wake/error recovery check injected a labeled synthetic wake; it did not measure recognition accuracy. The command was:
 
 ```bash
-python3 scripts/wake-usage-phone-check.py --serial 192.168.1.15:42091 --adb /home/puneet/Android/Sdk/platform-tools/adb --controls-only --output /tmp/friday-wake-usage/phone-separated-final
+python3 .local/tools/wake-usage-phone-check.py --serial 192.168.1.15:42091 --adb /home/puneet/Android/Sdk/platform-tools/adb --controls-only --output /tmp/friday-wake-usage/phone-separated-final
 ```
 
 After applying [the UI guide](../design/ui-guide.md), the debug APK installed on the same phone. Normal-size hierarchy checks and screenshots verified Home, Settings, the Start Friday options, info help, and the compact permission panel. Checked controls retained at least 48 dp targets. The Ready notification row decreased from 203 to 184 pixels at the phone's unchanged density. The Start Friday screen and action editor each had one visible Back button; the editor returned to the action list, then to Settings. Screenshots remain under `/tmp/friday-spacing-review`.
@@ -282,7 +346,7 @@ The final build passed **101 action, 183 voice and 138 wake checks**. Python pas
 The final debug APK installed on the Vivo V2168, Android 14/API 34. The locked preview suite passed on the phone's showing but unsecured keyguard. PIN, password and biometric keyguard checks remain unverified. The earlier Activity-based trigger could not run behind keyguard; the checker now uses a debug-only receiver protected by `android.permission.DUMP`.
 
 ```bash
-python3 scripts/locked-wake-phone-check.py --serial DEVICE_SERIAL --adb /path/to/adb
+python3 .local/tools/locked-wake-phone-check.py --serial DEVICE_SERIAL --adb /path/to/adb
 ```
 
 This checker tests four synthetic outcomes, hidden app names, keyguard preservation and no-tap listener recovery. The call case displays the final confirmation, then the test cancels it. Timer and sound-mode cases stop after preparation and show a Preview label; they do not change the ringer or send a clock request. It saves sanitized JSON in `/tmp/friday-locked-wake-check/report.json`. Real spoken screen-off wakes, timer delivery, sound changes, biometric unlock and cancellation, long sleep and battery use still need phone checks. This pass does not run font-size or theme tests.
@@ -296,24 +360,24 @@ Commands for this follow-up:
 python3 -m unittest discover -s scripts -p 'test_*.py'
 python3 scripts/check-release-manifest.py
 /home/puneet/Android/Sdk/platform-tools/adb -s 192.168.1.15:42091 install --no-streaming -r app/build/outputs/apk/debug/app-debug.apk
-python3 scripts/locked-wake-phone-check.py --serial 192.168.1.15:42091 --adb /home/puneet/Android/Sdk/platform-tools/adb --output /tmp/friday-locked-call-check
+python3 .local/tools/locked-wake-phone-check.py --serial 192.168.1.15:42091 --adb /home/puneet/Android/Sdk/platform-tools/adb --output /tmp/friday-locked-call-check
 git diff --check
 ```
 
 The build passed 101 action, 183 voice and 138 wake checks. Python passed 67 tests and skipped four compiled native-runtime checks. Lint reported zero errors and 40 warnings. The release guards passed, and the source scan found no forbidden Google device APIs or AWS SDK imports. The unsigned release APK is **229,056 bytes**; debug is **2,111,985 bytes**. No dependency changed. Build and offline test logs remain in `/tmp/friday-call-verify-build.log` and `/tmp/friday-call-verify-python.log`; the sanitized phone report is `/tmp/friday-locked-call-check/report.json`.
 
-Run `python3 scripts/wake-usage-phone-check.py --serial DEVICE_SERIAL --adb /path/to/adb` to check **Settings → Start Friday**, exclusive radio selection, tap info popups, no microphone from selection or help, disclosure cancellation, notification Pause/Resume, repeated toggles and switching to Tap to speak. It uses the verified private model and an opt-in debug runtime. It returns Home before testing background Resume, including when a live wake has opened Friday behind the shade. Recovery uses the privileged debug broadcast receiver so the test cannot foreground an existing setup task. The script sends no deliberate cloud command, restores the system theme and ends with Tap to speak selected. Large-text, rotation and reduced-motion checks require the separate `--display-checks` flag; the owner asked to stop large-font tests, so omit it without a new request. The default run changes none of those settings. The script saves screenshots and a JSON report under `/tmp/friday-wake-usage-check` by default. Keep the phone untouched during the run. Notification tests use real user-interface taps, rather than an ADB start-service command.
+Run `python3 .local/tools/wake-usage-phone-check.py --serial DEVICE_SERIAL --adb /path/to/adb` to check **Settings → Start Friday**, exclusive radio selection, tap info popups, no microphone from selection or help, disclosure cancellation, notification Pause/Resume, repeated toggles and switching to Tap to speak. It uses the verified private model and an opt-in debug runtime. It returns Home before testing background Resume, including when a live wake has opened Friday behind the shade. Recovery uses the privileged debug broadcast receiver so the test cannot foreground an existing setup task. The script sends no deliberate cloud command, restores the system theme and ends with Tap to speak selected. Large-text, rotation and reduced-motion checks require the separate `--display-checks` flag; the owner asked to stop large-font tests, so omit it without a new request. The default run changes none of those settings. The script saves screenshots and a JSON report under `/tmp/friday-wake-usage-check` by default. Keep the phone untouched during the run. Notification tests use real user-interface taps, rather than an ADB start-service command.
 
 Also check microphone and notification permission denial, blocked notification channels, an unavailable model/runtime, the default-assistant chooser, and Pause while a wake command panel is open. After restarting the phone, confirm that Friday requires a user action to restart wake listening. A saved selection alone must not reopen the microphone.
 
 The opt-in debug wake test has a separate [setup and test guide](wake-detector-trial.md). Command mode defaults to **0.30** and opens the existing assistant after a wake; count-only mode retains the detector comparison. Check missed phrases and false detections at each cutoff. Test the notification's Stop action, Home, screen lock, permission denial, blocked notifications and rapid Start/Stop. Command mode must release the wake microphone before command capture, pause while the assistant or permissions are open, and resume after dismissal. Wake Friday and stay silent: after the no-clear-command message, the panel must close after three seconds and accept another wake without a tap. Repeat with an app-not-found error. Tapping retry must cancel the close. A manually opened error panel and a permission prompt must remain open. Stop and phone restart must leave its microphone off. The release packaging check rejects its runtime, model, components and foreground-service permissions.
 
-Run `python3 scripts/wake-command-phone-check.py --serial DEVICE_SERIAL --adb /path/to/adb` for system-session opening, microphone handoff, dismissal resume, no-tap recovery after injected no-command and app-not-found results, a second wake, manual and permission panel retention, retry cancellation, the forced notification fallback, Stop while paused, saved metadata and stale-request rejection. This test injects labeled synthetic wake events and error outcomes into an opted-in listener. It does not measure recognition or submit a deliberate phone command. The debug report marks synthetic detections separately. Use fresh spoken attempts for recognition tests.
+Run `python3 .local/tools/wake-command-phone-check.py --serial DEVICE_SERIAL --adb /path/to/adb` for system-session opening, microphone handoff, dismissal resume, no-tap recovery after injected no-command and app-not-found results, a second wake, manual and permission panel retention, retry cancellation, the forced notification fallback, Stop while paused, saved metadata and stale-request rejection. This test injects labeled synthetic wake events and error outcomes into an opted-in listener. It does not measure recognition or submit a deliberate phone command. The debug report marks synthetic detections separately. Use fresh spoken attempts for recognition tests.
 
 Install a debug APK on an unlocked phone, then run:
 
 ```bash
-python3 scripts/ui-phone-check.py --serial DEVICE_SERIAL --adb /path/to/adb
+python3 .local/tools/ui-phone-check.py --serial DEVICE_SERIAL --adb /path/to/adb
 ```
 
 The script checks the launcher, icon bottom navigation with selected tabs, compact assistant panel, processing cancellation, unsupported and error messages, permission recovery, interpreted action, panel dismissal, microphone lifecycle, 150% text, landscape, and both system themes. It uses debug preview states without executing phone commands. It restores text size, rotation, and system theme in a `finally` block. Screenshots, the latest hierarchy, and the report go to `/tmp/friday-ui-check` by default. Keep the phone untouched during the run.

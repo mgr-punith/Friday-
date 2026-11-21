@@ -53,7 +53,7 @@ These are standalone artifact measurements, not an APK size comparison. This eva
 Build the desktop test runtime outside the repository. This needs Python 3, CMake, a C/C++ compiler, an internet connection for the pinned sources, and no app or backend dependencies:
 
 ```bash
-python3 scripts/build-microwakeword-eval.py "$wake_dir"
+python3 .local/tools/build-microwakeword-eval.py "$wake_dir"
 ```
 
 Download the pinned model and metadata into that same test directory:
@@ -64,7 +64,7 @@ curl -fsSL 'https://raw.githubusercontent.com/JohnnyPrimus/Custom_V2_MicroWakeWo
 curl -fsSL 'https://raw.githubusercontent.com/JohnnyPrimus/Custom_V2_MicroWakeWords/2987c5ae4e4c8e7ac277bdede0904d99b4ed477a/models/hey_friday/hey_friday.tflite' \
   -o "$wake_dir/hey_friday.tflite"
 
-python3 scripts/wake-phrase-eval.py microwakeword "$wake_dir" \
+python3 .local/tools/wake-phrase-eval.py microwakeword "$wake_dir" \
   --native-library "$wake_dir/native-linux/libmicrowakeword.so" \
   --micro-config "$wake_dir/hey_friday.json" \
   --model-sha256 04aaffa5f111704db18ec593251a3dfbb009638009e081c9c87830755c3563a6 \
@@ -79,7 +79,7 @@ The private segmentation manifest stores source times for the candidate clips. T
 For ARM64, use the installed NDK and reuse the desktop build's source downloads:
 
 ```bash
-python3 scripts/build-microwakeword-eval.py "$wake_dir" \
+python3 .local/tools/build-microwakeword-eval.py "$wake_dir" \
   --android-ndk "$ANDROID_HOME/ndk/27.1.12297006" --abi arm64-v8a \
   --reuse-dependencies "$wake_dir/native-linux/_deps"
 
