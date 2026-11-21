@@ -48,6 +48,14 @@
         android:supportsRtl="true"
         android:usesCleartextTraffic="false"
         android:theme="@style/Theme.HeyFriday">
+        <activity android:name=".auth.SignInActivity" android:exported="true" android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="com.puneet.friday" android:host="signin" />
+            </intent-filter>
+        </activity>
         <activity android:name=".ActionDebugActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".PermissionsActivity" android:exported="false" />
         <activity android:name=".AssistantActivity" android:exported="false" android:launchMode="singleTop" android:taskAffinity="" android:excludeFromRecents="true" android:theme="@style/Theme.HeyFriday.Assistant" />

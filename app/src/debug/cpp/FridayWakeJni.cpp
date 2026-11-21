@@ -9,7 +9,7 @@ extern "C" int friday_wake_process(void*, const int16_t*, size_t);
 extern "C" void friday_wake_destroy(void*);
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_com_example_assistant_debug_wake_MicroWakeWordNative_create(
+Java_com_puneet_friday_debug_wake_MicroWakeWordNative_create(
         JNIEnv* env, jobject, jbyteArray model, jfloat threshold) {
     if (!model || env->GetArrayLength(model) != 60832) return 0;
     const auto size = env->GetArrayLength(model);
@@ -21,7 +21,7 @@ Java_com_example_assistant_debug_wake_MicroWakeWordNative_create(
 }
 
 extern "C" JNIEXPORT jint JNICALL
-Java_com_example_assistant_debug_wake_MicroWakeWordNative_process(
+Java_com_puneet_friday_debug_wake_MicroWakeWordNative_process(
         JNIEnv* env, jobject, jlong handle, jshortArray samples, jint count) {
     if (!handle || !samples || count < 1 || count > 480 || count > env->GetArrayLength(samples)) return -1;
     int16_t frame[480];
@@ -31,6 +31,6 @@ Java_com_example_assistant_debug_wake_MicroWakeWordNative_process(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_example_assistant_debug_wake_MicroWakeWordNative_destroy(JNIEnv*, jobject, jlong handle) {
+Java_com_puneet_friday_debug_wake_MicroWakeWordNative_destroy(JNIEnv*, jobject, jlong handle) {
     if (handle) friday_wake_destroy(reinterpret_cast<void*>(handle));
 }

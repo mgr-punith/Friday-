@@ -4,6 +4,7 @@ import { loadConfig, loadVercelConfig } from "../src/config";
 
 function environment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
+    GOOGLE_WEB_CLIENT_ID: "123456789-test.apps.googleusercontent.com",
     USAGE_TABLE_NAME: "FridayUsage",
     GEMINI_API_KEY_PARAMETER: "/friday/test/gemini-api-key",
     JWT_SIGNING_KEY_PARAMETER: "/friday/test/jwt-signing-key",
@@ -31,6 +32,7 @@ test("rejects missing and malformed configuration", () => {
 
 test("loads Vercel secrets and Redis configuration", () => {
   const config = loadVercelConfig({
+    GOOGLE_WEB_CLIENT_ID: "123456789-test.apps.googleusercontent.com",
     GEMINI_API_KEY: "development-gemini-key",
     JWT_SIGNING_KEY: "a-long-jwt-signing-key-with-more-than-thirty-two-bytes",
     UPSTASH_REDIS_REST_URL: "https://example.upstash.io/",
@@ -43,6 +45,7 @@ test("loads Vercel secrets and Redis configuration", () => {
 
 test("loads Redis configuration created by the Vercel Upstash integration", () => {
   const config = loadVercelConfig({
+    GOOGLE_WEB_CLIENT_ID: "123456789-test.apps.googleusercontent.com",
     GEMINI_API_KEY: "development-gemini-key",
     JWT_SIGNING_KEY: "a-long-jwt-signing-key-with-more-than-thirty-two-bytes",
     UPSTASH_REDIS_REST_KV_REST_API_URL: "https://integration.upstash.io/",
@@ -55,6 +58,7 @@ test("loads Redis configuration created by the Vercel Upstash integration", () =
 
 test("prefers the standard Redis variable names when both forms exist", () => {
   const config = loadVercelConfig({
+    GOOGLE_WEB_CLIENT_ID: "123456789-test.apps.googleusercontent.com",
     GEMINI_API_KEY: "development-gemini-key",
     JWT_SIGNING_KEY: "a-long-jwt-signing-key-with-more-than-thirty-two-bytes",
     UPSTASH_REDIS_REST_URL: "https://standard.upstash.io",
@@ -69,6 +73,7 @@ test("prefers the standard Redis variable names when both forms exist", () => {
 
 test("rejects short Vercel secrets and non-HTTPS Redis URLs", () => {
   const base = {
+    GOOGLE_WEB_CLIENT_ID: "123456789-test.apps.googleusercontent.com",
     GEMINI_API_KEY: "development-gemini-key",
     JWT_SIGNING_KEY: "a-long-jwt-signing-key-with-more-than-thirty-two-bytes",
     UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
@@ -80,4 +85,21 @@ test("rejects short Vercel secrets and non-HTTPS Redis URLs", () => {
     () => loadVercelConfig({ ...base, UPSTASH_REDIS_REST_URL: "http://example.com" }),
     /invalid_upstash/
   );
+});
+
+test("Google login fails closed without a valid web client and a complete browser configuration", () => {
+  const base = {
+    ...environment(), GEMINI_API_KEY: "development-gemini-key",
+    JWT_SIGNING_KEY: "a-long-jwt-signing-key-with-more-than-thirty-two-bytes",
+    UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
+    UPSTASH_REDIS_REST_TOKEN: "development-redis-token"
+  };
+  assert.throws(() => loadVercelConfig({ ...base, GOOGLE_WEB_CLIENT_ID: "" }), /missing_google_web_client_id/);
+  assert.throws(() => loadVercelConfig({ ...base, GOOGLE_WEB_CLIENT_ID: "not-a-web-client" }), /invalid_google_web_client_id/);
+  assert.equal(loadVercelConfig(base).googleWebClientSecret, undefined);
+  assert.throws(() => loadVercelConfig({ ...base, GOOGLE_WEB_CLIENT_SECRET: "example-browser-secret" }), /incomplete_google_browser_config/);
+  for (const redirect of ["http://example.com/v1/auth/google/callback", "https://example.com/wrong", "https://user@example.com/v1/auth/google/callback", "https://example.com/v1/auth/google/callback?next=evil", "https://example.com/v1/auth/google/callback#fragment"]) {
+    assert.throws(() => loadVercelConfig({ ...base, GOOGLE_WEB_CLIENT_SECRET: "example-browser-secret", GOOGLE_OAUTH_REDIRECT_URI: redirect }), /invalid_google_oauth_redirect_uri/);
+  }
+  assert.equal(loadVercelConfig({ ...base, GOOGLE_WEB_CLIENT_SECRET: "example-browser-secret", GOOGLE_OAUTH_REDIRECT_URI: "https://example.com/v1/auth/google/callback" }).googleOauthRedirectUri, "https://example.com/v1/auth/google/callback");
 });

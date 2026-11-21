@@ -12,6 +12,7 @@
     "build:test": "tsc -p tsconfig.test.json",
     "typecheck": "tsc -p tsconfig.json",
     "test": "npm run build:test && node --test build-test/test/*.test.js scripts/*.test.mjs",
+    "test:sam": "node --test test-build/*.test.mjs",
     "check:vercel": "node scripts/check-vercel-config.mjs",
     "check:vercel-entry": "node scripts/check-vercel-entry.mjs",
     "verify": "npm run typecheck && npm test && npm run check:vercel && npm run build && npm run check:vercel-entry",

@@ -12,13 +12,14 @@ from pathlib import Path, PurePosixPath
 
 PATTERNS = {
     "Google API key": rb"\bAIza[0-9A-Za-z_-]{35}\b",
+    "Google OAuth client secret": rb"\bGOCSPX-[0-9A-Za-z_-]{20,}\b",
     "Groq API key": rb"\bgsk_[A-Za-z0-9]{40,}\b",
     "GitHub token": rb"\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{50,})\b",
     "AWS access key ID": rb"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b",
     "Private key": rb"-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----",
     "Signed JWT": rb"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{20,}\b",
 }
-KEY = (rb"(?:GEMINI_API_KEY|GROQ_API_KEY|JWT_SIGNING_KEY|UPSTASH_[A-Z0-9_]*TOKEN|"
+KEY = (rb"(?:GEMINI_API_KEY|GROQ_API_KEY|JWT_SIGNING_KEY|GOOGLE_WEB_CLIENT_SECRET|UPSTASH_[A-Z0-9_]*TOKEN|"
        rb"(?:KV_REST_API|REDIS_REST_API|GITHUB|GH|VERCEL)_TOKEN|"
        rb"AWS_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN))")
 QUOTED_ASSIGNMENT = re.compile(rb"(?i)(?<![A-Za-z0-9_])[\"']?" + KEY +

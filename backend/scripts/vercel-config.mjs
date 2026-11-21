@@ -7,6 +7,7 @@ const FUNCTION_ENTRY = "api/index.mjs";
 const TYPESCRIPT_FUNCTION_ENTRY = "api/index.ts";
 const OUTPUT_DIRECTORY = "public";
 const EXPECTED_REWRITES = new Map([
+  ["/v1/auth/:path*", "/api/index?fridayRoute=auth/:path*"],
   ["/v1/register", "/api/index?fridayRoute=register"],
   ["/v1/warm", "/api/index?fridayRoute=warm"],
   ["/v1/command", "/api/index?fridayRoute=command"]
@@ -15,6 +16,8 @@ const EXPECTED_REWRITES = new Map([
 export function validateVercelConfig(config, projectDirectory) {
   requireValue(config?.$schema === EXPECTED_SCHEMA, "vercel_schema_mismatch");
   requireValue(config.framework === null, "vercel_framework_must_be_other");
+  requireValue(config.buildCommand === "npm run verify", "vercel_verification_required");
+  requireValue(config.ignoreCommand === "node scripts/ignore-build.mjs", "vercel_change_detection_required");
   requireValue(config.outputDirectory === OUTPUT_DIRECTORY, "vercel_output_directory_invalid");
   requireValue(
     fs.existsSync(path.join(projectDirectory, OUTPUT_DIRECTORY, "index.html")),

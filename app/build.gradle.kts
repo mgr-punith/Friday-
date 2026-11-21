@@ -3,10 +3,10 @@ plugins {
 }
 
 android {
-  namespace = "com.example.assistant"
+  namespace = "com.puneet.friday"
   compileSdk = 37
   defaultConfig {
-    applicationId = "com.example.assistant"
+    applicationId = "com.puneet.friday"
     minSdk = 26
     targetSdk = 37
     versionCode = 1
@@ -39,16 +39,23 @@ android {
     shaders = false
     viewBinding = false
   }
+  lint {
+    fatal += "CredentialManagerMisuse"
+  }
 }
 
-dependencies {}
+dependencies {
+  implementation("androidx.credentials:credentials:1.6.0")
+  implementation("androidx.credentials:credentials-play-services-auth:1.6.0")
+  implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
+}
 
 // Run pure matching/validation checks without adding a test framework to the APK.
 val actionLogicTest by tasks.registering(JavaExec::class) {
   group = "verification"
   description = "Runs dependency-free action matching and validation checks."
   dependsOn("compileDebugUnitTestKotlin")
-  mainClass.set("com.example.assistant.actions.ActionLogicTests")
+  mainClass.set("com.puneet.friday.actions.ActionLogicTests")
   classpath(
     layout.buildDirectory.dir("intermediates/built_in_kotlinc/debug/compileDebugKotlin/classes"),
     layout.buildDirectory.dir("intermediates/built_in_kotlinc/debugUnitTest/compileDebugUnitTestKotlin/classes"),
@@ -59,7 +66,7 @@ val voiceLogicTest by tasks.registering(JavaExec::class) {
   group = "verification"
   description = "Runs dependency-free voice audio and protocol checks."
   dependsOn("compileDebugUnitTestKotlin")
-  mainClass.set("com.example.assistant.voice.VoiceLogicTests")
+  mainClass.set("com.puneet.friday.voice.VoiceLogicTests")
   classpath(
     layout.buildDirectory.dir("intermediates/built_in_kotlinc/debug/compileDebugKotlin/classes"),
     layout.buildDirectory.dir("intermediates/built_in_kotlinc/debugUnitTest/compileDebugUnitTestKotlin/classes"),
@@ -70,7 +77,7 @@ val wakeTrialLogicTest by tasks.registering(JavaExec::class) {
   group = "verification"
   description = "Runs dependency-free checks for the debug wake-detector trial."
   dependsOn("compileDebugUnitTestKotlin")
-  mainClass.set("com.example.assistant.debug.wake.WakeTrialLogicTests")
+  mainClass.set("com.puneet.friday.debug.wake.WakeTrialLogicTests")
   classpath(
     layout.buildDirectory.dir("intermediates/built_in_kotlinc/debug/compileDebugKotlin/classes"),
     layout.buildDirectory.dir("intermediates/built_in_kotlinc/debugUnitTest/compileDebugUnitTestKotlin/classes"),

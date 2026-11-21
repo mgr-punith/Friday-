@@ -9,6 +9,8 @@ function validConfig() {
   return {
     $schema: "https://openapi.vercel.sh/vercel.json",
     framework: null,
+    buildCommand: "npm run verify",
+    ignoreCommand: "node scripts/ignore-build.mjs",
     outputDirectory: "public",
     regions: ["bom1"],
     functions: {
@@ -20,7 +22,8 @@ function validConfig() {
     rewrites: [
       { source: "/v1/register", destination: "/api/index?fridayRoute=register" },
       { source: "/v1/warm", destination: "/api/index?fridayRoute=warm" },
-      { source: "/v1/command", destination: "/api/index?fridayRoute=command" }
+      { source: "/v1/command", destination: "/api/index?fridayRoute=command" },
+      { source: "/v1/auth/:path*", destination: "/api/index?fridayRoute=auth/:path*" }
     ]
   };
 }
@@ -49,6 +52,13 @@ test("rejects a deployment outside Mumbai", (context) => {
   const config = validConfig();
   config.regions = ["iad1"];
   assert.throws(() => validateVercelConfig(config, directory), /vercel_region_must_be_bom1/);
+});
+
+test("deployment cannot bypass backend tests or change-based deployment selection", context => {
+  const directory = projectDirectory();
+  context.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  assert.throws(() => validateVercelConfig({ ...validConfig(), buildCommand: "npm run build" }, directory), /vercel_verification_required/);
+  assert.throws(() => validateVercelConfig({ ...validConfig(), ignoreCommand: "exit 0" }, directory), /vercel_change_detection_required/);
 });
 
 test("rejects a missing static output directory", (context) => {

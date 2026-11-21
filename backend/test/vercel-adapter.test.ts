@@ -59,3 +59,21 @@ test("keeps unknown routes inside the shared router", async () => {
   await createVercelHandler(api)(new Request("https://friday.example/unknown"));
   assert.equal(api.event?.rawPath, "/unknown");
 });
+
+test("preserves Google OAuth callback state and code through the auth rewrite", async () => {
+  const api = new RecordingApi();
+  api.response = { statusCode: 303, headers: { location: "com.puneet.friday://signin?loginId=test", "cache-control": "no-store" } };
+  const response = await createVercelHandler(api)(new Request("https://friday.example/api/index?fridayRoute=auth/google/callback&state=opaque&code=4%2Fexample"));
+  assert.equal(api.event?.rawPath, "/v1/auth/google/callback");
+  const query = new URLSearchParams(api.event?.rawQueryString);
+  assert.equal(query.get("state"), "opaque");
+  assert.equal(query.get("code"), "4/example");
+  assert.equal(response.status, 303);
+  assert.equal(response.headers.get("location"), "com.puneet.friday://signin?loginId=test");
+});
+
+test("rejects route traversal in the auth rewrite parameter", async () => {
+  const api = new RecordingApi();
+  await createVercelHandler(api)(new Request("https://friday.example/api/index?fridayRoute=auth/../command"));
+  assert.equal(api.event?.rawPath, "/api/index");
+});

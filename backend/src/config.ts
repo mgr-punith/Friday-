@@ -16,6 +16,9 @@ export interface BackendConfig extends RuntimeConfig {
 }
 
 export interface VercelBackendConfig extends RuntimeConfig {
+  readonly googleWebClientId: string;
+  readonly googleWebClientSecret?: string;
+  readonly googleOauthRedirectUri?: string;
   readonly geminiApiKey: string;
   readonly jwtSigningKey: string;
   readonly redisRestUrl: string;
@@ -32,7 +35,19 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Backen
 }
 
 export function loadVercelConfig(environment: NodeJS.ProcessEnv = process.env): VercelBackendConfig {
+  const googleWebClientId = required(environment, "GOOGLE_WEB_CLIENT_ID");
+  if (!/^[0-9]+-[a-zA-Z0-9_-]+\.apps\.googleusercontent\.com$/.test(googleWebClientId)) throw new Error("invalid_google_web_client_id");
+  const clientSecret = environment.GOOGLE_WEB_CLIENT_SECRET?.trim();
+  const redirectUri = environment.GOOGLE_OAUTH_REDIRECT_URI?.trim();
+  if (Boolean(clientSecret) !== Boolean(redirectUri)) throw new Error("incomplete_google_browser_config");
+  if (redirectUri) {
+    const url = new URL(redirectUri);
+    if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash || url.pathname !== "/v1/auth/google/callback") throw new Error("invalid_google_oauth_redirect_uri");
+  }
   return {
+    googleWebClientId,
+    ...(clientSecret ? { googleWebClientSecret: clientSecret } : {}),
+    ...(redirectUri ? { googleOauthRedirectUri: redirectUri } : {}),
     ...loadRuntimeConfig(environment),
     geminiApiKey: secret(environment, "GEMINI_API_KEY", 16),
     jwtSigningKey: secret(environment, "JWT_SIGNING_KEY", 32),

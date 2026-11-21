@@ -53,15 +53,15 @@ Install the pinned Python tools in a separate test environment. Download the [st
 
 ```bash
 python -m pip install numpy sherpa-onnx==2.0.2 vosk==0.3.45
-python scripts/wake-phrase-fixtures.py "$wake_dir/synthetic"
+python .local/tools/wake-phrase-fixtures.py "$wake_dir/synthetic"
 printf '%s\n' '▁HE Y ▁F RI DAY' > "$wake_dir/hey-friday.txt"
 
-python scripts/wake-phrase-eval.py sherpa \
+python .local/tools/wake-phrase-eval.py sherpa \
   "$wake_dir/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01" \
   --keywords "$wake_dir/hey-friday.txt" \
   --positive "$wake_dir/synthetic/wake" --negative "$wake_dir/synthetic/negative"
 
-python scripts/wake-phrase-eval.py vosk "$wake_dir/vosk-model-small-en-in-0.4" \
+python .local/tools/wake-phrase-eval.py vosk "$wake_dir/vosk-model-small-en-in-0.4" \
   --positive "$wake_dir/synthetic/wake" --negative "$wake_dir/synthetic/negative"
 ```
 
@@ -77,7 +77,7 @@ cmake -S "$wake_dir/pocketsphinx-5.1.1" -B "$wake_dir/ps-linux" \
   -DCMAKE_BUILD_TYPE=MinSizeRel
 cmake --build "$wake_dir/ps-linux" --target pocketsphinx --parallel 2
 
-python3 scripts/wake-phrase-eval.py pocketsphinx \
+python3 .local/tools/wake-phrase-eval.py pocketsphinx \
   "$wake_dir/pocketsphinx-5.1.1/model/en-us/en-us" \
   --native-library "$wake_dir/ps-linux/libpocketsphinx.so" \
   --dictionary "$wake_dir/pocketsphinx-5.1.1/model/en-us/cmudict-en-us.dict" \

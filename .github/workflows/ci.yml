@@ -14,8 +14,54 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Select checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      android: ${{ steps.select.outputs.android }}
+      backend: ${{ steps.select.outputs.backend }}
+      sam: ${{ steps.select.outputs.sam }}
+      tooling: ${{ steps.select.outputs.tooling }}
+    steps:
+      - name: Check out repository history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Select checks from the changed paths
+        id: select
+        env:
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          CI_FULL_CHECK: ${{ github.event_name == 'workflow_dispatch' }}
+          CI_PULL_REQUEST: ${{ github.event_name == 'pull_request' }}
+        run: |
+          if [ "$CI_FULL_CHECK" = "true" ]; then
+            python3 scripts/ci-changes.py --force
+          elif [ "$CI_PULL_REQUEST" = "true" ]; then
+            python3 scripts/ci-changes.py --merge-base
+          else
+            python3 scripts/ci-changes.py
+          fi
+      - name: Check patch whitespace
+        run: git show --format= --check HEAD
+
+  tooling:
+    name: Repository tools
+    needs: changes
+    if: needs.changes.outputs.tooling == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Test verification scripts
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
+
   backend:
-    name: Backend, Vercel, and SAM
+    name: Backend and Vercel
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -40,6 +86,28 @@ jobs:
       - name: Verify backend and Vercel configuration
         run: npm run verify
 
+  sam:
+    name: AWS fallback
+    needs: changes
+    if: needs.changes.outputs.sam == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      AWS_DEFAULT_REGION: ap-south-1
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.20.0
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci
       - name: Set up AWS SAM CLI
         uses: aws-actions/setup-sam@f84ec7d548307efafe33230528756de3c5841a17 # v2
         with:
@@ -47,6 +115,9 @@ jobs:
 
       - name: Validate SAM template
         run: sam validate --lint --template-file template.yaml
+
+      - name: Test SAM build regressions
+        run: npm run test:sam
 
       - name: Build SAM artifact
         run: sam build --template-file template.yaml --build-dir .aws-sam/build
@@ -64,6 +135,8 @@ jobs:
 
   android:
     name: Android
+    needs: changes
+    if: needs.changes.outputs.android == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -81,12 +154,28 @@ jobs:
           "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0"
 
       - name: Verify Android app and APK size
+        env:
+          FRIDAY_SKIP_TOOL_TESTS: "1"
         run: ./scripts/verify.sh --no-daemon
 
-      - name: Confirm app dependency boundary
-        run: |
-          ./gradlew :app:dependencies --configuration releaseRuntimeClasspath --no-daemon > /tmp/friday-runtime-dependencies.txt
-          if grep -Eiq 'com\.google\.android\.gms|com\.google\.firebase|mlkit|software\.amazon\.awssdk|com\.amazonaws' /tmp/friday-runtime-dependencies.txt; then
-            cat /tmp/friday-runtime-dependencies.txt
-            exit 1
-          fi
+  checks:
+    name: Required checks
+    if: always()
+    needs: [changes, tooling, backend, sam, android]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out CI status verifier
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Require every selected suite to pass
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          TOOLING_RESULT: ${{ needs.tooling.result }}
+          BACKEND_RESULT: ${{ needs.backend.result }}
+          SAM_RESULT: ${{ needs.sam.result }}
+          ANDROID_RESULT: ${{ needs.android.result }}
+          TOOLING_SELECTED: ${{ needs.changes.outputs.tooling }}
+          BACKEND_SELECTED: ${{ needs.changes.outputs.backend }}
+          SAM_SELECTED: ${{ needs.changes.outputs.sam }}
+          ANDROID_SELECTED: ${{ needs.changes.outputs.android }}
+        run: python3 scripts/ci-result.py
