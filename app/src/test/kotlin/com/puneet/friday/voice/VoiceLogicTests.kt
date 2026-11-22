@@ -453,6 +453,11 @@ object VoiceLogicTests {
 
         expect(VoiceResponseParser.parseServerDuration("gemini;dur=12.5") == 12.5, "Server timing parses")
         expect(VoiceResponseParser.parseServerDuration("cache;dur=2, GEMINI ; dur=8") == 8.0, "Server timing finds Gemini among metrics")
+        expect(VoiceResponseParser.parseServerDuration("groq;dur=896.0, transcription;dur=577.0, classification;dur=319.0") == 896.0,
+            "Groq timing reports the whole two-stage request")
+        expect(VoiceResponseParser.parseServerDuration("transcription;dur=20, GROQ ; dur=30") == 30.0,
+            "Groq timing works after a stage metric")
+        expect(VoiceResponseParser.parseServerDuration("groq;dur=-1") == null, "Negative Groq timing is rejected")
         expect(VoiceResponseParser.parseServerDuration("gemini;dur=-1") == null, "Negative server timing is rejected")
         expect(VoiceResponseParser.parseServerDuration(null) == null, "Missing server timing stays absent")
 

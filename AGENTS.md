@@ -8,6 +8,12 @@ A fast, light, English-only voice assistant for quick phone tasks. It can **repl
 
 Think "Gemini, but smaller and faster, doing only small jobs". It is a command app, not a chatbot.
 
+### Owner-approved provider update, 22 November 2026
+
+The owner approved switching the primary Vercel backend to **Groq Whisper Large V3 Turbo → GPT OSS 20B** and will set the environment variables in Vercel. This approval replaces the Gemini-only, one-provider-call and no-separate-transcription requirements below for the Vercel command path. The phone still sends one WAV request to Friday. The backend keeps the transcript in memory, asks for one required tool call and validates the same action schema. Use plain REST `fetch`, a shared deadline and at most one extra provider request for recovery. Keep account and quota checks before provider work. No model, key or SDK enters the app, and no dependency has been approved or added for this switch.
+
+Use [Groq backend setup](docs/groq-backend.md) for the approved request fields, retries and environment variables. `AI_PROVIDER=groq` selects it; Gemini remains an explicit configuration rollback. The AWS fallback retains its older Gemini/install-token flow and must not serve the account-enabled APK. Update app audio disclosures and timing logs to match the deployed provider. Other hard rules still apply.
+
 ## Scope (v1)
 
 Does:

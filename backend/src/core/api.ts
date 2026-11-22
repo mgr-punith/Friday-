@@ -159,12 +159,16 @@ async function handleCommand(
     const result = await dependencies.assistant.select(input, now);
     const response = parseFunctionSelection(result.selection);
     return response.type === "error"
-      ? commandError(400, response.reason, result.durationMs)
-      : commandSuccess(response, result.durationMs);
+      ? commandError(400, response.reason, result.durationMs, result.timingMetric, result.stages)
+      : commandSuccess(response, result.durationMs, result.timingMetric, result.stages);
   } catch (error) {
     if (error instanceof AssistantProviderError) {
-      const status = error.code === "timeout" ? 504 : 503;
-      return commandError(status, error.code, error.durationMs);
+      dependencies.logger.error(error.failure?.diagnosticCode ?? `assistant_${error.code}`, requestId(event));
+      const status = error.code === "timeout" ? 504 : error.failure?.httpStatus === 429 ? 429 : 503;
+      const response = commandError(status, error.code, error.durationMs, error.failure?.timingMetric);
+      return error.failure?.retryAfterSeconds === undefined ? response : {
+        ...response, headers: { ...response.headers, "retry-after": String(error.failure.retryAfterSeconds) }
+      };
     }
     dependencies.logger.error("assistant_failed", requestId(event));
     return commandError(503, "busy");
@@ -274,16 +278,19 @@ function requestId(event: FunctionUrlEvent): string | undefined {
   return event.requestContext?.requestId;
 }
 
-function commandSuccess(response: CommandResponse, durationMs: number): FunctionUrlResponse {
-  return json(200, response, serverTiming(durationMs));
+function commandSuccess(response: CommandResponse, durationMs: number, metric?: "gemini" | "groq",
+  stages?: Readonly<Record<string, number>>): FunctionUrlResponse {
+  return json(200, response, serverTiming(durationMs, metric, stages));
 }
 
 function commandError(
   statusCode: number,
   reason: "busy" | "timeout" | "bad_audio" | "unauthorized",
-  durationMs?: number
+  durationMs?: number,
+  metric?: "gemini" | "groq",
+  stages?: Readonly<Record<string, number>>
 ): FunctionUrlResponse {
-  return json(statusCode, { type: "error", reason }, durationMs === undefined ? undefined : serverTiming(durationMs));
+  return json(statusCode, { type: "error", reason }, durationMs === undefined ? undefined : serverTiming(durationMs, metric, stages));
 }
 
 function serviceUnavailable(): FunctionUrlResponse {
@@ -310,9 +317,15 @@ function baseHeaders(): Record<string, string> {
   };
 }
 
-function serverTiming(durationMs: number): Record<string, string> {
+function serverTiming(durationMs: number, metric: "gemini" | "groq" = "gemini",
+  stages: Readonly<Record<string, number>> = {}): Record<string, string> {
   const safeDuration = Number.isFinite(durationMs) ? Math.max(0, durationMs) : 0;
-  return { "server-timing": `gemini;dur=${safeDuration.toFixed(1)}` };
+  const metrics = [`${metric};dur=${safeDuration.toFixed(1)}`];
+  for (const name of ["transcription", "classification"]) {
+    const duration = stages[name];
+    if (duration !== undefined && Number.isFinite(duration) && duration >= 0) metrics.push(`${name};dur=${duration.toFixed(1)}`);
+  }
+  return { "server-timing": metrics.join(", ") };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

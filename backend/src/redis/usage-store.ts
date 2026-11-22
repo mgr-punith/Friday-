@@ -1,5 +1,5 @@
 import { Redis } from "@upstash/redis";
-import type { RuntimeConfig } from "../config";
+import type { UsageLimits } from "../config";
 import type { UsageLimitStore } from "../core/contracts";
 
 const DAY_SECONDS = 86_400;
@@ -49,7 +49,7 @@ export interface RedisEvalSender {
 export class RedisUsageLimitStore implements UsageLimitStore {
   constructor(
     private readonly client: RedisEvalSender,
-    private readonly limits: RuntimeConfig
+    private readonly limits: UsageLimits
   ) {}
 
   async consumeRegistration(identityHash: string, at: Date): Promise<boolean> {

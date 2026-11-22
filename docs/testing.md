@@ -4,6 +4,35 @@
 
 Add a repeatable test when a build or feature failure has a deterministic reproduction. Keep hardware, OEM, permission-panel, launcher, and other device-only failures in the phone checklist with the exact reproduction steps. Do not mark a device case as automated coverage.
 
+## Groq provider switch, 22 November 2026
+
+The owner reviewed Gemini's free-tier errors and approved **Groq Whisper Large V3 Turbo → GPT OSS 20B** for the Vercel command backend. The new provider uses the same account, Redis limits, WAV input and action validation. Its two requests share a deadline and one recovery allowance. Regression tests cover the supplied `400 tool_use_failed` JSON error, increased repair budget, no retranscription, permanent 404/auth failures, bounded 5xx/network recovery, 429 cooldowns, slow response bodies, confidence checks, unknown/multiple/truncated calls and safe log output. `AI_PROVIDER=groq` selects the provider; its configuration requires no Gemini key.
+
+The first production-provider audio run completed 12 cases without HTTP errors and matched 10. One miss reproduced a blank optional `close_app.name`, which the backend rejected. The Groq response adapter now removes blank optional app names and alarm labels while keeping required targets strict. The final live run matched **11/12**, including both negative audio cases, with **1,127 ms median** and **1,299 ms P95/maximum**. One spoken app name was transcribed differently. The local helper prints only case numbers, results and timings and stores no transcripts. These runs used the private recordings from the development machine with five-second gaps; Mumbai and phone-to-action latency remain unmeasured.
+
+Commands run:
+
+```bash
+cd backend
+npm run verify
+node --test --test-isolation=none build-test/test/*.test.js scripts/*.test.mjs
+npm run test:sam
+cd ..
+node --env-file=backend/.env .local/tools/groq-production-eval.cjs
+friday_groq_gradle=/home/puneet/.gradle/wrapper/dists/gradle-9.4.1-bin/arn2x92ynaizyzdaamcbpbhtj/gradle-9.4.1/bin/gradle
+"$friday_groq_gradle" --offline --no-daemon -PwakeTrialNativeDir=/tmp/friday-rust-measure/wake-jni assembleDebug assembleRelease test lintDebug --console=plain
+"$friday_groq_gradle" --offline --no-daemon :app:dependencies --configuration releaseRuntimeClasspath --console=plain > /tmp/friday-groq-release-dependencies.log
+python3 scripts/check-app-dependencies.py /tmp/friday-groq-release-dependencies.log
+python3 -m unittest discover -s scripts -p 'test_*.py'
+python3 scripts/check-release-manifest.py
+python3 scripts/check-secrets.py
+git diff --check
+```
+
+Backend types, **119 individual tests**, route checks, bundles and the Vercel entry passed. SAM packaging passed both regressions after the sandbox blocked Make's subprocess; no AWS request or deployment ran. Vercel bundle: **120,179 bytes**. Lambda fallback bundle: **756,774 bytes**. The Android build passed **608 checks** (101 action, 234 voice, 214 wake and 59 speaker), zero lint errors and 36 warnings. Python passed 40 tests. No dependency changed. Debug APK: **7,016,765 bytes**; unsigned release APK: **847,296 bytes**. Android adds Groq timing parsing and names Groq in the audio disclosure. The build used cached Gradle 9.4.1 rather than verifying the pinned 9.1.0 installation.
+
+The existing production `/v1/warm` returned 204 from Mumbai and `/v1/auth/config` returned its public configuration. These routes call neither provider. The owner will add Groq's Vercel variables; no new backend was deployed, committed or pushed in this pass. [Groq setup](groq-backend.md) records the exact environment and rollback. A fresh deployed Groq phone command and secure-keyguard test remain unverified. The earlier uncommitted Home design work remains present: its navigation checks passed, but its clipped completed-result detail and reused-Activity motion fixture still need follow-up. Do not count those pending UI checks as complete.
+
 ## Timer screen closure and speech regression, 22 November 2026
 
 When Clock opened for a timer, Android paused Friday before its speech finished. The old pause cleanup cleared the successful result and cancelled dismissal, so an empty assistant panel could return. Closing that panel also stopped the timer confirmation. Friday now closes completed compact panels on pause and lets that one short confirmation finish after the screen closes. The owner confirmed the locked Hey Friday → “Set a timer for two minutes” test: **“Yes, it spoke and closed.”**

@@ -138,5 +138,5 @@ object VoiceResponseParser {
     private const val MAX_NAME_LENGTH = 100
     private const val MAX_NUMBER_LENGTH = 40
     private const val MAX_LABEL_LENGTH = 100
-    private val SERVER_DURATION = Regex("(?:^|[,]\\s*)gemini\\s*;\\s*dur=([0-9]+(?:\\.[0-9]+)?)", RegexOption.IGNORE_CASE)
+    private val SERVER_DURATION = Regex("(?:^|[,]\\s*)(?:gemini|groq)\\s*;\\s*dur=([0-9]+(?:\\.[0-9]+)?)", RegexOption.IGNORE_CASE)
 }

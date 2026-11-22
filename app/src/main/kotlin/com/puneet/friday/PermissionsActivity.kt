@@ -42,7 +42,7 @@ class PermissionsActivity : Activity() {
                 Manifest.permission.READ_CONTACTS,
                 "Contacts",
                 "Find a person to call",
-                "Friday reads contact names and phone numbers on this phone to match the person you asked to call. Your contact list and contact details stay on this phone. Friday sends the recorded command to its Vercel backend and Google Gemini, and does not store the audio.",
+                "Friday reads contact names and phone numbers on this phone to match the person you asked to call. Your contact list and contact details stay on this phone. Friday sends the recorded command to its Vercel backend and Groq, and does not store audio or transcripts.",
             ),
             PermissionInfo(
                 Manifest.permission.CALL_PHONE,

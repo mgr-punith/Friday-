@@ -18,7 +18,7 @@ The project uses `backend/public` for a small root page. Vercel deploys the rout
 
 Keep `@types/node` in production dependencies. Vercel's Function transpiler reads the project's TypeScript configuration after the static build and needs the Node declarations.
 
-`npm run eval` needs a Gemini key. Copy `.env.example` to `.env`, replace the fake value, run the evaluation, then keep `.env` outside Git.
+`npm run eval` needs the selected provider's local key. Set `EVAL_PROVIDER=groq` for the Groq evaluator. Keep `.env` outside Git and use gaps between cases to respect account quotas.
 
 ## Vercel project
 
@@ -44,14 +44,18 @@ The Upstash Vercel integration can add these values to the project:
 
 Add each value through Vercel project settings. Apply them to Production and Preview only when preview deployments need live services.
 
-- `GEMINI_API_KEY`: paid-tier Gemini key for production
+- `AI_PROVIDER`: `groq` for the owner-approved command provider
+- `GROQ_API_KEY`: Groq key
+- `GROQ_TRANSCRIPTION_MODEL`: `whisper-large-v3-turbo`
+- `GROQ_ACTION_MODEL`: `openai/gpt-oss-20b`
+- `GROQ_TIMEOUT_MS`: `10000`
+- `GROQ_MAX_COMPLETION_TOKENS`: `512`
 - `JWT_SIGNING_KEY`: random value with at least 32 characters
-- `GEMINI_MODEL`: `gemini-3.1-flash-lite`
-- `GEMINI_THINKING_LEVEL`: `MINIMAL`
-- `GEMINI_TIMEOUT_MS`: `10000`
 - `GOOGLE_WEB_CLIENT_ID`: the Web application OAuth client ID; required for the account router
 
 Do not send these values in chat, store them in GitHub, or commit them. Friday reads them from Vercel's encrypted environment at function start.
+
+[Groq setup and retry behavior](groq-backend.md) describes the switch and Gemini rollback. Existing deployments keep Gemini if `AI_PROVIDER` is absent. With Groq selected, the backend requires no Gemini environment variables.
 
 Optional limit variables keep the defaults unless you set them:
 
@@ -67,7 +71,7 @@ Native Google sign-in needs no client secret. Browser fallback also needs `GOOGL
 
 1. Import the repository and select `backend` as the root directory.
 2. Add the Upstash integration.
-3. Add the Gemini and JWT values.
+3. Add the Groq, Google login and JWT values.
 4. deploy a preview and test `/v1/warm`.
 5. Promote the tested deployment or merge the branch into `main`.
 
