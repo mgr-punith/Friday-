@@ -27,6 +27,8 @@ internal object DebugTools {
     fun isWakeEntry(intent: Intent) = false
     fun beginCommandCapture() = Unit
     fun endCommandCapture() = Unit
+    fun beginSpeechPlayback(speaker: Any) = Unit
+    fun endSpeechPlayback(speaker: Any) = Unit
     fun listeningSummary() = "Friday listens after you tap. Background listening is off."
     fun permissionSummary() = "Friday records after you tap the microphone. Background listening is off."
     fun microphoneDisclosure() = "Friday records one short command after you tap the microphone. It sends that audio to Friday’s Vercel backend and Google Gemini to choose a phone action. Friday does not store the audio. Background listening is off."

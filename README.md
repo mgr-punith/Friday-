@@ -102,7 +102,7 @@ After building and installing the app, sign in and grant the permissions for the
 Set a timer for two minutes
 ```
 
-Friday should return a timer action, open the phone's clock app, and show a short confirmation. Exact results depend on the installed clock app and Android permissions.
+Friday should return a timer action, open the phone's clock app, and show a short confirmation. The compact assistant closes after one completed command; its short speech can finish after Clock opens, and an enabled Hey Friday listener resumes when speech ends. Exact results depend on the installed clock app and Android permissions.
 
 ## Privacy and permissions
 
@@ -120,3 +120,7 @@ See [Google sign-in and session handling](docs/google-sign-in.md), [the action c
 - Before pushing, run `python3 scripts/check-secrets.py --history HEAD`.
 
 The [testing guide](docs/testing.md) records verification and device coverage. The [model notes](docs/model-notes.md) track accuracy and latency measurements. Wake phrase recognition remains opt-in debug work; its current phone results do not establish production accuracy.
+
+The [audio-processing comparison](docs/audio-processing-benchmark.md) records Kotlin, Rust and C++ measurements on the Vivo. Friday keeps command audio in Kotlin and skips unused pitch analysis after capture; the wake detector uses its existing C++ runtime.
+
+The wake-enabled debug build can keep Hey Friday listening after you remove Friday from Recents. [Background listening setup](docs/wake-detector-trial.md#background-listening) links to optional battery settings. Pause stops the microphone; restart or force-stop requires a user-started Resume. All-day battery drain remains unmeasured.

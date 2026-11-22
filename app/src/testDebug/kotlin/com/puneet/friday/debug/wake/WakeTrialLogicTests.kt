@@ -124,6 +124,21 @@ object WakeTrialLogicTests {
         gate.endCommand()
         gate.endCommand()
         expect(gate.canCapture(paused), "Repeated cleanup cannot make the ownership count negative")
+        val firstSpeaker = Any()
+        val nextSpeaker = Any()
+        gate.speaking(firstSpeaker)
+        gate.speaking(firstSpeaker)
+        expect(gate.speechActive && !gate.canCapture(paused),
+            "A confirmation keeps wake capture paused after its screen closes")
+        gate.speaking(nextSpeaker)
+        gate.silent(firstSpeaker)
+        expect(gate.speechActive && !gate.canCapture(paused),
+            "Finishing earlier speech cannot resume the microphone over its replacement")
+        gate.silent(firstSpeaker)
+        expect(!gate.canCapture(paused), "Duplicate completion cannot release another speaker")
+        gate.silent(nextSpeaker)
+        expect(!gate.speechActive && gate.canCapture(paused),
+            "Completing the last confirmation permits local wake listening again")
         for (phase in listOf(WakeTrialSession.Phase.HANDOFF, WakeTrialSession.Phase.STOPPING,
             WakeTrialSession.Phase.STOPPED, WakeTrialSession.Phase.LISTENING)) {
             expect(!gate.canCapture(paused.copy(phase = phase)), "Only starting or paused trials can acquire the microphone")
@@ -193,6 +208,42 @@ object WakeTrialLogicTests {
         for (mode in WakeUsagePolicy.Mode.entries) {
             expect(!WakeUsagePolicy.retainsNotification(false, mode), "An advanced trial retains its original Stop behavior")
         }
+        expect(!WakeBackgroundPolicy.stopOnTaskRemoval(true, WakeUsagePolicy.Mode.HEY_FRIDAY),
+            "Removing a task keeps the user-enabled Hey Friday service alive")
+        expect(WakeBackgroundPolicy.stopOnTaskRemoval(true, WakeUsagePolicy.Mode.TAP),
+            "An earlier Hey Friday service cannot survive a later Tap choice")
+        for (mode in WakeUsagePolicy.Mode.entries) {
+            expect(WakeBackgroundPolicy.stopOnTaskRemoval(false, mode),
+                "Removing an advanced trial's task stops its microphone")
+        }
+        for (maker in listOf("vivo", "VIVO", " Vivo ", "iQOO")) {
+            expect(WakeBackgroundPolicy.isVivo(maker), "Vivo background guidance handles manufacturer formatting")
+        }
+        expect(!WakeBackgroundPolicy.isVivo("Samsung"), "Vivo guidance stays off other manufacturers")
+        val battery = WakeBackgroundPolicy.Destination.APP_BATTERY
+        val optimization = WakeBackgroundPolicy.Destination.BATTERY_OPTIMIZATION
+        val appInfo = WakeBackgroundPolicy.Destination.APP_INFO
+        val settings = WakeBackgroundPolicy.Destination.SETTINGS
+        for ((unavailable, expected) in listOf(
+            emptySet<WakeBackgroundPolicy.Destination>() to battery,
+            setOf(battery) to optimization,
+            setOf(battery, optimization) to appInfo,
+            setOf(battery, optimization, appInfo) to settings,
+            setOf(battery, optimization, appInfo, settings) to null,
+        )) {
+            val visited = mutableListOf<WakeBackgroundPolicy.Destination>()
+            val destination = WakeBackgroundPolicy.firstAvailable(battery) { target ->
+                visited += target
+                if (target in unavailable) throw SecurityException("Settings screen unavailable")
+            }
+            expect(destination == expected, "Missing or blocked battery screens fall back without crashing")
+            expect(visited == WakeBackgroundPolicy.Destination.entries.take(unavailable.size + 1),
+                "Battery fallback does not retry or skip the next public settings screen")
+        }
+        val visited = mutableListOf<WakeBackgroundPolicy.Destination>()
+        expect(WakeBackgroundPolicy.firstAvailable(settings) { visited += it } == settings,
+            "Manufacturer guidance opens only the requested phone Settings")
+        expect(visited == listOf(settings), "Opening phone Settings cannot request an exemption")
         checks += WakeModelInstallerTests.run()
         println("Wake trial logic: $checks checks passed")
     }

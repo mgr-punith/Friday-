@@ -4,6 +4,8 @@
 
 The owner approved keeping `gemini-3.1-flash-lite` with WAV uploads on 19 November 2026. We completed a local comparison of two Gemini models and Groq using the owner's recordings. Repeat the comparison from Mumbai and measure Friday's full phone-to-action path before choosing a different provider.
 
+On 22 November, the owner chose to keep the current backend. A [Kotlin, Rust and C++ phone benchmark](audio-processing-benchmark.md) found that skipping unused whole-clip pitch analysis reduced three-second recording preparation from about 15.28 ms to 1.88 ms in Kotlin. The app now uses that optimization. Native prototypes saved another 1.09–1.26 ms, so command audio stays in Kotlin and the existing C++ wake engine stays in place. These figures exclude capture and cloud latency.
+
 ## Method
 
 Use the same commands, recordings, fixed phone time, timeout, and network location for each run. Run from Mumbai or the intended backend region. Report action and argument accuracy with median, P95, maximum latency, and failures. Keep recordings and transcripts out of logs and Git. Text tests cover action classification; private WAV tests cover accent recognition.

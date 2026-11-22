@@ -47,18 +47,29 @@ object VoiceLogicTests {
         expect(tabs.current == Destination.HOME, "Returning Home preserves the navigation destination")
 
         val speech = SpeechSession()
+        expect(!speech.isActive, "A new speaker has no pending confirmation to keep after closing")
         val firstSpeech = speech.begin()
+        expect(speech.isActive, "A queued confirmation remains active during engine startup")
         expect(speech.accepts(firstSpeech), "The current utterance can report playback")
         speech.cancel()
+        expect(!speech.isActive, "Cancellation releases a pending confirmation before engine startup")
         expect(!speech.accepts(firstSpeech), "Cancelled TTS cannot restart playback after engine startup")
         val replacementSpeech = speech.begin()
         expect(!speech.finish(firstSpeech), "A stale completion cannot stop a replacement utterance")
         expect(speech.accepts(replacementSpeech), "Replacement speech stays active")
         expect(speech.finish(replacementSpeech), "The current completion ends playback")
+        expect(!speech.isActive, "Completed playback cannot keep a closed screen's speaker alive")
         expect(!speech.finish(replacementSpeech), "Duplicate TTS completion is ignored")
         expect(!speech.accepts(null), "Missing TTS identity cannot update the screen")
-        expect(CompletionPolicy.closeDelay(true, true, false, false, false) == 1_200L,
-            "A compact successful result returns to wake listening after speech")
+        val nextSpeaker = SpeechSession()
+        val originalSpeakerId = speech.begin()
+        val nextSpeakerId = nextSpeaker.begin()
+        expect(originalSpeakerId != nextSpeakerId,
+            "A replacement Activity's first confirmation has a different shared-engine identity")
+        expect(!nextSpeaker.finish(originalSpeakerId) && nextSpeaker.accepts(nextSpeakerId),
+            "The old Activity's stop callback cannot finish the replacement's confirmation")
+        expect(CompletionPolicy.closeDelay(true, true, false, false, false) == 0L,
+            "A compact successful result closes when its confirmation finishes without a display delay")
         expect(CompletionPolicy.closeDelay(false, true, false, false, false) == null,
             "A successful result keeps the full Home screen open")
         expect(CompletionPolicy.closeDelay(true, false, false, false, false) == null,
@@ -69,6 +80,14 @@ object VoiceLogicTests {
             "Speech has a bounded completion watchdog")
         expect(CompletionPolicy.closeDelay(true, true, false, true, false) == 12_000L,
             "TTS startup does not close the result before the confirmation")
+        expect(CompletionPolicy.closeWhenLeaving(true, true),
+            "A completed compact timer panel closes when Clock pauses it before speech finishes")
+        expect(!CompletionPolicy.closeWhenLeaving(false, true),
+            "An external action leaves the full Home screen available")
+        expect(!CompletionPolicy.closeWhenLeaving(true, false),
+            "Pausing an unfinished command, error or permission panel cannot mark it complete")
+        expect(!CompletionPolicy.closeWhenLeaving(false, false),
+            "Leaving the idle full-screen app does not finish its task")
         expect(CompletionPolicy.spokenConfirmation("Silent mode on") == "Done. Silent mode on",
             "A completed sound change gets one short confirmation")
         for (message in listOf("Calling Mom", "Opening Calculator", "Timer request sent for 2 minutes", "Alarm request sent for 6:30 AM")) {

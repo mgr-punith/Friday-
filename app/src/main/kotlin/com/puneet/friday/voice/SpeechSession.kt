@@ -1,12 +1,15 @@
 package com.puneet.friday.voice
 
+import java.util.concurrent.atomic.AtomicLong
+
 /** Rejects callbacks from cancelled or replaced utterances, including engine startup. */
 internal class SpeechSession {
     private var generation = 0L
     private var active = false
+    val isActive: Boolean get() = active
 
     fun begin(): String {
-        generation++
+        generation = nextGeneration.incrementAndGet()
         active = true
         return "friday_confirmation_$generation"
     }
@@ -20,4 +23,6 @@ internal class SpeechSession {
     }
 
     fun cancel() { active = false }
+
+    private companion object { val nextGeneration = AtomicLong() }
 }
