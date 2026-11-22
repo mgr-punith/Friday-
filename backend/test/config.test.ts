@@ -40,7 +40,8 @@ test("loads Vercel secrets and Redis configuration", () => {
     GEMINI_MODEL: "gemini-3.5-flash-lite"
   });
   assert.equal(config.redisRestUrl, "https://example.upstash.io");
-  assert.equal(config.geminiThinkingLevel, "MINIMAL");
+  assert.equal(config.assistant.provider, "gemini");
+  if (config.assistant.provider === "gemini") assert.equal(config.assistant.thinkingLevel, "MINIMAL");
 });
 
 test("loads Redis configuration created by the Vercel Upstash integration", () => {

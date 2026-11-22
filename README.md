@@ -16,7 +16,7 @@ Friday does not answer general questions, search the web, or chat. Those request
 
 1. You tap the microphone or open Friday from an enabled entry point.
 2. Android records a short 16 kHz mono WAV command. Friday trims silence and sends the recording over HTTPS.
-3. The backend sends the audio and current phone time to Gemini. Gemini selects one function from Friday's action list.
+3. The Groq backend transcribes the audio with Whisper Large V3 Turbo, then GPT OSS 20B selects one function from Friday's action list using the current phone time. Friday keeps the transcript in memory for that request.
 4. The backend validates the result and returns a compact action response.
 5. Friday resolves contacts and installed apps on the phone, runs the action, then shows and speaks a short confirmation when Android has an English text-to-speech engine.
 
@@ -30,7 +30,7 @@ The phone does not upload contacts or installed-app lists. Friday does not save 
 | Audio | Android `AudioRecord`, 16 kHz mono PCM WAV, device `TextToSpeech` for confirmations |
 | Sign-in | Android Credential Manager with Google Play Services; browser OAuth fallback is available when configured |
 | Backend | TypeScript on Vercel Functions in Mumbai |
-| Command selection | Gemini REST API with a forced function call; no Gemini SDK in the app or backend |
+| Command selection | Groq Whisper + GPT OSS 20B over REST, with one required tool call; Gemini remains an explicit rollback option |
 | Account and limits | Upstash Redis for expiring sessions, login transactions, and request limits |
 | AWS fallback | AWS SAM, Lambda, DynamoDB, and SSM files remain in the repository; the AWS route still needs account support before it can serve the current app |
 | CI | GitHub Actions selects Android, backend, SAM, or repository-tool checks based on changed files |
@@ -90,7 +90,7 @@ npm run test:sam
 
 `npm run verify` type-checks the backend, runs mocked tests, checks Vercel routing and builds the size-limited bundles. `npm run test:sam` checks the AWS packaging path without deploying. AWS deployment requires owner-managed credentials; Codex does not deploy it.
 
-For real Gemini evaluation, copy `.env.example` to `.env`, set development credentials locally, and run `npm run eval`. Keep `.env` out of Git. Evaluation sends requests to Gemini and can use API quota.
+For real model evaluation, configure `.env` locally and run `EVAL_PROVIDER=groq npm run eval` or select Gemini. Keep `.env` out of Git. Evaluation sends requests to the selected provider and consumes quota. [Groq setup and error handling](docs/groq-backend.md) covers the approved switch.
 
 Vercel production setup and backend variables are documented in [the backend deployment guide](docs/backend-deployment.md). Google client setup is in [Google sign-in](docs/google-sign-in.md). Do not commit secrets.
 

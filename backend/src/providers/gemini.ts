@@ -30,6 +30,9 @@ export class GeminiProvider implements AssistantProvider {
     const startedAt = performance.now();
     const deadline = startedAt + this.config.timeoutMs;
     const { geminiApiKey } = await this.secrets.getSecrets();
+    if (!geminiApiKey) throw new AssistantProviderError("busy", performance.now() - startedAt, {
+      diagnosticCode: "gemini_configuration_missing_key", timingMetric: "gemini"
+    });
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.config.model)}:generateContent`;
     const body = JSON.stringify(buildRequest(input, now, this.config.thinkingLevel));
 

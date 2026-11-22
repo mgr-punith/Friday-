@@ -190,7 +190,7 @@ class WakeUsageActivity : Activity() {
         }
         if (!WakeUsageStore.consented(this)) {
             FridayDialog.show(this, "Use Hey Friday?",
-                "Friday checks for “Hey Friday” on this phone. After a wake, Friday sends your command audio to its Vercel backend and Google Gemini. Friday does not save audio.",
+                "Friday checks for “Hey Friday” on this phone. After a wake, Friday sends your command audio to its Vercel backend and Groq to transcribe it and choose a phone action. Friday does not save audio or transcripts.",
                 positive = "Allow Hey Friday", negative = "Not now",
             ) { WakeUsageStore.consent(this); checkPermissions() }
         } else checkPermissions()

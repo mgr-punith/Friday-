@@ -78,5 +78,5 @@ internal object DebugTools {
     fun endSpeechPlayback(speaker: Any) = WakeTrialService.endSpeechPlayback(speaker)
     fun listeningSummary() = ""
     fun permissionSummary() = "Friday records commands after a tap or a wake in the opt-in Hey Friday test. Wake detection stays on this phone."
-    fun microphoneDisclosure() = "Friday sends short command recordings to its Vercel backend and Google Gemini to choose a phone action. Friday does not store command audio. In the opt-in Hey Friday test, wake detection runs on this phone without saving or uploading ambient audio. Stop test turns wake listening off."
+    fun microphoneDisclosure() = "Friday sends short command recordings to its Vercel backend and Groq to transcribe the command and choose a phone action. Friday does not store audio or transcripts. In the opt-in Hey Friday test, wake detection runs on this phone without saving or uploading ambient audio. Pause turns wake listening off."
 }

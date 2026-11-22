@@ -12,14 +12,24 @@ export interface FunctionSelection {
 export interface AssistantProviderResult {
   readonly selection: FunctionSelection;
   readonly durationMs: number;
+  readonly timingMetric?: "gemini" | "groq";
+  readonly stages?: Readonly<Record<string, number>>;
 }
 
 export type AssistantProviderErrorCode = "busy" | "timeout";
 
+export interface ProviderFailure {
+  readonly diagnosticCode: string;
+  readonly httpStatus?: number;
+  readonly retryAfterSeconds?: number;
+  readonly timingMetric?: "gemini" | "groq";
+}
+
 export class AssistantProviderError extends Error {
   constructor(
     readonly code: AssistantProviderErrorCode,
-    readonly durationMs: number
+    readonly durationMs: number,
+    readonly failure?: ProviderFailure
   ) {
     super(code);
     this.name = "AssistantProviderError";
@@ -31,7 +41,7 @@ export interface AssistantProvider {
 }
 
 export interface SecretBundle {
-  readonly geminiApiKey: string;
+  readonly geminiApiKey?: string;
   readonly jwtSigningKey: string;
 }
 

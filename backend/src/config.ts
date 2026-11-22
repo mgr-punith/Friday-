@@ -1,12 +1,15 @@
-export interface RuntimeConfig {
-  readonly geminiModel: string;
-  readonly geminiThinkingLevel: "MINIMAL" | "LOW" | "MEDIUM" | "HIGH";
-  readonly geminiTimeoutMs: number;
+export interface UsageLimits {
   readonly registerPerIpDaily: number;
   readonly registerGlobalDaily: number;
   readonly commandPerInstallMinute: number;
   readonly commandPerInstallDaily: number;
   readonly commandGlobalDaily: number;
+}
+
+export interface RuntimeConfig extends UsageLimits {
+  readonly geminiModel: string;
+  readonly geminiThinkingLevel: "MINIMAL" | "LOW" | "MEDIUM" | "HIGH";
+  readonly geminiTimeoutMs: number;
 }
 
 export interface BackendConfig extends RuntimeConfig {
@@ -15,15 +18,21 @@ export interface BackendConfig extends RuntimeConfig {
   readonly jwtSigningKeyParameterName: string;
 }
 
-export interface VercelBackendConfig extends RuntimeConfig {
+export interface VercelBackendConfig extends UsageLimits {
   readonly googleWebClientId: string;
   readonly googleWebClientSecret?: string;
   readonly googleOauthRedirectUri?: string;
-  readonly geminiApiKey: string;
+  readonly assistant: VercelAssistantConfig;
   readonly jwtSigningKey: string;
   readonly redisRestUrl: string;
   readonly redisRestToken: string;
 }
+
+export type VercelAssistantConfig =
+  | { readonly provider: "gemini"; readonly apiKey: string; readonly model: string;
+      readonly thinkingLevel: RuntimeConfig["geminiThinkingLevel"]; readonly timeoutMs: number }
+  | { readonly provider: "groq"; readonly apiKey: string; readonly transcriptionModel: string;
+      readonly actionModel: string; readonly timeoutMs: number; readonly maxCompletionTokens: number };
 
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env): BackendConfig {
   return {
@@ -48,8 +57,8 @@ export function loadVercelConfig(environment: NodeJS.ProcessEnv = process.env): 
     googleWebClientId,
     ...(clientSecret ? { googleWebClientSecret: clientSecret } : {}),
     ...(redirectUri ? { googleOauthRedirectUri: redirectUri } : {}),
-    ...loadRuntimeConfig(environment),
-    geminiApiKey: secret(environment, "GEMINI_API_KEY", 16),
+    ...loadUsageLimits(environment),
+    assistant: loadAssistantConfig(environment),
     jwtSigningKey: secret(environment, "JWT_SIGNING_KEY", 32),
     redisRestUrl: httpsUrl(requiredFirst(environment, [
       "UPSTASH_REDIS_REST_URL",
@@ -64,15 +73,51 @@ export function loadVercelConfig(environment: NodeJS.ProcessEnv = process.env): 
 
 function loadRuntimeConfig(environment: NodeJS.ProcessEnv): RuntimeConfig {
   return {
+    ...loadUsageLimits(environment),
     geminiModel: modelName(required(environment, "GEMINI_MODEL")),
     geminiThinkingLevel: thinkingLevel(environment.GEMINI_THINKING_LEVEL ?? "MINIMAL"),
-    geminiTimeoutMs: integer(environment, "GEMINI_TIMEOUT_MS", 10_000, 500, 12_000),
+    geminiTimeoutMs: integer(environment, "GEMINI_TIMEOUT_MS", 10_000, 500, 12_000)
+  };
+}
+
+function loadUsageLimits(environment: NodeJS.ProcessEnv): UsageLimits {
+  return {
     registerPerIpDaily: integer(environment, "REGISTER_PER_IP_DAILY", 200, 1, 100_000),
     registerGlobalDaily: integer(environment, "REGISTER_GLOBAL_DAILY", 10_000, 1, 10_000_000),
     commandPerInstallMinute: integer(environment, "COMMAND_PER_INSTALL_MINUTE", 12, 1, 1_000),
     commandPerInstallDaily: integer(environment, "COMMAND_PER_INSTALL_DAILY", 100, 1, 100_000),
     commandGlobalDaily: integer(environment, "COMMAND_GLOBAL_DAILY", 100_000, 1, 100_000_000)
   };
+}
+
+function loadAssistantConfig(environment: NodeJS.ProcessEnv): VercelAssistantConfig {
+  // Existing deployments keep Gemini until the owner explicitly selects Groq.
+  const provider = environment.AI_PROVIDER?.trim().toLowerCase() || "gemini";
+  if (provider === "groq") {
+    return {
+      provider,
+      apiKey: secret(environment, "GROQ_API_KEY", 16),
+      transcriptionModel: groqModel(environment.GROQ_TRANSCRIPTION_MODEL?.trim() || "whisper-large-v3-turbo"),
+      actionModel: groqModel(environment.GROQ_ACTION_MODEL?.trim() || "openai/gpt-oss-20b"),
+      timeoutMs: integer(environment, "GROQ_TIMEOUT_MS", 10_000, 500, 12_000),
+      maxCompletionTokens: integer(environment, "GROQ_MAX_COMPLETION_TOKENS", 512, 512, 2_048)
+    };
+  }
+  if (provider !== "gemini") throw new Error("invalid_ai_provider");
+  return {
+    provider,
+    apiKey: secret(environment, "GEMINI_API_KEY", 16),
+    model: modelName(required(environment, "GEMINI_MODEL")),
+    thinkingLevel: thinkingLevel(environment.GEMINI_THINKING_LEVEL ?? "MINIMAL"),
+    timeoutMs: integer(environment, "GEMINI_TIMEOUT_MS", 10_000, 500, 12_000)
+  };
+}
+
+function groqModel(value: string): string {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)?$/.test(value) || value.length > 100) {
+    throw new Error("invalid_groq_model");
+  }
+  return value;
 }
 
 function required(environment: NodeJS.ProcessEnv, name: string): string {
