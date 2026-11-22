@@ -11,6 +11,8 @@ import android.view.View
 import android.view.WindowInsets
 import android.widget.TextView
 import com.puneet.friday.ui.AppUi
+import com.puneet.friday.ui.SettingsGroup
+import com.puneet.friday.ui.SettingsRow
 import com.puneet.friday.ui.FridayDialog
 
 /** Optional Android settings links. The user changes settings on the system screen. */
@@ -19,7 +21,7 @@ class WakeBackgroundActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val (scroll, content) = AppUi.scrollContent(this, "Background listening", "", back = true)
+        val (page, content) = AppUi.groupedContent(this, "Background listening")
         content.addView(AppUi.text(this,
             "Hey Friday can keep listening when you leave Friday or remove it from Recents. Pause it from the notification.",
             13f), AppUi.params(this, 16))
@@ -30,12 +32,14 @@ class WakeBackgroundActivity : Activity() {
         content.addView(AppUi.text(this,
             "If your phone stops listening, open App battery settings and choose Unrestricted or Allow background activity, if available. This can use more battery.",
             12f, secondary = true), AppUi.params(this, 8))
-        content.addView(AppUi.button(this, "App battery settings") {
+        val battery = SettingsGroup(this)
+        battery.addRow(SettingsRow(this, "App battery settings") {
             openSettings(WakeBackgroundPolicy.Destination.APP_BATTERY)
-        }, AppUi.params(this, 12))
-        content.addView(AppUi.button(this, "Battery optimization") {
+        })
+        battery.addRow(SettingsRow(this, "Battery optimization") {
             openSettings(WakeBackgroundPolicy.Destination.BATTERY_OPTIMIZATION)
-        }, AppUi.params(this, 8))
+        })
+        content.addView(battery, AppUi.params(this, 16))
         if (WakeBackgroundPolicy.isVivo(Build.MANUFACTURER)) {
             content.addView(AppUi.sectionLabel(this, "Vivo / iQOO"), AppUi.params(this, 24))
             content.addView(AppUi.text(this,
@@ -48,7 +52,7 @@ class WakeBackgroundActivity : Activity() {
         content.addView(AppUi.text(this,
             "After a restart, force-stop or Android's Stop control, open Friday and tap Resume Hey Friday. Battery access cannot prevent Android from stopping the app.",
             12f, secondary = true), AppUi.params(this, 24))
-        scroll.setOnApplyWindowInsetsListener { view, insets ->
+        page.setOnApplyWindowInsetsListener { view, insets ->
             if (Build.VERSION.SDK_INT >= 30) {
                 val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
                 view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
@@ -59,7 +63,7 @@ class WakeBackgroundActivity : Activity() {
             }
             insets
         }
-        setContentView(scroll)
+        setContentView(page)
     }
 
     override fun onResume() {

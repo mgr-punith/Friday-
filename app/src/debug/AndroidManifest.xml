@@ -5,6 +5,7 @@
     <!-- Keep the microphone prerequisite beside the debug-only service for lint. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <application>
+        <activity android:name=".ActionDebugActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".debug.wake.WakeUsageActivity" android:exported="true" android:label="Start Friday" />
         <activity android:name=".debug.wake.WakeTrialActivity" android:exported="true" android:label="Friday wake test" />
         <service android:name=".debug.wake.WakeTrialService" android:exported="false" android:foregroundServiceType="microphone" android:stopWithTask="false" />

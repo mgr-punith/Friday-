@@ -2,8 +2,10 @@ package com.puneet.friday.ui
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.os.Build
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowInsets
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 
@@ -13,20 +15,27 @@ class TabHostView(
     context: Context,
     home: View,
     private val createSettings: () -> View,
-    private val onSelect: (Destination) -> Unit,
 ) : LinearLayout(context) {
     private val navigation = TabNavigation()
     private val pages = FrameLayout(context)
     private val cachedPages = mutableMapOf(Destination.HOME to home)
-    private val bottomBar = BottomNavigation(context, false,
-        onHome = { onSelect(Destination.HOME) }, onSettings = { onSelect(Destination.SETTINGS) })
     val destination: Destination get() = navigation.current
 
     init {
         orientation = VERTICAL
         pages.addView(home, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         addView(pages, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        addView(bottomBar, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        setOnApplyWindowInsetsListener { view, insets ->
+            if (Build.VERSION.SDK_INT >= 30) {
+                val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+                view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            } else {
+                @Suppress("DEPRECATION")
+                view.setPadding(insets.systemWindowInsetLeft, insets.systemWindowInsetTop,
+                    insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
+            }
+            insets
+        }
     }
 
     fun select(destination: Destination) {
@@ -37,6 +46,5 @@ class TabHostView(
             }
         }
         cachedPages.values.forEach { it.visibility = if (it === page) View.VISIBLE else View.GONE }
-        bottomBar.selectSettings(destination == Destination.SETTINGS)
     }
 }

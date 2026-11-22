@@ -7,67 +7,86 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
 import android.view.View
-import android.widget.Button
+import android.view.ViewGroup
 import android.widget.LinearLayout
-import android.widget.TextView
 import com.puneet.friday.entry.AssistantSettings
 import com.puneet.friday.entry.EntryPointPolicy
 import com.puneet.friday.entry.ReadyNotification
 import com.puneet.friday.ui.AppUi
 import com.puneet.friday.ui.FridayDialog
+import com.puneet.friday.ui.AnchoredPopup
+import com.puneet.friday.ui.SettingsGroup
+import com.puneet.friday.ui.SettingsRow
 import com.puneet.friday.auth.AccountStore
 
-class SettingsPanel(private val activity: Activity, onSignOut: () -> Unit, onPermissions: () -> Unit) {
-    private val accountButton: Button
-    private lateinit var readyNotificationButton: Button
-    private lateinit var assistantButton: Button
-    private lateinit var assistantFallback: Button
-    private lateinit var listeningSummary: TextView
+class SettingsPanel(private val activity: Activity, onAccount: () -> Unit, onBack: () -> Unit, onPermissions: () -> Unit) {
+    private val popup = AnchoredPopup(activity)
+    private val about = AppUi.roundIconButton(activity, R.drawable.ic_info_circle, "About Friday") {}
+    private val accountButton: SettingsRow
+    private val startFriday: SettingsRow?
+    private val readyNotificationButton: SettingsRow
+    private val assistantButton: SettingsRow
+    private val assistantFallback: SettingsRow
+    private val assistantFallbackGroup: SettingsGroup
     private var pendingAssistantSettings = false
     private var showAssistantFallback = false
 
-    private val screen = AppUi.scrollContent(activity, "Settings", "Set up Friday on this phone.")
+    private val screen = AppUi.groupedContent(activity, "Settings", onBack = { dismissPopups(); onBack() }, trailing = about)
     val view = screen.first
 
     init {
         val content = screen.second
-        content.addView(AppUi.sectionLabel(activity, "Account"), AppUi.params(activity, 8))
-        accountButton = AppUi.navigationButton(activity, "Google account", "") {
-            FridayDialog.show(activity, "Sign out of Friday?", "Friday will stop listening. Sign in again to use cloud commands.", positive = "Sign out", negative = "Cancel", onPositive = onSignOut)
+        accountButton = SettingsRow(activity, "Account", icon = R.drawable.ic_account, onClick = onAccount)
+        content.addView(SettingsGroup(activity).apply { addRow(accountButton) }, AppUi.params(activity, 16))
+        val access = SettingsGroup(activity)
+        startFriday = DebugTools.addStartOptions(activity, access)
+        assistantButton = SettingsRow(activity, "Default assistant", icon = R.drawable.ic_assistant) { openAssistantSettings() }
+        access.addRow(assistantButton)
+        readyNotificationButton = SettingsRow(activity, "Ready notification", showChevron = false, icon = R.drawable.ic_notification) {
+            toggleReadyNotification()
         }
-        content.addView(accountButton, AppUi.params(activity, 16))
-        DebugTools.addStartOptions(activity, content)
-        content.addView(AppUi.sectionLabel(activity, "Quick access"), AppUi.params(activity, 8))
-        readyNotificationButton = AppUi.navigationButton(activity, "Ready notification", "") { toggleReadyNotification() }
-        content.addView(readyNotificationButton, AppUi.params(activity, 8))
-        val assistantControls = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
-        assistantButton = AppUi.navigationButton(activity, "Default assistant", "") { openAssistantSettings() }
-        assistantControls.addView(assistantButton, AppUi.params(activity, 0))
-        assistantFallback = AppUi.button(activity, "Open Default apps") {
+        access.addRow(readyNotificationButton)
+        content.addView(access, AppUi.params(activity, 16))
+        assistantFallback = SettingsRow(activity, "Open Default apps", icon = R.drawable.ic_apps) {
             openAssistantSettings(AssistantSettings.Destination.DEFAULT_APPS)
-        }.apply { visibility = View.GONE }
-        assistantControls.addView(assistantFallback, AppUi.params(activity, 0).apply { topMargin = AppUi.dp(activity, 8) })
-        content.addView(assistantControls, AppUi.params(activity, 16))
-        content.addView(AppUi.sectionLabel(activity, "Phone access"), AppUi.params(activity, 8))
-        content.addView(AppUi.navigationButton(activity, "Permissions", "Microphone, contacts, calls and silent mode") {
-            onPermissions()
-        }, AppUi.params(activity, 16))
-        content.addView(AppUi.sectionLabel(activity, "Tools"), AppUi.params(activity, 8))
-        content.addView(AppUi.navigationButton(activity, "Try a phone action", "Check calls, alarms, apps and sound mode") {
-            activity.startActivity(Intent(activity, ActionDebugActivity::class.java))
-        }, AppUi.params(activity, 16))
-        DebugTools.addSettings(activity, content)
-        listeningSummary = AppUi.text(activity, DebugTools.listeningSummary(), 12f, secondary = true)
-        content.addView(listeningSummary, AppUi.params(activity, 0))
+        }
+        assistantFallbackGroup = SettingsGroup(activity).apply { addRow(assistantFallback); visibility = View.GONE }
+        content.addView(assistantFallbackGroup, AppUi.params(activity, 16))
+        val phone = SettingsGroup(activity).apply {
+            addRow(SettingsRow(activity, "Permissions", icon = R.drawable.ic_permissions, onClick = onPermissions))
+        }
+        content.addView(phone, AppUi.params(activity, 16))
+        val debug = SettingsGroup(activity)
+        DebugTools.addSettings(activity, debug)
+        if (debug.childCount > 0) content.addView(debug, AppUi.params(activity, 16))
+        about.setOnClickListener { showAbout() }
     }
 
     fun refresh() {
         val account = AccountStore(activity).session()
-        AppUi.setNavigationText(accountButton, "Google account", account?.email?.ifBlank { account.displayName } ?: "Signed out")
+        accountButton.setValue(account?.let { it.displayName.ifBlank { it.email }.ifBlank { "Signed in" } } ?: "Signed out")
         accountButton.isEnabled = account != null
+        startFriday?.setValue(DebugTools.startMode(activity))
         updateReadyNotificationButton()
         updateAssistantButton()
-        listeningSummary.text = DebugTools.listeningSummary()
+    }
+
+    fun dismissPopups() = popup.dismiss()
+
+    private fun showAbout() {
+        val menu = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(SettingsRow(activity, "Open-source licenses", showChevron = false, icon = R.drawable.ic_document) {
+                popup.dismiss()
+                activity.startActivity(Intent(activity, LicensesActivity::class.java))
+            }, AppUi.params(activity, 0))
+            addView(View(activity).apply { setBackgroundColor(activity.getColor(R.color.settings_divider)) },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, maxOf(1, AppUi.dp(activity, 1))))
+            addView(SettingsRow(activity, "Friday for Android", showChevron = false, icon = R.drawable.ic_friday_status).apply {
+                setValue(BuildConfig.VERSION_NAME)
+            }, AppUi.params(activity, 0))
+        }
+        popup.show(about, menu)
     }
 
     private fun toggleReadyNotification() {
@@ -117,17 +136,12 @@ class SettingsPanel(private val activity: Activity, onSignOut: () -> Unit, onPer
     }
 
     private fun updateReadyNotificationButton() {
-        if (!::readyNotificationButton.isInitialized) return
         val detail = when (readyNotificationState()) {
-            EntryPointPolicy.ReadyNotificationState.OFF -> "Off · Tap to turn on"
-            EntryPointPolicy.ReadyNotificationState.ON -> "On · Tap to turn off"
-            EntryPointPolicy.ReadyNotificationState.BLOCKED -> "Blocked · Tap to manage"
+            EntryPointPolicy.ReadyNotificationState.OFF -> "Off"
+            EntryPointPolicy.ReadyNotificationState.ON -> "On"
+            EntryPointPolicy.ReadyNotificationState.BLOCKED -> "Blocked"
         }
-        AppUi.setNavigationText(
-            readyNotificationButton,
-            "Ready notification",
-            detail,
-        )
+        readyNotificationButton.setValue(detail)
     }
 
     private fun readyNotificationState(): EntryPointPolicy.ReadyNotificationState =
@@ -158,19 +172,14 @@ class SettingsPanel(private val activity: Activity, onSignOut: () -> Unit, onPer
     }
 
     private fun updateAssistantButton() {
-        if (!::assistantButton.isInitialized) return
         val selected = AssistantSettings.isSelected(activity)
         if (pendingAssistantSettings) {
             showAssistantFallback = !selected
             pendingAssistantSettings = false
         }
         if (selected) showAssistantFallback = false
-        AppUi.setNavigationText(
-            assistantButton,
-            "Default assistant",
-            if (selected) "Friday selected" else "Choose Friday in Android Settings",
-        )
-        assistantFallback.visibility = if (showAssistantFallback) View.VISIBLE else View.GONE
+        assistantButton.setValue(if (selected) "Friday" else "Not selected")
+        assistantFallbackGroup.visibility = if (showAssistantFallback) View.VISIBLE else View.GONE
     }
 
     private fun showSettingsError(message: String) {

@@ -83,6 +83,13 @@ internal class WakeTrialSession {
         }
     }
 
+    @Synchronized fun expireWake(generation: Long, token: String): Boolean {
+        if (generation != value.generation || !isPendingWake(token)) return false
+        value = value.copy(phase = Phase.PAUSED, pendingWake = null, handoffRequested = false,
+            message = "Restarting wake listening")
+        return true
+    }
+
     @Synchronized fun pause(generation: Long): Boolean {
         if (generation != value.generation || !value.commandMode || !value.active || value.phase == Phase.STOPPING) return false
         value = value.copy(phase = Phase.PAUSED, pendingWake = null, message = "Paused while Friday is open")

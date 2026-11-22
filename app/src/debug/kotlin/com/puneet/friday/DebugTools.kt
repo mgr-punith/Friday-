@@ -6,12 +6,14 @@ import android.content.Intent
 import android.os.Bundle
 import android.service.voice.VoiceInteractionService
 import android.view.WindowManager
-import android.widget.LinearLayout
 import com.puneet.friday.debug.wake.WakeTrialActivity
 import com.puneet.friday.debug.wake.WakeTrialService
 import com.puneet.friday.debug.wake.WakeAssistantBridge
 import com.puneet.friday.debug.wake.WakeUsageActivity
-import com.puneet.friday.ui.AppUi
+import com.puneet.friday.ui.SettingsGroup
+import com.puneet.friday.ui.SettingsRow
+import com.puneet.friday.debug.wake.WakeUsagePolicy
+import com.puneet.friday.debug.wake.WakeUsageStore
 import com.puneet.friday.actions.DeviceLock
 
 internal object DebugTools {
@@ -43,19 +45,19 @@ internal object DebugTools {
     fun onKeyguardLaunch(service: VoiceInteractionService) {
         try { service.showSession(Bundle.EMPTY, 0) } catch (_: RuntimeException) { Unit }
     }
-    fun addStartOptions(activity: Activity, content: LinearLayout) {
-        content.addView(AppUi.navigationButton(activity, "Start Friday", "") {
+    fun addStartOptions(activity: Activity, content: SettingsGroup): SettingsRow =
+        SettingsRow(activity, "Start Friday", icon = R.drawable.ic_microphone_01) {
             activity.startActivity(Intent(activity, WakeUsageActivity::class.java))
-        }.apply {
-            text = "Start Friday"
-            contentDescription = "Start Friday"
-            minHeight = AppUi.dp(activity, 56)
-        }, AppUi.params(activity, 16))
-    }
-    fun addSettings(activity: Activity, content: LinearLayout) {
-        content.addView(AppUi.navigationButton(activity, "Wake detector test", "Hey Friday · Command trial") {
+        }.also { content.addRow(it) }
+    fun startMode(activity: Activity) = if (WakeUsageStore.mode(activity) == WakeUsagePolicy.Mode.HEY_FRIDAY) "Hey Friday" else "Tap to speak"
+    fun licenseAssets() = listOf("Hey Friday wake detector" to "wake-trial-licenses.txt")
+    fun addSettings(activity: Activity, content: SettingsGroup) {
+        content.addRow(SettingsRow(activity, "Try a phone action", icon = R.drawable.ic_phone_action) {
+            activity.startActivity(Intent(activity, ActionDebugActivity::class.java))
+        })
+        content.addRow(SettingsRow(activity, "Wake detector test", icon = R.drawable.ic_waveform) {
             activity.startActivity(Intent(activity, WakeTrialActivity::class.java))
-        }, AppUi.params(activity, 16))
+        })
     }
 
     fun onAssistantVisible(activity: Activity) =
@@ -72,11 +74,11 @@ internal object DebugTools {
     fun prepareAssistantIntent(args: Bundle?, intent: Intent): Intent? = WakeAssistantBridge.prepare(args, intent)
     fun allowAutoListen(activity: Activity, intent: Intent): Boolean = WakeAssistantBridge.allowEntry(activity, intent)
     fun isWakeEntry(intent: Intent): Boolean = WakeAssistantBridge.hasPendingEntry(intent)
+    fun playWakeCue() = WakeTrialService.playWakeCue()
     fun beginCommandCapture() = WakeTrialService.beginCommandCapture()
     fun endCommandCapture() = WakeTrialService.endCommandCapture()
     fun beginSpeechPlayback(speaker: Any) = WakeTrialService.beginSpeechPlayback(speaker)
     fun endSpeechPlayback(speaker: Any) = WakeTrialService.endSpeechPlayback(speaker)
-    fun listeningSummary() = ""
     fun permissionSummary() = "Friday records commands after a tap or a wake in the opt-in Hey Friday test. Wake detection stays on this phone."
     fun microphoneDisclosure() = "Friday sends short command recordings to its Vercel backend and Groq to transcribe the command and choose a phone action. Friday does not store audio or transcripts. In the opt-in Hey Friday test, wake detection runs on this phone without saving or uploading ambient audio. Pause turns wake listening off."
 }

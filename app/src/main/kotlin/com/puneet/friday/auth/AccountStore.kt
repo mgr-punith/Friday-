@@ -61,6 +61,10 @@ class AccountStore(context: Context) {
         Unit
     }
 
+    fun clearDeletedSession(sessionId: String) = synchronized(lock) {
+        if (read("session")?.optString("sessionId") == sessionId) clear()
+    }
+
     fun pendingLogin(): JSONObject? = synchronized(lock) { read("pending_login") }
     fun savePendingLogin(value: JSONObject, expectedRevision: Long) = synchronized(lock) {
         revision() == expectedRevision && write("pending_login", value)

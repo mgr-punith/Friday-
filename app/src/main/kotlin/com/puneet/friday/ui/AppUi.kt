@@ -6,13 +6,11 @@ import android.content.res.ColorStateList
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
-import android.text.Spannable
-import android.text.SpannableStringBuilder
-import android.text.style.ForegroundColorSpan
-import android.text.style.RelativeSizeSpan
-import android.text.style.StyleSpan
+import android.os.Build
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
+import android.view.WindowInsets
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -25,43 +23,89 @@ import kotlin.math.min
 
 /** Shared, restrained framework controls for Friday's utility screens. */
 object AppUi {
-    enum class ButtonTone { PRIMARY, SECONDARY, QUIET }
+    enum class ButtonTone { PRIMARY, SECONDARY, QUIET, DESTRUCTIVE }
 
-    fun screen(activity: Activity, title: String, subtitle: String, onBack: () -> Unit = { activity.finish() }): LinearLayout {
-        val (scroll, content) = scrollContent(activity, title, subtitle, back = true, onBack = onBack)
-        activity.setContentView(scroll)
-        return content
-    }
-
-    fun scrollContent(
+    /** Utility-page header stays visible while grouped settings scroll beneath it. */
+    fun groupedContent(
         activity: Activity,
         title: String,
-        subtitle: String,
-        back: Boolean = false,
         onBack: () -> Unit = { activity.finish() },
-    ): Pair<ScrollView, LinearLayout> {
+        trailing: View? = null,
+    ): Pair<LinearLayout, LinearLayout> {
         val content = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(activity, 16), dp(activity, 12), dp(activity, 16), dp(activity, 16))
-        }
-        if (back) content.addView(backButton(activity, onBack),
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                bottomMargin = dp(activity, 8)
-            })
-        content.addView(text(activity, title, 19f, bold = true), params(activity, if (subtitle.isBlank()) 16 else 4))
-        if (subtitle.isNotBlank()) content.addView(text(activity, subtitle, 12f, secondary = true), params(activity, 16))
-        val holder = FrameLayout(activity).apply {
-            addView(content, FrameLayout.LayoutParams(
-                min(activity.resources.displayMetrics.widthPixels, dp(activity, 560)), ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL })
+            setPadding(dp(activity, 16), 0, dp(activity, 16), dp(activity, 24))
         }
         val scroll = ScrollView(activity).apply {
             isFillViewport = true
             overScrollMode = ScrollView.OVER_SCROLL_NEVER
-            setBackgroundColor(activity.getColor(R.color.screen_background))
-            addView(holder, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            isVerticalScrollBarEnabled = false
+            addView(content, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
-        return scroll to content
+        val column = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(pageHeader(activity, title, onBack, trailing), params(activity, 0))
+            addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        }
+        val root = LinearLayout(activity).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            setBackgroundColor(activity.getColor(R.color.screen_background))
+            addView(column, LinearLayout.LayoutParams(
+                min(activity.resources.displayMetrics.widthPixels, dp(activity, 560)), ViewGroup.LayoutParams.MATCH_PARENT,
+            ))
+        }
+        return root to content
+    }
+
+    fun pageHeader(
+        activity: Activity,
+        title: String,
+        onBack: (() -> Unit)? = null,
+        trailing: View? = null,
+    ): View = FrameLayout(activity).apply {
+        setPadding(dp(activity, 16), dp(activity, 12), dp(activity, 16), dp(activity, 16))
+        addView(text(activity, title, 17f, bold = true).apply {
+            gravity = Gravity.CENTER
+            if (Build.VERSION.SDK_INT >= 28) isAccessibilityHeading = true
+        }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 48)).apply {
+            marginStart = dp(activity, 56)
+            marginEnd = dp(activity, 56)
+        })
+        if (onBack != null) addView(roundIconButton(activity, R.drawable.ic_arrow_back, "Back", onBack),
+            FrameLayout.LayoutParams(dp(activity, 48), dp(activity, 48)).apply { gravity = Gravity.START })
+        if (trailing != null) addView(trailing,
+            FrameLayout.LayoutParams(dp(activity, 48), dp(activity, 48)).apply { gravity = Gravity.END })
+    }
+
+    fun roundIconButton(context: Context, icon: Int, label: String, onClick: () -> Unit): ImageButton =
+        iconButton(context, icon, label, onClick).apply {
+            imageTintList = ColorStateList.valueOf(context.getColor(R.color.text_primary))
+            background = RippleDrawable(
+                ColorStateList.valueOf(context.getColor(R.color.control_pressed)),
+                surface(context, 24, R.color.navigation_surface, R.color.settings_divider), null,
+            )
+        }
+
+    fun screen(activity: Activity, title: String, subtitle: String = "", onBack: () -> Unit = { activity.finish() }): LinearLayout {
+        val (page, content) = groupedContent(activity, title, onBack)
+        if (subtitle.isNotBlank()) content.addView(text(activity, subtitle, 13f, secondary = true), params(activity, 16))
+        applyPageInsets(page)
+        activity.setContentView(page)
+        return content
+    }
+
+    fun applyPageInsets(page: View) {
+        page.setOnApplyWindowInsetsListener { view, insets ->
+            if (Build.VERSION.SDK_INT >= 30) {
+                val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+                view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            } else {
+                @Suppress("DEPRECATION")
+                view.setPadding(insets.systemWindowInsetLeft, insets.systemWindowInsetTop,
+                    insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
+            }
+            insets
+        }
     }
 
     fun text(
@@ -86,6 +130,7 @@ object AppUi {
         context: Context,
         label: String,
         tone: ButtonTone = ButtonTone.SECONDARY,
+        radius: Int = 12,
         onClick: () -> Unit,
     ): Button = Button(context).apply {
         text = label
@@ -96,32 +141,10 @@ object AppUi {
         minHeight = dp(context, 48)
         minWidth = dp(context, 88)
         setPadding(dp(context, 12), dp(context, 8), dp(context, 12), dp(context, 8))
-        setTextColor(context.getColor(if (tone == ButtonTone.PRIMARY) R.color.control_primary_text else R.color.text_primary))
-        background = controlBackground(context, tone, 12)
+        val filled = tone == ButtonTone.PRIMARY || tone == ButtonTone.DESTRUCTIVE
+        setTextColor(context.getColor(if (filled) R.color.control_primary_text else R.color.text_primary))
+        background = controlBackground(context, tone, radius)
         setOnClickListener { onClick() }
-    }
-
-    fun backButton(context: Context, onClick: () -> Unit): Button =
-        button(context, context.getString(R.string.back), ButtonTone.QUIET, onClick).apply {
-            gravity = Gravity.START or Gravity.CENTER_VERTICAL
-            setPadding(dp(context, 8), dp(context, 10), dp(context, 12), dp(context, 10))
-            setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_chevron_left, 0, 0, 0)
-            compoundDrawablePadding = dp(context, 4)
-        }
-
-    fun navigationButton(
-        context: Context,
-        title: String,
-        detail: String,
-        onClick: () -> Unit,
-    ): Button = button(context, "", ButtonTone.SECONDARY, onClick).apply {
-        typeface = geist(context, bold = false)
-        gravity = Gravity.START or Gravity.CENTER_VERTICAL
-        minHeight = dp(context, 60)
-        setPadding(dp(context, 12), dp(context, 8), dp(context, 12), dp(context, 8))
-        compoundDrawablePadding = dp(context, 12)
-        setCompoundDrawablesRelativeWithIntrinsicBounds(0, 0, R.drawable.ic_chevron_right, 0)
-        setNavigationText(this, title, detail)
     }
 
     fun iconButton(context: Context, icon: Int, label: String, onClick: () -> Unit): ImageButton =
@@ -136,24 +159,6 @@ object AppUi {
             setOnClickListener { onClick() }
         }
 
-    fun setNavigationText(button: Button, title: String, detail: String) {
-        val value = SpannableStringBuilder(title).apply {
-            setSpan(StyleSpan(Typeface.BOLD), 0, title.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-            append('\n')
-            val start = length
-            append(detail)
-            setSpan(RelativeSizeSpan(0.86f), start, length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-            setSpan(
-                ForegroundColorSpan(button.context.getColor(R.color.text_secondary)),
-                start,
-                length,
-                Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
-            )
-        }
-        button.text = value
-        button.contentDescription = "$title. $detail"
-    }
-
     fun styleField(field: EditText) {
         field.apply {
             typeface = geist(context, bold = false)
@@ -167,8 +172,8 @@ object AppUi {
     }
 
     fun notice(context: Context, value: String): TextView = text(context, value, 12f).apply {
-        setPadding(dp(context, 12), dp(context, 8), dp(context, 12), dp(context, 8))
-        background = surface(context, 12, R.color.surface_muted, R.color.border)
+        setPadding(dp(context, 14), dp(context, 12), dp(context, 14), dp(context, 12))
+        background = surface(context, 20, R.color.settings_surface, R.color.settings_divider)
     }
 
     fun surface(
@@ -186,13 +191,15 @@ object AppUi {
     private fun controlBackground(context: Context, tone: ButtonTone, radius: Int): RippleDrawable {
         val fill = when (tone) {
             ButtonTone.PRIMARY -> R.color.control_primary
-            ButtonTone.SECONDARY -> R.color.surface
+            ButtonTone.SECONDARY -> R.color.settings_surface
             ButtonTone.QUIET -> android.R.color.transparent
+            ButtonTone.DESTRUCTIVE -> R.color.error
         }
         val stroke = when (tone) {
             ButtonTone.PRIMARY -> R.color.control_primary
-            ButtonTone.SECONDARY -> R.color.border
+            ButtonTone.SECONDARY -> R.color.settings_divider
             ButtonTone.QUIET -> null
+            ButtonTone.DESTRUCTIVE -> R.color.error
         }
         return RippleDrawable(
             ColorStateList.valueOf(context.getColor(R.color.control_pressed)),

@@ -46,6 +46,7 @@ export class AccountApi implements AccountGateway {
         case "/v1/auth/browser": return await this.finish(body, true);
         case "/v1/auth/refresh": return await this.refresh(body);
         case "/v1/auth/logout": return await this.logout(body);
+        case "/v1/auth/delete": return await this.deleteAccount(body);
         default: return json(404, { error: "not_found" });
       }
     } catch {
@@ -108,16 +109,17 @@ export class AccountApi implements AccountGateway {
     const identity = await this.options.verifier.verify(idToken, login.nonce, this.options.clock.now());
     if (!identity) return json(401, { error: "unauthorized" });
     if (!browser && !await this.options.store.compareAndSet(key, raw, null, 1)) return json(401, { error: "unauthorized" });
-    return this.newSession(identity, login.installId);
+    return this.newSession(identity, login);
   }
 
-  private async newSession(identity: GoogleIdentity, installId: string): Promise<FunctionUrlResponse> {
+  private async newSession(identity: GoogleIdentity, login: Login): Promise<FunctionUrlResponse> {
     const { jwtSigningKey } = await this.options.secrets.getSecrets();
     const now = this.options.clock.now();
     const sessionId = opaque();
     const refreshToken = opaque();
-    const session: Session = { accountId: hash("google-subject\0" + identity.subject, jwtSigningKey), installId, refreshHash: hash(refreshToken, jwtSigningKey), expiresAt: now.getTime() + SESSION_SECONDS * 1000, email: identity.email, name: identity.name };
-    await this.options.store.put("session:" + sessionId, JSON.stringify(session), SESSION_SECONDS);
+    const session: Session = { accountId: hash("google-subject\0" + identity.subject, jwtSigningKey), installId: login.installId, refreshHash: hash(refreshToken, jwtSigningKey), expiresAt: now.getTime() + SESSION_SECONDS * 1000, email: identity.email, name: identity.name };
+    const created = await this.options.store.createSession("session:" + sessionId, session.accountId, JSON.stringify(session), SESSION_SECONDS, login.expiresAt - LOGIN_SECONDS * 1000);
+    if (!created) return json(401, { error: "unauthorized" });
     return this.sessionResponse(sessionId, refreshToken, session, jwtSigningKey, now);
   }
 
@@ -143,8 +145,21 @@ export class AccountApi implements AccountGateway {
     return { statusCode: 204, headers: headers(), isBase64Encoded: false };
   }
 
+  private async deleteAccount(body: Record<string, unknown>): Promise<FunctionUrlResponse> {
+    if (!validSessionCredentials(body)) return json(400, { error: "bad_request" });
+    const key = "session:" + body.sessionId;
+    const { jwtSigningKey } = await this.options.secrets.getSecrets();
+    const receipt = hash("friday-delete\0" + body.installId + "\0" + body.sessionId + "\0" + body.refreshToken, jwtSigningKey);
+    const found = await this.findSession(body);
+    const deleted = found
+      ? await this.options.store.deleteAccount(key, found.session.accountId, found.raw, receipt, this.options.clock.now().getTime())
+      : await this.options.store.deletionReceipt(key) === receipt;
+    if (!deleted) return json(401, { error: "unauthorized" });
+    return json(200, { deleted: true });
+  }
+
   private async findSession(body: Record<string, unknown>): Promise<{ raw: string; session: Session; key: string } | null> {
-    if (!only(body, ["installId", "sessionId", "refreshToken"]) || !isInstallId(body.installId) || !isOpaque(body.sessionId) || !isOpaque(body.refreshToken)) return null;
+    if (!validSessionCredentials(body)) return null;
     const key = "session:" + body.sessionId;
     const raw = await this.options.store.get(key);
     if (!raw) return null;
@@ -188,6 +203,9 @@ function parseBody(event: FunctionUrlEvent): Record<string, unknown> | null {
   } catch { return null; }
 }
 function only(body: Record<string, unknown>, keys: string[]): boolean { return Object.keys(body).length === keys.length && keys.every(key => Object.hasOwn(body, key)); }
+function validSessionCredentials(body: Record<string, unknown>): body is Record<string, unknown> & { installId: string; sessionId: string; refreshToken: string } {
+  return only(body, ["installId", "sessionId", "refreshToken"]) && isInstallId(body.installId) && isOpaque(body.sessionId) && isOpaque(body.refreshToken);
+}
 function logoutToken(installId: string, sessionId: string, key: string): string { return hash("friday-logout\0" + installId + "\0" + sessionId, key); }
 function headers(): Record<string, string> { return { "cache-control": "no-store", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" }; }
 function json(statusCode: number, body: unknown): FunctionUrlResponse { return { statusCode, headers: { ...headers(), "content-type": "application/json; charset=utf-8" }, body: JSON.stringify(body), isBase64Encoded: false }; }

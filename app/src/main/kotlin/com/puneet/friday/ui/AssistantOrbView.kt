@@ -44,13 +44,9 @@ class AssistantOrbView @JvmOverloads constructor(
     private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val gradientMatrix = Matrix()
     private var baseShader: Shader? = null
-    private var cyanShader: Shader? = null
     private var blueShader: Shader? = null
     private var lilacShader: Shader? = null
-    private var violetShader: Shader? = null
     private var pearlShader: Shader? = null
-    private var sheenShader: Shader? = null
-    private var depthShader: Shader? = null
     private val runtimeRenderer = createRuntimeRenderer()
 
     private var state = State.IDLE
@@ -72,11 +68,17 @@ class AssistantOrbView @JvmOverloads constructor(
     private var orbRadius = 0f
 
     init {
-        isClickable = false
-        isFocusable = false
-        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+        isFocusable = true
+        isSoundEffectsEnabled = false
         minimumWidth = dp(96)
         minimumHeight = dp(96)
+    }
+
+    override fun getAccessibilityClassName(): CharSequence = android.widget.Button::class.java.name
+
+    override fun drawableStateChanged() {
+        super.drawableStateChanged()
+        invalidate()
     }
 
     fun setState(nextState: State) {
@@ -103,34 +105,20 @@ class AssistantOrbView @JvmOverloads constructor(
 
     /** Raw RMS drives motion; the spectrum changes the internal flow without resizing the sphere. */
     fun setAudioSignal(rms: Float, low: Float, mid: Float, high: Float) {
-        if (!acceptsAudio()) return
-        val safeRms = normalizedRms(rms)
-        if (state == State.LISTENING && calibrationFramesRemaining > 0) {
+        if (!acceptsAudio() || !ValueAnimator.areAnimatorsEnabled()) return
+        val safeRms = normalized(rms)
+        if (safeRms < OrbMotionMath.noiseThreshold(visualNoiseFloor)) {
             visualNoiseFloor = OrbMotionMath.adaptNoiseFloor(
-                visualNoiseFloor,
-                safeRms,
-                VISUAL_CALIBRATION_RATE,
-            )
-            calibrationFramesRemaining--
-            targetVoiceEnergy = 0f
-            targetLow = 0f
-            targetMid = 0f
-            targetHigh = 0f
-            return
-        }
-        val threshold = OrbMotionMath.noiseThreshold(visualNoiseFloor)
-        if (safeRms < threshold) {
-            visualNoiseFloor = OrbMotionMath.adaptNoiseFloor(
-                visualNoiseFloor,
-                safeRms,
-                VISUAL_NOISE_ADAPT_RATE,
+                visualNoiseFloor, safeRms,
+                if (calibrationFramesRemaining > 0) VISUAL_CALIBRATION_RATE else VISUAL_NOISE_ADAPT_RATE,
             )
         }
+        if (calibrationFramesRemaining > 0) calibrationFramesRemaining--
         targetVoiceEnergy = OrbMotionMath.voiceEnergy(safeRms, visualNoiseFloor)
         targetLow = normalized(low) * targetVoiceEnergy
         targetMid = normalized(mid) * targetVoiceEnergy
         targetHigh = normalized(high) * targetVoiceEnergy
-        invalidate()
+        if (targetVoiceEnergy > MOTION_EPSILON || lastFrameNanos != 0L) invalidate()
     }
 
     override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
@@ -169,6 +157,15 @@ class AssistantOrbView @JvmOverloads constructor(
             )
         } else {
             drawAurora(canvas)
+        }
+
+        if (isPressed || isFocused) {
+            spherePaint.style = if (isPressed) Paint.Style.FILL else Paint.Style.STROKE
+            spherePaint.strokeWidth = dp(2).toFloat()
+            spherePaint.color = if (isPressed) 0x26FFFFFF else context.getColor(R.color.focus_ring)
+            canvas.drawCircle(centerX, centerY, if (isPressed) orbRadius else orbRadius + dp(4), spherePaint)
+            spherePaint.style = Paint.Style.FILL
+            spherePaint.color = Color.WHITE
         }
 
         if (needsNextFrame) {
@@ -250,53 +247,18 @@ class AssistantOrbView @JvmOverloads constructor(
 
     private fun drawAurora(canvas: Canvas) {
         val time = animationSeconds
-        val drift = activity * 0.58f
-        drawField(canvas, baseShader, 0f, 0f, 1f, 1f, wave(time * 0.42) * (4f + activity * 14f))
-        drawField(
-            canvas, cyanShader,
-            -0.48f + wave(time * 1.31) * drift,
-            -0.35f + wave(time * 0.91 + 1.1) * drift,
-            1.38f + low * 0.22f, 1.02f + wave(time * 1.07) * activity * 0.16f,
-            -24f + wave(time * 0.83) * (12f + activity * 34f),
-        )
-        drawField(
-            canvas, blueShader,
-            -0.38f + wave(time * 1.03 + 2.3) * drift,
-            0.48f + wave(time * 1.27) * drift,
-            1.28f + mid * 0.12f, 0.94f + low * 0.2f,
-            28f + wave(time * 0.71) * (14f + activity * 38f),
-        )
-        drawField(
-            canvas, lilacShader,
-            0.52f + wave(time * 1.17 + 1.6) * drift,
-            -0.25f + wave(time * 0.89 + 3.4) * drift,
-            1.18f + wave(time * 1.43) * activity * 0.18f, 1.06f + low * 0.14f,
-            -38f + wave(time * 0.67) * (16f + activity * 42f),
-        )
-        drawField(
-            canvas, violetShader,
-            0.36f + wave(time * 0.97 + 4.1) * drift,
-            0.62f + wave(time * 1.21 + 0.7) * drift,
-            1.06f + high * 0.1f, 0.88f + wave(time * 1.13) * activity * 0.18f,
-            15f + wave(time * 0.79) * (18f + activity * 44f),
-        )
-        drawField(
-            canvas, pearlShader,
-            -0.24f + wave(time * 0.93 + 0.4) * drift * 0.55f,
-            -0.42f + wave(time * 1.19 + 1.2) * drift * 0.48f,
-            1.1f + activity * 0.18f, 0.72f + mid * 0.08f,
-            -32f + wave(time * 0.73) * (10f + activity * 26f),
-        )
-        drawField(
-            canvas, sheenShader,
-            wave(time * 1.11) * drift * 0.6f,
-            -0.06f + wave(time * 1.37) * drift * 0.5f,
-            1.2f, 1f,
-            -34f + wave(time * 0.95) * (8f + activity * 30f + high * 10f),
-        )
-        // Broad shading gives depth without a rim, outline, or ring.
-        spherePaint.shader = depthShader
-        canvas.drawCircle(centerX, centerY, orbRadius, spherePaint)
+        val drift = activity * 0.45f
+        drawField(canvas, baseShader, 0f, 0f, 1f, 1f, 0f)
+        drawField(canvas, blueShader,
+            -0.47f, -0.60f + wave(time * 0.64) * drift, 1.4f, 1f, -12f)
+        drawField(canvas, lilacShader,
+            0.28f + wave(time * 0.84 + 1.2) * drift, 0.52f, 1.40f, 0.90f, -12f)
+        drawField(canvas, pearlShader,
+            -0.52f + wave(time * 1.1) * drift, 0.20f + wave(time * 0.9) * drift,
+            1.04f, 0.56f + low * 0.24f, -18f)
+        drawField(canvas, pearlShader,
+            0.64f + wave(time * 0.8) * drift, -0.04f + wave(time * 1.2 + 1.4) * drift,
+            1.18f, 0.57f + mid * 0.22f, -28f + high * 13f)
         spherePaint.shader = null
     }
 
@@ -321,7 +283,6 @@ class AssistantOrbView @JvmOverloads constructor(
     private fun createCachedGradients() {
         val glow = context.getColor(R.color.orb_glow)
         val pearl = context.getColor(R.color.orb_pearl)
-        val shadow = context.getColor(R.color.orb_shadow)
         glowPaint.shader = RadialGradient(
             centerX, centerY, orbRadius * GLOW_RADIUS_RATIO,
             intArrayOf(withAlpha(glow, 28), withAlpha(glow, 16), withAlpha(glow, 5), withAlpha(glow, 0)),
@@ -330,27 +291,15 @@ class AssistantOrbView @JvmOverloads constructor(
         baseShader = LinearGradient(
             -0.65f, -1f, 0.55f, 1f,
             intArrayOf(
-                context.getColor(R.color.orb_base_light),
-                context.getColor(R.color.orb_base),
                 context.getColor(R.color.orb_base_deep),
+                context.getColor(R.color.orb_blue),
+                context.getColor(R.color.orb_base_light),
             ),
-            floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP,
+            floatArrayOf(0f, 0.52f, 1f), Shader.TileMode.CLAMP,
         )
-        cyanShader = softField(context.getColor(R.color.orb_cyan), 224)
-        blueShader = softField(context.getColor(R.color.orb_blue), 200)
-        lilacShader = softField(context.getColor(R.color.orb_lilac), 228)
-        violetShader = softField(context.getColor(R.color.orb_violet), 194)
-        pearlShader = softField(pearl, 168)
-        sheenShader = LinearGradient(
-            0f, -1f, 0f, 1f,
-            intArrayOf(withAlpha(pearl, 0), withAlpha(pearl, 0), withAlpha(pearl, 58), withAlpha(pearl, 0), withAlpha(pearl, 0)),
-            floatArrayOf(0f, 0.18f, 0.48f, 0.8f, 1f), Shader.TileMode.CLAMP,
-        )
-        depthShader = RadialGradient(
-            centerX - orbRadius * 0.25f, centerY - orbRadius * 0.32f, orbRadius * 1.43f,
-            intArrayOf(withAlpha(shadow, 0), withAlpha(shadow, 0), withAlpha(shadow, 40), withAlpha(shadow, 148)),
-            floatArrayOf(0f, 0.38f, 0.72f, 1f), Shader.TileMode.CLAMP,
-        )
+        blueShader = softField(context.getColor(R.color.orb_blue), 185)
+        lilacShader = softField(context.getColor(R.color.orb_lilac), 160)
+        pearlShader = softField(pearl, 222)
     }
 
     private fun softField(color: Int, alpha: Int): Shader = RadialGradient(
@@ -410,8 +359,6 @@ class AssistantOrbView @JvmOverloads constructor(
 
     private fun normalized(value: Float): Float = if (value.isFinite()) value.coerceIn(0f, 1f) else 0f
 
-    private fun normalizedRms(value: Float): Float = if (value.isFinite()) value.coerceIn(0f, 1f) else 0f
-
     private fun easeAudio(current: Float, target: Float, delta: Float): Float {
         val rate = if (target > current) AUDIO_ATTACK_PER_SECOND else AUDIO_RELEASE_PER_SECOND
         return current + (target - current) * (delta * rate).coerceAtMost(1f)
@@ -440,7 +387,7 @@ class AssistantOrbView @JvmOverloads constructor(
         const val VISUAL_CALIBRATION_RATE = 0.25f
         const val VISUAL_NOISE_ADAPT_RATE = 0.035f
         const val PREVIEW_SPEED = 1.25f
-        const val VOICE_BASE_SPEED = 2.1f
+        const val VOICE_BASE_SPEED = 3.2f
         const val VOICE_EXTRA_SPEED = 3.2f
         const val MID_SPEED = 0.9f
 
@@ -480,48 +427,29 @@ class AssistantOrbView @JvmOverloads constructor(
 
             half4 main(float2 position) {
                 float2 p = (position - center) / radius;
-                float depth = sqrt(max(0.0, 1.0 - dot(p, p)));
-                float2 surface = p / (1.0 + depth * 0.38);
-                float drift = sin(time * 0.73) * activity * 0.12;
-                float2 noiseFlow = float2(
-                    time * (0.10 + activity * 0.42),
-                    -time * (0.07 + activity * 0.31)
-                );
-                float broadNoise = noise(surface * (2.35 + activity * 0.85) + noiseFlow) - 0.5;
-                float bend = sin(surface.x * (3.4 + bass * 1.4) + time * (0.42 + activity * 1.12))
-                        * (0.10 + activity * 0.20)
-                    + sin(surface.x * 1.8 - time * (0.31 + activity * 0.84) + 1.3)
-                        * (0.06 + mid * 0.14)
-                    + broadNoise * (0.11 + activity * 0.19);
-                float flowY = surface.y - surface.x * 0.24 - bend - drift;
-                float width = 0.20 + activity * 0.10 + bass * 0.055;
-                float band = exp(-flowY * flowY / (width * width));
-                float secondY = surface.y - surface.x * 0.34
-                    + sin(surface.y * 3.0 - time * (0.38 + activity * 0.96) + 2.2)
-                        * (0.07 + activity * 0.14)
-                    + broadNoise * (0.08 + mid * 0.12);
-                float secondBand = exp(-secondY * secondY / (0.20 + activity * 0.07));
-                float colorPosition = clamp(
-                    0.5 + surface.x * 0.62 + sin(time * (0.24 + activity * 0.54)) * 0.1
-                        + broadNoise * (0.08 + activity * 0.10),
-                    0.0, 1.0
-                );
-                half3 flowColor = mix(blue.rgb, cyan.rgb, smoothstep(0.02, 0.45, colorPosition));
-                flowColor = mix(flowColor, lilac.rgb, smoothstep(0.42, 0.96, colorPosition));
-                half3 body = mix(deep.rgb, blue.rgb, 0.30 + depth * 0.16);
-                body = mix(body, lilac.rgb, 0.16 * smoothstep(-0.5, 0.9, surface.x));
-                half3 color = mix(body, flowColor, 0.93 * band);
-                color = mix(color, lilac.rgb, secondBand * activity * 0.28);
-                float silkY = (flowY + 0.065) / (0.105 + treble * 0.035);
-                float silk = exp(-silkY * silkY);
-                color = mix(color, pearl.rgb, silk * (0.10 + activity * 0.11 + treble * 0.06));
-                float2 lightPosition = p - float2(-0.30, -0.40);
-                float light = exp(-dot(lightPosition, lightPosition) * 4.5);
-                color = mix(color, pearl.rgb, light * 0.20);
-                float shade = smoothstep(0.32, 1.2, length(p - float2(-0.16, -0.23)));
-                color = mix(color, shadow.rgb, shade * 0.48);
-                float lightFacing = max(0.0, dot(float3(p, depth), normalize(float3(-0.45, -0.55, 0.85))));
-                color *= half(0.72 + lightFacing * 0.36);
+                float t = time * 0.55;
+                float2 field = p + float2(t * 0.42, -t * 0.14);
+                float billow = noise(field * 2.35 + float2(1.2, 6.7)) - 0.5;
+                float wisps = noise(field * 5.2 + float2(-t * 0.6, 2.3)) - 0.5;
+
+                // Softer, broader clouds on quiet syllables and more lift on stressed ones.
+                float bank = p.y + p.x * 0.20 + 0.13
+                    + billow * (0.55 + mid * 0.34)
+                    + wisps * (0.15 + treble * 0.14) + activity * 0.23
+                    + sin(p.x * 2.7 + t) * (0.09 + bass * 0.18);
+                float skyHeight = smoothstep(-1.0, 0.42, p.y);
+                half3 sky = mix(mix(deep.rgb, blue.rgb, 0.67), blue.rgb, skyHeight);
+                sky = mix(sky, cyan.rgb, 0.25 * smoothstep(-0.4, 0.58, billow - p.x * 0.35));
+
+                float cloud = smoothstep(-0.29, 0.34, bank);
+                float shade = smoothstep(0.12, 1.1, p.y + billow * 0.23);
+                half3 air = mix(blue.rgb, lilac.rgb, 0.64);
+                half3 cloudColor = mix(pearl.rgb, air, shade * 0.68);
+                half3 color = mix(sky, cloudColor, cloud * 0.96);
+                float veil = smoothstep(-0.16, 0.03, bank + wisps * 0.26)
+                    * (1.0 - smoothstep(0.11, 0.48, bank));
+                color = mix(color, pearl.rgb, veil * (0.17 + activity * 0.16));
+                color = mix(color, shadow.rgb, 0.10 * smoothstep(0.65, 1.0, length(p)));
                 return half4(color, 1.0);
             }
         """

@@ -9,6 +9,7 @@ import com.puneet.friday.ui.ActionPresentation
 import com.puneet.friday.ui.TabNavigation
 import com.puneet.friday.ui.Destination
 import com.puneet.friday.ui.CompletionPolicy
+import com.puneet.friday.ui.PopupPlacementTests
 import com.puneet.friday.auth.AuthPolicy
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -88,6 +89,23 @@ object VoiceLogicTests {
             "Pausing an unfinished command, error or permission panel cannot mark it complete")
         expect(!CompletionPolicy.closeWhenLeaving(false, false),
             "Leaving the idle full-screen app does not finish its task")
+        val launcherResult = CompletionPolicy.onPause(false, true, false, false)
+        expect(launcherResult.keepConfirmation && !launcherResult.closeScreen && !launcherResult.resetUi,
+            "Clock handoff from launcher Home keeps confirmation and result without closing Home")
+        val panelResult = CompletionPolicy.onPause(true, true, false, false)
+        expect(panelResult.keepConfirmation && panelResult.closeScreen && !panelResult.resetUi,
+            "Clock handoff from the compact assistant closes only its screen and keeps speech")
+        for (compact in listOf(false, true)) {
+            val unfinished = CompletionPolicy.onPause(compact, false, false, false)
+            expect(!unfinished.keepConfirmation && !unfinished.closeScreen && unfinished.resetUi,
+                "Leaving unfinished voice work cancels it from either entry point")
+            val rotating = CompletionPolicy.onPause(compact, true, false, true)
+            expect(!rotating.keepConfirmation && !rotating.closeScreen && rotating.resetUi,
+                "Rotation cannot detach speech or close the replacement screen")
+        }
+        val finishing = CompletionPolicy.onPause(true, false, true, false)
+        expect(!finishing.keepConfirmation && !finishing.resetUi,
+            "Closing an unfinished compact screen cancels speech without flashing idle")
         expect(CompletionPolicy.spokenConfirmation("Silent mode on") == "Done. Silent mode on",
             "A completed sound change gets one short confirmation")
         for (message in listOf("Calling Mom", "Opening Calculator", "Timer request sent for 2 minutes", "Alarm request sent for 6:30 AM")) {
@@ -205,6 +223,8 @@ object VoiceLogicTests {
         val dcOffset = pcm.normalizeForRecognition(shortArrayOf(10_000, 11_000, 12_000))
         expect(dcOffset[1] == 0.toShort(), "Recognition audio removes DC offset")
         expect(OrbMotionMath.voiceEnergy(0.01f, 0.012f) == 0f, "Room noise keeps the orb frozen")
+        expect(OrbMotionMath.voiceEnergy(0.017f, 0.004f) > 0.08f, "Quiet speech creates visible orb motion")
+        expect(OrbMotionMath.voiceEnergy(0.008f, 0.004f) == 0f, "Background hum leaves the orb still")
         expect(OrbMotionMath.voiceEnergy(0.05f, 0.004f) > 0.25f, "Speech creates visible orb motion")
         expect(
             OrbMotionMath.noiseThreshold(0.014f) > OrbMotionMath.noiseThreshold(0.004f),
@@ -474,6 +494,7 @@ object VoiceLogicTests {
         expectFailure("Backend URL paths are rejected") { BackendEndpoint.normalize("https://friday.example/api") }.also { checks++ }
 
         checks += AssistantSettingsTests.run()
+        checks += PopupPlacementTests.run()
         println("$checks voice logic checks passed")
     }
 

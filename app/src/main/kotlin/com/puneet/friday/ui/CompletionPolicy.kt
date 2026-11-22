@@ -2,6 +2,17 @@ package com.puneet.friday.ui
 
 /** Compact assistant panels yield back to the wake listener after a successful result. */
 object CompletionPolicy {
+    data class PauseBehavior(val closeScreen: Boolean, val resetUi: Boolean, val keepConfirmation: Boolean)
+
+    fun onPause(compact: Boolean, hasResult: Boolean, finishing: Boolean, changingConfigurations: Boolean): PauseBehavior {
+        val keepResult = hasResult && !changingConfigurations
+        return PauseBehavior(
+            closeScreen = closeWhenLeaving(compact, hasResult) && !changingConfigurations,
+            resetUi = !keepResult && !(compact && finishing),
+            keepConfirmation = keepResult,
+        )
+    }
+
     fun closeWhenLeaving(compact: Boolean, hasResult: Boolean): Boolean = compact && hasResult
 
     fun closeDelay(compact: Boolean, hasResult: Boolean, speaking: Boolean, speechAvailable: Boolean, interacted: Boolean): Long? {

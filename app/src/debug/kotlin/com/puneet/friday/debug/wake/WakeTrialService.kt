@@ -11,8 +11,10 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.ToneGenerator
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -33,6 +35,7 @@ class WakeTrialService : Service() {
     private var outcomeForTest: String? = null
     private var usageControlled = false
     private var lastControl = "none"
+    private var wakeCue: ToneGenerator? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -107,14 +110,19 @@ class WakeTrialService : Service() {
             }
             return START_NOT_STICKY
         }
-        if (intent.getBooleanExtra(COMMAND_MODE, false)) {
-            com.puneet.friday.voice.ConfirmationSpeaker.warmUp(this)
-        }
         try {
             val notification = notification()
             if (Build.VERSION.SDK_INT >= 30) startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
             else startForeground(NOTIFICATION_ID, notification)
             if (usageControlled) WakeUsageNotification.hidePaused(this)
+            if (session.snapshot().commandMode) {
+                wakeCue = try {
+                    ToneGenerator(AudioManager.STREAM_NOTIFICATION, 65)
+                } catch (_: RuntimeException) {
+                    null
+                }
+                com.puneet.friday.voice.ConfirmationSpeaker.warmUp(this)
+            }
             Log.i(TAG, "event=start run=$generation cutoff=$threshold commands=${session.snapshot().commandMode}")
             startCaptureIfReady()
         } catch (_: RuntimeException) {
@@ -213,6 +221,12 @@ class WakeTrialService : Service() {
                 forceFallbackForTest = false
                 outcomeForTest = null
                 Log.i(TAG, "event=handoff run=$generation requested=$requested")
+                main.postDelayed({
+                    if (session.expireWake(generation, token)) {
+                        Log.i(TAG, "event=handoff_expired run=$generation")
+                        startCaptureIfReady()
+                    }
+                }, HANDOFF_TIMEOUT_MS)
             }
             state.phase == WakeTrialSession.Phase.PAUSED -> { updateNotification(); resumeAfterCommand() }
             else -> finishRun("Microphone off")
@@ -264,6 +278,8 @@ class WakeTrialService : Service() {
     }
 
     override fun onDestroy() {
+        wakeCue?.release()
+        wakeCue = null
         main.removeCallbacksAndMessages(null)
         val state = session.snapshot()
         val previous = synchronized(captureLock) { if (owner === this) owner = null; capture }
@@ -375,6 +391,7 @@ class WakeTrialService : Service() {
         const val CHANNEL_ID = "friday_wake_trial"
         const val NOTIFICATION_ID = 61
         private const val TAG = "FridayWakeTrial"
+        private const val HANDOFF_TIMEOUT_MS = 8_000L
         val session = WakeTrialSession()
         private val captureLock = Any()
         private var owner: WakeTrialService? = null
@@ -383,6 +400,16 @@ class WakeTrialService : Service() {
 
         private fun elapsed(state: WakeTrialSession.Snapshot): Long =
             if (state.active && state.startedMs > 0) SystemClock.elapsedRealtime() - state.startedMs else state.elapsedMs
+
+        fun playWakeCue() {
+            val service = synchronized(captureLock) { owner } ?: return
+            val played = try {
+                service.wakeCue?.startTone(ToneGenerator.TONE_PROP_BEEP, 40) == true
+            } catch (_: RuntimeException) {
+                false
+            }
+            Log.i(TAG, "event=wake_cue started=$played")
+        }
 
         fun stopForAssistant(message: String = "Microphone off") {
             synchronized(captureLock) { owner }?.let { service -> service.main.post { service.stopTest(message) } }

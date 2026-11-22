@@ -31,6 +31,8 @@ import com.puneet.friday.actions.RingerMode
 import com.puneet.friday.actions.validationError
 import com.puneet.friday.ui.AppUi
 import com.puneet.friday.ui.FridayDialog
+import com.puneet.friday.ui.SettingsGroup
+import com.puneet.friday.ui.SettingsRow
 import java.util.concurrent.Executors
 
 /** Manual controls for real phone actions. Name lookup stays off the UI thread. */
@@ -64,7 +66,7 @@ class ActionDebugActivity : Activity() {
             "Try an action on this phone. Calls ask you to confirm.",
             onBack = ::navigateBack,
         )
-        scroll = content.parent.parent as ScrollView
+        scroll = content.parent as ScrollView
         body = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             isFocusableInTouchMode = true
@@ -122,12 +124,11 @@ class ActionDebugActivity : Activity() {
         selectedTool = null
         actionButtons.clear()
         body.removeAllViews()
+        val actions = SettingsGroup(this)
         Tool.entries.forEach { tool ->
-            body.addView(
-                AppUi.navigationButton(this, tool.title, tool.detail) { showEditor(tool) },
-                AppUi.params(this, 8),
-            )
+            actions.addRow(SettingsRow(this, tool.title) { showEditor(tool) })
         }
+        body.addView(actions, AppUi.params(this, 4))
         body.addView(
             AppUi.button(this, "Manage permissions", AppUi.ButtonTone.QUIET) { openPermissions() },
             AppUi.params(this, 0).apply { topMargin = AppUi.dp(this@ActionDebugActivity, 12) },
@@ -207,7 +208,7 @@ class ActionDebugActivity : Activity() {
                     modes.addView(option, AppUi.params(this, 0))
                     option.isChecked = mode == selectedMode
                 }
-                body.addView(modes, AppUi.params(this, 20))
+                body.addView(SettingsGroup(this).apply { addRow(modes) }, AppUi.params(this, 20))
                 actionButton("Apply mode") { PhoneAction.SetRingerMode(selectedMode) }
             }
         }
@@ -261,7 +262,7 @@ class ActionDebugActivity : Activity() {
     }
 
     private fun actionButton(label: String, create: () -> PhoneAction) {
-        val button = AppUi.button(this, label, AppUi.ButtonTone.PRIMARY) {
+        val button = AppUi.button(this, label, AppUi.ButtonTone.PRIMARY, radius = 24) {
             if (busy || !resumed) return@button
             hideKeyboard()
             val action = create()
@@ -372,13 +373,13 @@ class ActionDebugActivity : Activity() {
         }
     }
 
-    private enum class Tool(val title: String, val detail: String) {
-        CONTACT("Call a contact", "Find a name saved on this phone"),
-        NUMBER("Call a number", "Enter a phone number"),
-        ALARM("Set an alarm", "Choose a time in your clock app"),
-        TIMER("Set a timer", "Choose a duration in seconds"),
-        APP("Open an app", "Find an installed app by name"),
-        HOME("Go to Home", "Return to your launcher"),
-        SOUND("Sound mode", "Silent, vibrate or normal"),
+    private enum class Tool(val title: String) {
+        CONTACT("Call a contact"),
+        NUMBER("Call a number"),
+        ALARM("Set an alarm"),
+        TIMER("Set a timer"),
+        APP("Open an app"),
+        HOME("Go to Home"),
+        SOUND("Sound mode"),
     }
 }

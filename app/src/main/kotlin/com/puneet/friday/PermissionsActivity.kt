@@ -8,67 +8,59 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
-import android.widget.Button
 import com.puneet.friday.ui.AppUi
 import com.puneet.friday.ui.FridayDialog
+import com.puneet.friday.ui.SettingsGroup
+import com.puneet.friday.ui.SettingsRow
 
 /** Explicit disclosures always precede sensitive system permission prompts. */
 class PermissionsActivity : Activity() {
-    private val permissionButtons = linkedMapOf<String, Button>()
-    private lateinit var soundAccessButton: Button
+    private val permissionButtons = linkedMapOf<String, SettingsRow>()
+    private lateinit var soundAccessButton: SettingsRow
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         DebugTools.onAssistantVisible(this)
-        val content = AppUi.screen(
-            this,
-            "Permissions",
-            "Choose which phone actions Friday can use.",
-        )
+        val content = AppUi.screen(this, "Permissions")
         content.addView(
             AppUi.notice(this, DebugTools.permissionSummary()),
             AppUi.params(this, 20),
         )
-        content.addView(AppUi.sectionLabel(this, "ACCESS"), AppUi.params(this, 8))
+        val access = SettingsGroup(this)
 
         val permissions = listOf(
             PermissionInfo(
                 Manifest.permission.RECORD_AUDIO,
                 "Microphone",
-                "Voice input",
+                R.drawable.ic_microphone_01,
                 DebugTools.microphoneDisclosure(),
             ),
             PermissionInfo(
                 Manifest.permission.READ_CONTACTS,
                 "Contacts",
-                "Find a person to call",
+                R.drawable.ic_account,
                 "Friday reads contact names and phone numbers on this phone to match the person you asked to call. Your contact list and contact details stay on this phone. Friday sends the recorded command to its Vercel backend and Groq, and does not store audio or transcripts.",
             ),
             PermissionInfo(
                 Manifest.permission.CALL_PHONE,
                 "Phone calls",
-                "Place a confirmed call",
+                R.drawable.ic_phone,
                 "Friday uses phone access to place a call you request from the visible assistant. You confirm the resolved number before Android starts the call. Friday does not read or upload call history.",
             ),
         )
         permissions.forEach { permissionInfo ->
-            val button = AppUi.navigationButton(this, permissionInfo.label, permissionInfo.detail) {
+            val button = SettingsRow(this, permissionInfo.label, icon = permissionInfo.icon) {
                 showDisclosure(permissionInfo)
             }
             permissionButtons[permissionInfo.permission] = button
-            content.addView(button, AppUi.params(this, 8))
+            access.addRow(button)
         }
-        soundAccessButton = AppUi.navigationButton(
-            this,
-            "Silent mode",
-            "Required by Android to change ringer mode",
-        ) {
-            showSoundAccessDisclosure()
-        }
-        content.addView(soundAccessButton, AppUi.params(this, 8))
+        soundAccessButton = SettingsRow(this, "Silent mode", icon = R.drawable.ic_sound) { showSoundAccessDisclosure() }
+        access.addRow(soundAccessButton)
+        content.addView(access, AppUi.params(this, 16))
 
         content.addView(
-            AppUi.button(this, "Done", AppUi.ButtonTone.PRIMARY) {
+            AppUi.button(this, "Done", AppUi.ButtonTone.PRIMARY, radius = 24) {
                 getSharedPreferences("friday", MODE_PRIVATE).edit().putBoolean("setup_seen", true).apply()
                 setResult(RESULT_OK)
                 finish()
@@ -128,22 +120,9 @@ class PermissionsActivity : Activity() {
     private fun updatePermissionLabels() {
         permissionButtons.forEach { (permission, button) ->
             val allowed = checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
-            val info = when (permission) {
-                Manifest.permission.RECORD_AUDIO -> "Microphone" to "Voice input"
-                Manifest.permission.READ_CONTACTS -> "Contacts" to "Find a person to call"
-                else -> "Phone calls" to "Place a confirmed call"
-            }
-            AppUi.setNavigationText(
-                button,
-                info.first,
-                "${info.second} · ${if (allowed) "Allowed" else "Not allowed"}",
-            )
+            button.setValue(if (allowed) "Allowed" else "Not allowed")
         }
-        AppUi.setNavigationText(
-            soundAccessButton,
-            "Silent mode",
-            "Required by Android to change ringer mode · ${if (hasNotificationPolicyAccess()) "Allowed" else "Not allowed"}",
-        )
+        soundAccessButton.setValue(if (hasNotificationPolicyAccess()) "Allowed" else "Not allowed")
     }
 
     private fun hasNotificationPolicyAccess(): Boolean =
@@ -160,7 +139,7 @@ class PermissionsActivity : Activity() {
     private data class PermissionInfo(
         val permission: String,
         val label: String,
-        val detail: String,
+        val icon: Int,
         val disclosure: String,
     )
 
