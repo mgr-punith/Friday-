@@ -4,7 +4,8 @@ import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
 import android.service.voice.VoiceInteractionService
-import android.widget.LinearLayout
+import com.puneet.friday.ui.SettingsGroup
+import com.puneet.friday.ui.SettingsRow
 
 /** Release has no wake trial, native runtime, microphone service or developer entry point. */
 internal object DebugTools {
@@ -13,8 +14,10 @@ internal object DebugTools {
     fun hideFromLockScreen(activity: Activity) = Unit
     fun recoverAfterResult(activity: Activity, delayMs: Long) = false
     fun onKeyguardLaunch(service: VoiceInteractionService) = Unit
-    fun addStartOptions(activity: Activity, content: LinearLayout) = Unit
-    fun addSettings(activity: Activity, content: LinearLayout) = Unit
+    fun addStartOptions(activity: Activity, content: SettingsGroup): SettingsRow? = null
+    fun startMode(activity: Activity) = "Tap to speak"
+    fun licenseAssets(): List<Pair<String, String>> = emptyList()
+    fun addSettings(activity: Activity, content: SettingsGroup) = Unit
     fun onAssistantVisible(activity: Activity) = Unit
     fun onAssistantHidden(activity: Activity) = Unit
     fun onAssistantInteraction(activity: Activity) = false
@@ -25,11 +28,11 @@ internal object DebugTools {
     fun prepareAssistantIntent(args: Bundle?, intent: Intent): Intent? = intent
     fun allowAutoListen(activity: Activity, intent: Intent) = true
     fun isWakeEntry(intent: Intent) = false
+    fun playWakeCue() = Unit
     fun beginCommandCapture() = Unit
     fun endCommandCapture() = Unit
     fun beginSpeechPlayback(speaker: Any) = Unit
     fun endSpeechPlayback(speaker: Any) = Unit
-    fun listeningSummary() = "Friday listens after you tap. Background listening is off."
     fun permissionSummary() = "Friday records after you tap the microphone. Background listening is off."
     fun microphoneDisclosure() = "Friday records one short command after you tap the microphone. It sends that audio to Friday’s Vercel backend and Groq to transcribe the command and choose a phone action. Friday does not store audio or transcripts. Background listening is off."
 }

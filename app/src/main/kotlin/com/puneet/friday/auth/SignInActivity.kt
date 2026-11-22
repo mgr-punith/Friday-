@@ -67,10 +67,9 @@ class SignInActivity : Activity() {
     private fun createSignInContent() {
         val page = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(12), dp(16), dp(16))
+            setPadding(0, 0, 0, dp(16))
         }
-        page.addView(AppUi.backButton(this) { finish() },
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        page.addView(AppUi.pageHeader(this, "Sign in", onBack = { finish() }), AppUi.params(this, 0))
         page.addView(View(this), LinearLayout.LayoutParams(1, 0, 0.8f))
 
         val signIn = LinearLayout(this).apply {
@@ -83,7 +82,7 @@ class SignInActivity : Activity() {
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
         signIn.addView(mark, LinearLayout.LayoutParams(dp(56), dp(56)).apply { bottomMargin = dp(16) })
-        signIn.addView(AppUi.text(this, "Sign in to Friday", 19f, bold = true).apply {
+        signIn.addView(AppUi.text(this, "Friday", 19f, bold = true).apply {
             gravity = Gravity.CENTER
             if (android.os.Build.VERSION.SDK_INT >= 28) isAccessibilityHeading = true
         }, AppUi.params(this, 24))
@@ -91,12 +90,12 @@ class SignInActivity : Activity() {
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(8), dp(20), dp(16))
-            background = AppUi.surface(this@SignInActivity, 24, R.color.surface_muted, null)
+            background = AppUi.surface(this@SignInActivity, 20, R.color.settings_surface, R.color.settings_divider)
         }
         val accountRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         accountRow.addView(AppUi.text(this, "Google account", 13f, bold = true),
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        val info = AppUi.iconButton(this, R.drawable.ic_info_circle, "About Google sign-in") {
+        val info = AppUi.roundIconButton(this, R.drawable.ic_info_circle, "About Google sign-in") {
             FridayDialog.show(this, "Google sign-in", "Friday uses your Google identity to sign you in and apply account usage limits. Google shares your name and email. Friday doesn't request access to Gmail, Drive or your Google contacts.")
         }
         accountRow.addView(info, LinearLayout.LayoutParams(dp(48), dp(48)))

@@ -6,8 +6,6 @@ import android.app.NotificationManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
-import android.graphics.Color
-import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -19,16 +17,17 @@ import android.view.ViewGroup
 import android.view.WindowInsets
 import android.widget.Button
 import android.widget.LinearLayout
-import android.widget.PopupWindow
 import android.widget.ProgressBar
 import android.widget.RadioButton
-import android.widget.ScrollView
 import android.widget.TextView
 import com.puneet.friday.R
 import com.puneet.friday.entry.AssistantSettings
 import com.puneet.friday.entry.ReadyNotification
 import com.puneet.friday.ui.AppUi
 import com.puneet.friday.ui.FridayDialog
+import com.puneet.friday.ui.AnchoredPopup
+import com.puneet.friday.ui.SettingsGroup
+import com.puneet.friday.ui.SettingsRow
 import java.io.IOException
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
@@ -36,14 +35,14 @@ import java.util.concurrent.Future
 /** Entry choice for the existing opt-in trial; selecting a row never starts audio. */
 class WakeUsageActivity : Activity() {
     private var selected = WakeUsagePolicy.Mode.TAP
-    private val options = mutableMapOf<WakeUsagePolicy.Mode, Pair<RadioButton, LinearLayout>>()
+    private val options = mutableMapOf<WakeUsagePolicy.Mode, RadioButton>()
     private lateinit var apply: Button
     private lateinit var status: TextView
     private lateinit var progress: ProgressBar
     private lateinit var cancelDownload: Button
     private lateinit var assistantFallback: Button
-    private lateinit var backgroundSettings: Button
-    private var help: PopupWindow? = null
+    private lateinit var backgroundSettings: SettingsGroup
+    private val help by lazy { AnchoredPopup(this) }
     private var pendingPermission = false
     private var pendingAssistantSettings = false
     private var assistantSelected = false
@@ -73,12 +72,14 @@ class WakeUsageActivity : Activity() {
         pendingAssistantSettings = savedInstanceState?.getBoolean("assistant_settings") ?: false
         showAssistantFallback = savedInstanceState?.getBoolean("assistant_fallback") ?: false
         assistantSelected = AssistantSettings.isSelected(this)
-        val (scroll, content) = AppUi.scrollContent(this, "Start Friday", "", back = true)
-        addOption(content, WakeUsagePolicy.Mode.HEY_FRIDAY, "Hey Friday",
-            "Say “Hey Friday” while using other apps. Pause or resume from the notification. " +
-                "Setup downloads a 61 KB model once. Wake detection runs on your phone.")
-        addOption(content, WakeUsagePolicy.Mode.TAP, "Tap to speak",
+        val (scroll, content) = AppUi.groupedContent(this, "Start Friday")
+        content.addView(View(this), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, AppUi.dp(this, 60), 1f))
+        val choices = SettingsGroup(this)
+        addOption(choices, WakeUsagePolicy.Mode.HEY_FRIDAY, "Hey Friday",
+            "Friday listens for “Hey Friday” on this phone. Pause it from the notification.")
+        addOption(choices, WakeUsagePolicy.Mode.TAP, "Tap to speak",
             "Open Friday and tap the microphone to give a command.")
+        content.addView(choices, AppUi.params(this, 16))
         status = AppUi.text(this, "", 12f, secondary = true).apply {
             accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
         }
@@ -101,10 +102,13 @@ class WakeUsageActivity : Activity() {
             checkModel()
         }
         content.addView(cancelDownload, AppUi.params(this, 8))
-        backgroundSettings = AppUi.navigationButton(this, "Background listening", "Battery settings") {
-            startActivity(Intent(this, WakeBackgroundActivity::class.java))
+        backgroundSettings = SettingsGroup(this).apply {
+            addRow(SettingsRow(this@WakeUsageActivity, "Background listening") {
+                startActivity(Intent(this@WakeUsageActivity, WakeBackgroundActivity::class.java))
+            })
         }
         content.addView(backgroundSettings, AppUi.params(this, 24))
+        content.addView(View(this), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.4f))
         scroll.setOnApplyWindowInsetsListener { view, insets ->
             if (Build.VERSION.SDK_INT >= 30) {
                 val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
@@ -121,16 +125,16 @@ class WakeUsageActivity : Activity() {
         checkModel()
     }
 
-    private fun addOption(content: LinearLayout, mode: WakeUsagePolicy.Mode, label: String, explanation: String) {
+    private fun addOption(content: SettingsGroup, mode: WakeUsagePolicy.Mode, label: String, explanation: String) {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            minimumHeight = AppUi.dp(context, 56)
+            minimumHeight = AppUi.dp(context, 68)
             setPadding(AppUi.dp(context, 8), AppUi.dp(context, 4), AppUi.dp(context, 4), AppUi.dp(context, 4))
         }
         val radio = RadioButton(this).apply {
             text = label
-            textSize = 13f
+            textSize = 14f
             typeface = resources.getFont(R.font.geist)
             setTextColor(getColor(R.color.text_primary))
             buttonTintList = ColorStateList.valueOf(getColor(R.color.accent))
@@ -142,33 +146,10 @@ class WakeUsageActivity : Activity() {
             marginEnd = AppUi.dp(this@WakeUsageActivity, 8)
         })
         val info = AppUi.iconButton(this, R.drawable.ic_info_circle, "About $label") {}
-        info.setOnClickListener { showHelp(info, explanation) }
+        info.setOnClickListener { help.showHelp(info, explanation) }
         row.addView(info, LinearLayout.LayoutParams(AppUi.dp(this, 48), AppUi.dp(this, 48)))
-        options[mode] = radio to row
-        content.addView(row, AppUi.params(this, 8))
-    }
-
-    private fun showHelp(anchor: View, explanation: String) {
-        help?.dismiss()
-        val text = AppUi.text(this, explanation, 12f).apply {
-            setPadding(AppUi.dp(context, 12), AppUi.dp(context, 12), AppUi.dp(context, 12), AppUi.dp(context, 12))
-            isFocusableInTouchMode = true
-        }
-        val body = ScrollView(this).apply {
-            background = AppUi.surface(context, 12)
-            addView(text)
-        }
-        val width = minOf(AppUi.dp(this, 280), resources.displayMetrics.widthPixels - AppUi.dp(this, 40))
-        body.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(resources.displayMetrics.heightPixels / 2, View.MeasureSpec.AT_MOST))
-        help = PopupWindow(body, width, body.measuredHeight, true).apply {
-            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-            isOutsideTouchable = true
-            elevation = AppUi.dp(this@WakeUsageActivity, 8).toFloat()
-            setOnDismissListener { help = null; anchor.requestFocus() }
-            showAsDropDown(anchor, anchor.width - width, AppUi.dp(this@WakeUsageActivity, 4))
-        }
-        text.requestFocus()
+        options[mode] = radio
+        content.addRow(row)
     }
 
     private fun useSelection() {
@@ -350,7 +331,7 @@ class WakeUsageActivity : Activity() {
             }
         }
     }
-    override fun onPause() { help?.dismiss(); main.removeCallbacks(refresh); super.onPause() }
+    override fun onPause() { help.dismiss(); main.removeCallbacks(refresh); super.onPause() }
     override fun onStop() { WakeTrialService.assistantHidden(this); super.onStop() }
     override fun onDestroy() {
         cancelWork()
@@ -377,11 +358,7 @@ class WakeUsageActivity : Activity() {
         val key = RenderState(selected, state.phase, message, model, downloadPercent, assistantSelected, showAssistantFallback)
         if (key == rendered) return
         rendered = key
-        for ((mode, pair) in options) {
-            pair.first.isChecked = selected == mode
-            pair.second.background = AppUi.surface(this, 12, R.color.surface,
-                if (selected == mode) R.color.accent else R.color.border)
-        }
+        for ((mode, radio) in options) radio.isChecked = selected == mode
         val hey = selected == WakeUsagePolicy.Mode.HEY_FRIDAY
         val value = message ?: if (!hey) "" else when (model) {
             ModelState.CHECKING -> "Checking Hey Friday…"

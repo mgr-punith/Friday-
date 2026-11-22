@@ -18,6 +18,8 @@ import android.view.WindowInsets
 import android.widget.Button
 import android.widget.TextView
 import com.puneet.friday.ui.AppUi
+import com.puneet.friday.ui.SettingsGroup
+import com.puneet.friday.ui.SettingsRow
 import java.io.File
 import java.util.Locale
 
@@ -27,8 +29,8 @@ class WakeTrialActivity : Activity() {
     private lateinit var count: TextView
     private lateinit var timing: TextView
     private lateinit var start: Button
-    private lateinit var sensitivity: Button
-    private lateinit var mode: Button
+    private lateinit var sensitivity: SettingsRow
+    private lateinit var mode: SettingsRow
     private var threshold = WakeTrialSession.DEFAULT_THRESHOLD
     private var commandMode = true
     private var pendingPermissionStart = false
@@ -53,7 +55,7 @@ class WakeTrialActivity : Activity() {
         super.onCreate(savedInstanceState)
         threshold = savedInstanceState?.getFloat("threshold", WakeTrialSession.DEFAULT_THRESHOLD) ?: WakeTrialSession.DEFAULT_THRESHOLD
         commandMode = savedInstanceState?.getBoolean("commands") ?: intent.getBooleanExtra("debug_wake_commands", true)
-        val (scroll, content) = AppUi.scrollContent(this, "Wake detector test", "Debug only · microWakeWord", back = true)
+        val (page, content) = AppUi.groupedContent(this, "Wake detector test")
         content.addView(AppUi.notice(this,
             "Start this test to listen for Hey Friday on this phone. After a wake, Friday can open its command panel. Wait for Listening, then say your command. Only command audio goes to Friday's backend and Groq. The test saves counts and timings, without audio or transcripts."), AppUi.params(this, 24))
         status = AppUi.text(this, "Microphone off", 15f, bold = true).apply {
@@ -66,20 +68,24 @@ class WakeTrialActivity : Activity() {
         content.addView(timing, AppUi.params(this, 24))
         start = AppUi.button(this, "Start local test", AppUi.ButtonTone.PRIMARY) { toggleTest() }
         content.addView(start, AppUi.params(this, 12))
-        sensitivity = AppUi.navigationButton(this, "Sensitivity", "") {
+        sensitivity = SettingsRow(this, "Sensitivity", showChevron = false) {
             val index = WakeTrialSession.THRESHOLDS.indexOf(threshold)
             threshold = WakeTrialSession.THRESHOLDS[(index + 1) % WakeTrialSession.THRESHOLDS.size]
             render()
         }
-        content.addView(sensitivity, AppUi.params(this, 8))
-        mode = AppUi.navigationButton(this, "On wake", "") { commandMode = !commandMode; render() }
-        content.addView(mode, AppUi.params(this, 8))
+        mode = SettingsRow(this, "On wake", showChevron = false) { commandMode = !commandMode; render() }
+        content.addView(SettingsGroup(this).apply {
+            addRow(sensitivity)
+            addRow(mode)
+        }, AppUi.params(this, 8))
         content.addView(AppUi.text(this, "0.30 is the command-trial default. The model default is 0.66. Lower values catch more phrases but also trigger on more unrelated sounds.", 12f, secondary = true), AppUi.params(this, 24))
-        content.addView(AppUi.navigationButton(this, "App permissions", "Manage microphone and notifications") {
-            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+        content.addView(SettingsGroup(this).apply {
+            addRow(SettingsRow(this@WakeTrialActivity, "App permissions") {
+                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+            })
         }, AppUi.params(this, 16))
         content.addView(AppUi.text(this, "In Open Friday mode, dismiss the command panel to resume wake listening. If Friday can't open, tap the wake-test notification. Count detections mode runs no commands. Stop test turns listening off. After a phone restart, open this screen to start again.", 12f, secondary = true), AppUi.params(this, 0))
-        scroll.setOnApplyWindowInsetsListener { view, insets ->
+        page.setOnApplyWindowInsetsListener { view, insets ->
             if (Build.VERSION.SDK_INT >= 30) {
                 val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
                 view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
@@ -89,7 +95,7 @@ class WakeTrialActivity : Activity() {
             }
             insets
         }
-        setContentView(scroll)
+        setContentView(page)
         render()
         if (intent.getBooleanExtra("debug_wake_trigger", false)) {
             main.postDelayed({
@@ -216,11 +222,9 @@ class WakeTrialActivity : Activity() {
         start.isEnabled = !replayRunning && snapshot.phase != WakeTrialSession.Phase.STOPPING
         start.alpha = if (start.isEnabled) 1f else 0.5f
         sensitivity.isEnabled = !replayRunning && !snapshot.active
-        sensitivity.alpha = if (sensitivity.isEnabled) 1f else 0.5f
         mode.isEnabled = !replayRunning && !snapshot.active
-        mode.alpha = if (mode.isEnabled) 1f else 0.5f
-        AppUi.setNavigationText(mode, "On wake", if (commandMode) "Open Friday" else "Count detections")
-        AppUi.setNavigationText(sensitivity, "Sensitivity", when (threshold) {
+        mode.setValue(if (commandMode) "Open Friday" else "Count detections")
+        sensitivity.setValue(when (threshold) {
             0.66f -> "0.66 · Model default"
             0.30f -> "0.30 · Command trial"
             else -> "0.10 · More sensitive"

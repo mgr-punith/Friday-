@@ -38,6 +38,25 @@ class MemoryAuthStore implements AuthStore {
     else this.values.set(key, { value: replacement, expires: this.now() + ttl * 1000 });
     return true;
   }
+  async createSession(key: string, accountId: string, value: string, ttl: number, loginStartedAt: number): Promise<boolean> {
+    const deletedAt = Number(await this.get("deleted:" + accountId));
+    if (deletedAt >= loginStartedAt) return false;
+    await this.put(key, value, ttl);
+    return true;
+  }
+  async deleteAccount(key: string, accountId: string, expected: string, receipt: string, at: number): Promise<boolean> {
+    if (await this.deletionReceipt(key) === receipt) return true;
+    if (await this.get(key) !== expected) return false;
+    for (const [sessionKey, record] of this.values) {
+      if (sessionKey.startsWith("session:") && JSON.parse(record.value).accountId === accountId) this.values.delete(sessionKey);
+    }
+    await this.put("deleted:" + accountId, String(at), 600);
+    await this.put("receipt:" + key, receipt, 3600);
+    return true;
+  }
+  async deletionReceipt(key: string): Promise<string | null> {
+    return this.get("receipt:" + key);
+  }
 }
 
 function event(path: string, body?: unknown, rawQueryString?: string): FunctionUrlEvent {
@@ -112,6 +131,55 @@ test("login issues bounded Friday credentials, checks its nonce and keeps provid
   assert.equal(stored.includes("test-google-token"), false);
   assert.equal(stored.includes("test-google-account"), false);
   assert.equal(await h.store.get("login:" + challenge.loginId), null);
+});
+
+test("deletion erases sessions for one account and rejects old credentials across devices", async () => {
+  const h = harness();
+  const first = await h.login();
+  const second = await h.login(otherInstall);
+  const oldLogin = await h.begin();
+  const identity = { subject: "another-google-account", email: "other@example.com", name: "Other Person" };
+  h.setIdentity(identity);
+  const other = await h.login();
+
+  const deleteWith = (body: unknown) => h.api.handle(event("/v1/auth/delete", body));
+  assert.equal((await deleteWith({ ...h.credentials(first), refreshToken: opaque() })).statusCode, 401);
+  assert.equal((await deleteWith(h.logoutCredentials(first))).statusCode, 400);
+  assert.equal((await deleteWith({ ...h.credentials(first), accountId: "other" })).statusCode, 400);
+  assert.ok(await h.accounts.authorize(first.accessToken));
+
+  const deleted = await deleteWith(h.credentials(first));
+  assert.deepEqual(value(deleted), { deleted: true });
+  assert.equal(deleted.statusCode, 200);
+  assert.equal(deleted.headers?.["cache-control"], "no-store");
+  for (const session of [first, second]) {
+    assert.equal(await h.store.get("session:" + session.sessionId), null);
+    assert.equal((await h.command(session.accessToken)).statusCode, 401);
+    assert.equal((await h.api.handle(event("/v1/auth/refresh", h.credentials(session)))).statusCode, 401);
+  }
+  assert.ok(await h.accounts.authorize(other.accessToken));
+  assert.equal((await deleteWith({ ...h.credentials(first), installId: otherInstall })).statusCode, 401);
+  assert.equal((await deleteWith(h.credentials(first))).statusCode, 200);
+
+  h.setIdentity({ subject: "test-google-account", email: "person@example.com", name: "Test Person" });
+  const early = await h.api.handle(event("/v1/auth/google", {
+    installId: oldLogin.installId, loginId: oldLogin.loginId, codeVerifier: oldLogin.codeVerifier, idToken: "test-google-token"
+  }));
+  assert.equal(early.statusCode, 401);
+  h.advance(1);
+  const newAccount = await h.login();
+  assert.equal((await deleteWith(h.credentials(first))).statusCode, 200);
+  assert.ok(await h.accounts.authorize(newAccount.accessToken));
+});
+
+test("account deletion fails closed when the store is unavailable", async () => {
+  const h = harness();
+  const session = await h.login();
+  h.store.fail = true;
+  const response = await h.api.handle(event("/v1/auth/delete", h.credentials(session)));
+  assert.equal(response.statusCode, 503);
+  h.store.fail = false;
+  assert.ok(await h.accounts.authorize(session.accessToken));
 });
 
 test("requires an unexpired, install-bound verifier and consumes the challenge once under races", async () => {

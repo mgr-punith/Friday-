@@ -5,6 +5,7 @@ import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
 import android.view.Gravity
+import android.view.ViewGroup
 import android.view.WindowManager
 import com.puneet.friday.ui.AppUi
 
@@ -23,12 +24,12 @@ class AssistantActivity : MainActivity() {
         window.apply {
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-            setDimAmount(0.35f)
+            setDimAmount(0.14f)
             setGravity(Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
-            val metrics = resources.displayMetrics
-            val fontExtra = ((resources.configuration.fontScale - 1f).coerceAtLeast(0f) * 80).toInt()
-            setLayout(minOf(metrics.widthPixels, AppUi.dp(this@AssistantActivity, 520)),
-                minOf(AppUi.dp(this@AssistantActivity, 520 + fontExtra), (metrics.heightPixels * 0.9f).toInt()))
+            val gutter = AppUi.dp(this@AssistantActivity, 12)
+            val width = minOf(resources.displayMetrics.widthPixels - 2 * gutter, AppUi.dp(this@AssistantActivity, 440))
+            attributes = attributes.apply { y = gutter }
+            setLayout(width, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
         setFinishOnTouchOutside(true)
     }

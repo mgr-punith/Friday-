@@ -65,6 +65,13 @@ class AccountClient(context: Context, baseUrl: String = BuildConfig.BACKEND_URL)
         finally { store.clear() }
     }
 
+    fun deleteAccount(expectedSessionId: String) = synchronized(refreshLock) {
+        val session = store.session()?.takeIf { it.sessionId == expectedSessionId } ?: throw SignInRequired()
+        val result = request("/v1/auth/delete", credentials(session))
+        if (result.opt("deleted") != true) throw IOException("invalid_account_response")
+        store.clearDeletedSession(expectedSessionId)
+    }
+
     fun flushLogoutBestEffort() { try { flushLogout() } catch (_: Exception) { Unit } }
 
     private fun flushLogout() = synchronized(refreshLock) {

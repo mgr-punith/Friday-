@@ -4,6 +4,7 @@ import android.content.Context;
 import android.os.Handler;
 import android.speech.tts.TextToSpeech;
 import com.puneet.friday.DebugTools;
+import com.puneet.friday.ui.CompletionPolicy;
 import java.nio.file.Path;
 import java.util.List;
 import kotlin.Unit;
@@ -27,7 +28,7 @@ public final class ConfirmationSpeakerTests {
     public static void main(String[] args) throws Exception {
         if (args.length == 0) {
             // SharedTextToSpeech is a process singleton; each engine-failure scenario gets a fresh JVM.
-            for (String scenario : List.of("detached", "replacement", "missing", "language", "rejected", "startup-timeout", "playback-timeout")) {
+            for (String scenario : List.of("detached", "launcher", "replacement", "missing", "language", "rejected", "startup-timeout", "playback-timeout")) {
                 Process child = new ProcessBuilder(
                     Path.of(System.getProperty("java.home"), "bin", "java").toString(),
                     "-cp", System.getProperty("java.class.path"),
@@ -38,6 +39,7 @@ public final class ConfirmationSpeakerTests {
         }
         switch (args[0]) {
             case "detached" -> detached();
+            case "launcher" -> launcher();
             case "replacement" -> replacement();
             case "missing" -> unavailable(false);
             case "language" -> unavailable(true);
@@ -125,6 +127,42 @@ public final class ConfirmationSpeakerTests {
         Handler.idle();
         expect(thirdScreen.completions == 1, "Duplicate completion is ignored");
         third.shutdown();
+    }
+
+    private static void launcher() {
+        Screen home = new Screen();
+        ConfirmationSpeaker speaker = home.speaker();
+        speaker.speak("Timer request sent for 2 seconds");
+        var pause = CompletionPolicy.INSTANCE.onPause(false, true, false, false);
+        expect(pause.getKeepConfirmation() && !pause.getResetUi() && !pause.getCloseScreen(),
+            "Launcher Clock handoff preserves speech and result without finishing Home");
+        expect(speaker.finishAfterScreenCloses(), "Launcher keeps queued speech when Clock takes focus");
+        Handler.idle();
+        TextToSpeech engine = TextToSpeech.current;
+        expect(engine.utterances.size() == 1 && engine.stops == 0, "Launcher pause does not cut off timer speech");
+        var timer = engine.utterances.get(0);
+        expect(home.callbacks == 0, "Hidden Home receives no speech callbacks");
+        // Returning Home binds a fresh speaker to the same shared engine.
+        Screen resumed = new Screen();
+        ConfirmationSpeaker next = resumed.speaker();
+        timer.listener().onDone(timer.id());
+        Handler.idle();
+        expect(home.callbacks == 0 && DebugTools.INSTANCE.activeSpeakers() == 0,
+            "Timer completion releases wake capture without changing the hidden Home");
+        next.speak("Timer request sent for 2 minutes");
+        Handler.idle();
+        expect(TextToSpeech.current == engine && engine.utterances.size() == 2,
+            "Another launcher command reuses the TTS engine after the previous speaker closes");
+        var repeated = engine.utterances.get(1);
+        expect(!timer.id().equals(repeated.id()), "Repeated launcher commands use distinct utterance IDs");
+        timer.listener().onStop(timer.id(), true);
+        Handler.idle();
+        expect(resumed.completions == 0 && engine.listener == repeated.listener(),
+            "An old Home callback cannot finish or silence the next confirmation");
+        repeated.listener().onDone(repeated.id());
+        Handler.idle();
+        expect(resumed.completions == 1, "The new Home command completes once through its own callbacks");
+        next.shutdown();
     }
 
     private static void unavailable(boolean missingLanguage) {

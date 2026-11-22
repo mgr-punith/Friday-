@@ -79,6 +79,7 @@ object WakeTrialLogicTests {
         expect(!commands.detected(run, 2_500), "Wake callbacks cannot trigger during command capture or TTS")
         expect(commands.pause(run), "The visible assistant keeps the trial paused")
         expect(commands.listening(run, 5_000), "Dismissal can resume the same opted-in trial")
+        expect(!commands.expireWake(run, token), "A used handoff timer cannot disturb resumed capture")
         expect(commands.snapshot().startedMs == 1_000L && commands.snapshot().detections == 1,
             "Resume preserves run duration and counts")
         commands.addCompute(run, 2_000, 50)
@@ -103,6 +104,15 @@ object WakeTrialLogicTests {
         expect(commands.snapshot().detectionTimesMs.size == 64 && commands.snapshot().detections == 100,
             "Retain bounded event metadata while keeping the full count")
         expect(commands.snapshot().detectionTimesMs.first() == 36L, "The report retains the most recent event offsets")
+        expect(commands.detected(replacement, 12_000), "A wake can enter the fallback handoff")
+        val unclaimed = checkNotNull(commands.claimHandoff(replacement))
+        commands.awaitingTap(replacement)
+        expect(!commands.expireWake(run, unclaimed), "A timeout from another run cannot expire a live request")
+        expect(!commands.expireWake(replacement, stoppedToken), "A timeout from an older wake cannot expire the current request")
+        expect(commands.expireWake(replacement, unclaimed), "An unclaimed handoff can expire")
+        expect(!commands.consumeWake(unclaimed), "An expired notification cannot open a command")
+        expect(commands.listening(replacement, 21_000), "An expired handoff can rearm the same session")
+        expect(commands.detected(replacement, 22_000), "The next wake can open Friday after an expired handoff")
         val gate = WakeCaptureGate()
         val starting = WakeTrialSession.Snapshot(phase = WakeTrialSession.Phase.STARTING)
         val paused = starting.copy(phase = WakeTrialSession.Phase.PAUSED, commandMode = true)

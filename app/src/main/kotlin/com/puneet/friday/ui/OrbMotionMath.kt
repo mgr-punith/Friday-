@@ -10,7 +10,8 @@ internal object OrbMotionMath {
     fun voiceEnergy(rms: Float, noiseFloor: Float): Float {
         val threshold = noiseThreshold(noiseFloor)
         val normalized = ((finiteLevel(rms) - threshold) / VOICE_RANGE_RMS).coerceIn(0f, 1f)
-        return normalized * normalized * (3f - 2f * normalized)
+        val smooth = normalized * normalized * (3f - 2f * normalized)
+        return normalized * 0.65f + smooth * 0.35f
     }
 
     fun adaptNoiseFloor(current: Float, rms: Float, rate: Float): Float {
@@ -24,8 +25,8 @@ internal object OrbMotionMath {
     const val DEFAULT_NOISE_FLOOR = 0.004f
     private const val MIN_NOISE_FLOOR = 0.001f
     private const val MAX_NOISE_FLOOR = 0.03f
-    private const val MIN_VOICE_RMS = 0.011f
+    private const val MIN_VOICE_RMS = 0.010f
     private const val NOISE_MULTIPLIER = 1.65f
     private const val NOISE_OFFSET_RMS = 0.0025f
-    private const val VOICE_RANGE_RMS = 0.065f
+    private const val VOICE_RANGE_RMS = 0.052f
 }
