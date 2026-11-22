@@ -84,11 +84,35 @@ val wakeTrialLogicTest by tasks.registering(JavaExec::class) {
     configurations.named("debugUnitTestRuntimeClasspath"),
   )
 }
+// Exercise the real Android speaker with test-only platform doubles in a separate JVM.
+// These classes do not enter an Android source set or an APK.
+val compileSpeakerTests by tasks.registering(JavaCompile::class) {
+  dependsOn("compileDebugKotlin")
+  source(fileTree("src/testSpeaker/java") { include("**/*.java") })
+  destinationDirectory.set(layout.buildDirectory.dir("speaker-tests/classes"))
+  classpath = files(
+    layout.buildDirectory.dir("intermediates/built_in_kotlinc/debug/compileDebugKotlin/classes"),
+    configurations.named("debugUnitTestRuntimeClasspath"),
+  )
+  sourceCompatibility = "17"
+  targetCompatibility = "17"
+}
+val confirmationSpeakerTest by tasks.registering(JavaExec::class) {
+  group = "verification"
+  description = "Runs real confirmation-speaker lifecycle regressions with a fake Android clock and TTS engine."
+  dependsOn(compileSpeakerTests)
+  mainClass.set("com.puneet.friday.voice.ConfirmationSpeakerTests")
+  classpath(
+    compileSpeakerTests.flatMap { it.destinationDirectory },
+    layout.buildDirectory.dir("intermediates/built_in_kotlinc/debug/compileDebugKotlin/classes"),
+    configurations.named("debugUnitTestRuntimeClasspath"),
+  )
+}
 tasks.matching { it.name == "test" || it.name == "check" }.configureEach {
-  dependsOn(actionLogicTest, voiceLogicTest, wakeTrialLogicTest)
+  dependsOn(actionLogicTest, voiceLogicTest, wakeTrialLogicTest, confirmationSpeakerTest)
 }
 // There is no JUnit dependency; the JavaExec task above runs our JVM checks.
 tasks.withType<Test>().configureEach {
   enabled = false
-  dependsOn(actionLogicTest, voiceLogicTest, wakeTrialLogicTest)
+  dependsOn(actionLogicTest, voiceLogicTest, wakeTrialLogicTest, confirmationSpeakerTest)
 }

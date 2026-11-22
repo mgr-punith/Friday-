@@ -190,9 +190,20 @@ open class MainActivity : Activity() {
 
     override fun onPause() {
         logEntryLifecycle("pause")
+        val closeCompletedPanel = CompletionPolicy.closeWhenLeaving(
+            compactSurface, state == VoiceState.IDLE && lastConfirmation != null,
+        )
+        val preserveConfirmation = closeCompletedPanel && !isChangingConfigurations &&
+            confirmationSpeaker.finishAfterScreenCloses()
         resumed = false
-        cancelVoiceWork(resetUi = true)
+        cancelVoiceWork(resetUi = true, preserveConfirmation = preserveConfirmation)
         DebugTools.onAssistantHidden(this)
+        // Clock/call/app intents can pause us before the speech close timer fires.
+        // A completed compact panel must not return as an empty listening screen.
+        if (closeCompletedPanel && !isChangingConfigurations) {
+            if (BuildConfig.DEBUG) Log.i(VOICE_LOG_TAG, "event=success_panel_dismissed_on_pause")
+            finish()
+        }
         super.onPause()
     }
 
@@ -400,6 +411,7 @@ open class MainActivity : Activity() {
     private fun startListening(warmBackend: Boolean = true) {
         if (!resumed) return
         if (!AccountStore.isSignedIn(this)) { showSignInRequired(); return }
+        ConfirmationSpeaker.stopPlayback()
         cancelResultDismissal()
         greetingContinuation?.let(surface::removeCallbacks)
         greetingContinuation = null
@@ -695,14 +707,14 @@ open class MainActivity : Activity() {
         }
     }
 
-    private fun cancelVoiceWork(resetUi: Boolean) {
+    private fun cancelVoiceWork(resetUi: Boolean, preserveConfirmation: Boolean = false) {
         cancelResultDismissal()
         greetingContinuation?.let(surface::removeCallbacks)
         greetingContinuation = null
         resultInteracted = true
         DebugTools.cancelErrorRecovery(this)
         generation++
-        confirmationSpeaker.stop()
+        if (!preserveConfirmation) confirmationSpeaker.stop()
         backend.cancelCommand()
         activeRecorder?.stop()
         activeRecorder = null
@@ -797,6 +809,7 @@ open class MainActivity : Activity() {
     }
 
     private fun signOut() {
+        ConfirmationSpeaker.stopPlayback()
         cancelVoiceWork(resetUi = true)
         DebugTools.stopListening(this)
         ReadyNotification.setEnabled(this, false)

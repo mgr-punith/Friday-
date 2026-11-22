@@ -36,6 +36,13 @@ class WakeTrialService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        val stop = WakeBackgroundPolicy.stopOnTaskRemoval(usageControlled, WakeUsageStore.mode(this))
+        Log.i(TAG, "event=task_removed keepListening=${!stop}")
+        if (stop) stopTest()
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onCreate() {
         super.onCreate()
         synchronized(captureLock) { owner = this }
@@ -248,6 +255,7 @@ class WakeTrialService : Service() {
         val result = WakeTrialReports.json(state).put("elapsedMs", elapsed(state))
         synchronized(captureLock) {
             result.put("wakeCapture", capture != null).put("commandCapture", gate.commandActive)
+                .put("speechPlayback", gate.speechActive)
                 .put("visibleAssistants", gate.visibleCount)
                 .put("liveWakeAudioMs", capture?.liveAudioMs ?: 0L)
         }
@@ -387,6 +395,16 @@ class WakeTrialService : Service() {
 
         fun assistantHidden(activity: Activity) {
             val service = synchronized(captureLock) { gate.hidden(activity); owner }
+            service?.resumeAfterCommand()
+        }
+
+        fun beginSpeechPlayback(speaker: Any) {
+            val service = synchronized(captureLock) { gate.speaking(speaker); owner }
+            service?.pauseForCommand()
+        }
+
+        fun endSpeechPlayback(speaker: Any) {
+            val service = synchronized(captureLock) { gate.silent(speaker); owner }
             service?.resumeAfterCommand()
         }
 

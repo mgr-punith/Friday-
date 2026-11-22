@@ -106,7 +106,19 @@ class WakeTrialTests(unittest.TestCase):
                        if item.get(android + "name", "").endswith("WakeTrialService"))
         self.assertEqual(service.get(android + "foregroundServiceType"), "microphone")
         self.assertEqual(service.get(android + "exported"), "false")
-        self.assertEqual(service.get(android + "stopWithTask"), "true")
+        self.assertEqual(service.get(android + "stopWithTask"), "false")
+
+    def test_background_settings_stay_private_and_do_not_request_direct_battery_exemption(self):
+        root = Path(__file__).resolve().parents[1]
+        android = "{http://schemas.android.com/apk/res/android}"
+        manifest = ElementTree.parse(root / "app/src/debug/AndroidManifest.xml").getroot()
+        activity = next(item for item in manifest.find("application").findall("activity")
+                        if item.get(android + "name", "").endswith("WakeBackgroundActivity"))
+        self.assertEqual(activity.get(android + "exported"), "false")
+        for source in ("main", "debug"):
+            permissions = {item.get(android + "name") for item in
+                           ElementTree.parse(root / f"app/src/{source}/AndroidManifest.xml").getroot().findall("uses-permission")}
+            self.assertNotIn("android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS", permissions)
 
 
     def test_release_rejects_trial_components_and_microphone_service_permissions(self):

@@ -42,6 +42,7 @@ class WakeUsageActivity : Activity() {
     private lateinit var progress: ProgressBar
     private lateinit var cancelDownload: Button
     private lateinit var assistantFallback: Button
+    private lateinit var backgroundSettings: Button
     private var help: PopupWindow? = null
     private var pendingPermission = false
     private var pendingAssistantSettings = false
@@ -100,6 +101,10 @@ class WakeUsageActivity : Activity() {
             checkModel()
         }
         content.addView(cancelDownload, AppUi.params(this, 8))
+        backgroundSettings = AppUi.navigationButton(this, "Background listening", "Battery settings") {
+            startActivity(Intent(this, WakeBackgroundActivity::class.java))
+        }
+        content.addView(backgroundSettings, AppUi.params(this, 24))
         scroll.setOnApplyWindowInsetsListener { view, insets ->
             if (Build.VERSION.SDK_INT >= 30) {
                 val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
@@ -394,6 +399,7 @@ class WakeUsageActivity : Activity() {
         progress.isIndeterminate = model == ModelState.INSTALLING
         progress.progress = downloadPercent
         cancelDownload.visibility = if (downloading) View.VISIBLE else View.GONE
+        backgroundSettings.visibility = if (hey && model == ModelState.READY) View.VISIBLE else View.GONE
         assistantFallback.visibility = if (hey && model == ModelState.READY && !assistantSelected && showAssistantFallback)
             View.VISIBLE else View.GONE
         apply.text = when {

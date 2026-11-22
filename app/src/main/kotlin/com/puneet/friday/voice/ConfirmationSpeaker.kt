@@ -8,6 +8,8 @@ import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
+import com.puneet.friday.BuildConfig
+import com.puneet.friday.DebugTools
 import java.util.Locale
 
 /** Keeps Android's optional TTS connection ready while the app process remains alive. */
@@ -17,6 +19,22 @@ private object SharedTextToSpeech {
     private var engine: TextToSpeech? = null
     private var starting = false
     private var ready = false
+    private var playbackOwner: ConfirmationSpeaker? = null
+
+    fun claimPlayback(owner: ConfirmationSpeaker, listener: UtteranceProgressListener) {
+        if (playbackOwner !== owner) playbackOwner?.cancelPlayback()
+        playbackOwner = owner
+        engine?.setOnUtteranceProgressListener(listener)
+    }
+
+    fun releasePlayback(owner: ConfirmationSpeaker, stop: Boolean) {
+        if (playbackOwner !== owner) return
+        if (stop) engine?.stop()
+        engine?.setOnUtteranceProgressListener(null)
+        playbackOwner = null
+    }
+
+    fun stopPlayback() { playbackOwner?.cancelPlayback() }
 
     fun prepare(context: Context) {
         main.post { startIfNeeded(context.applicationContext) }
@@ -66,10 +84,10 @@ private object SharedTextToSpeech {
 /** Optional device TTS, with cancellation and playback-timed PCM feedback. */
 class ConfirmationSpeaker(
     context: Context,
-    private val onSpeaking: (Boolean) -> Unit = {},
-    private val onAudio: (PcmProcessor.Level) -> Unit = {},
-    private val onAvailable: (Boolean) -> Unit = {},
-    private val onFinished: () -> Unit = {},
+    private var onSpeaking: (Boolean) -> Unit = {},
+    private var onAudio: (PcmProcessor.Level) -> Unit = {},
+    private var onAvailable: (Boolean) -> Unit = {},
+    private var onFinished: () -> Unit = {},
 ) {
     private val appContext = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
@@ -81,6 +99,8 @@ class ConfirmationSpeaker(
     private var pending: Pair<String, String>? = null
     private var speaking = false
     private var closed = false
+    private var detached = false
+    private var detachedTimeout: Runnable? = null
     private var playbackStart = 0L
     private var queuedAudioMs = 0L
     private var sampleRate = 16_000
@@ -94,6 +114,9 @@ class ConfirmationSpeaker(
         val text = message.trim().takeIf { it.isNotEmpty() } ?: return
         stop()
         val id = session.begin()
+        // Own pending engine startup too, so a new command can cancel old speech before it starts.
+        SharedTextToSpeech.claimPlayback(this, listener)
+        DebugTools.beginSpeechPlayback(this)
         pending = text to id
         if (ready) speakPending() else if (!starting) start()
     }
@@ -103,16 +126,41 @@ class ConfirmationSpeaker(
         pending = null
         frames.clear()
         main.removeCallbacksAndMessages(audioCallbacks)
-        engine?.stop()
+        SharedTextToSpeech.releasePlayback(this, stop = true)
+        DebugTools.endSpeechPlayback(this)
+        detachedTimeout?.let(main::removeCallbacks)
+        detachedTimeout = null
         playbackStart = 0L
         queuedAudioMs = 0L
         if (speaking) { speaking = false; onSpeaking(false) }
     }
 
+    /** Keep only this short confirmation alive after its Activity closes. No UI callback remains. */
+    fun finishAfterScreenCloses(): Boolean {
+        if (closed || !session.isActive) return false
+        if (detached) return true
+        detached = true
+        if (BuildConfig.DEBUG) Log.i("FridayVoice", "event=confirmation_detached")
+        onSpeaking = {}
+        onAudio = {}
+        onAvailable = {}
+        onFinished = { shutdown() }
+        frames.clear()
+        main.removeCallbacksAndMessages(audioCallbacks)
+        detachedTimeout = Runnable { cancelPlayback() }.also { main.postDelayed(it, 12_000) }
+        return true
+    }
+
+    internal fun cancelPlayback() {
+        val close = detached
+        stop()
+        if (close) shutdown()
+    }
+
     fun shutdown() {
+        if (detached && session.isActive) return
         closed = true
         stop()
-        engine?.setOnUtteranceProgressListener(null)
         engine = null
         ready = false
         main.removeCallbacksAndMessages(audioCallbacks)
@@ -126,15 +174,13 @@ class ConfirmationSpeaker(
             if (current == null) {
                 val id = pending?.second
                 pending = null
-                val notify = session.finish(id)
                 onAvailable(false)
-                if (notify) onFinished()
+                complete(id)
                 return@acquire
             }
             engine = current
             ready = true
             onAvailable(true)
-            current.setOnUtteranceProgressListener(listener)
             speakPending()
         }
     }
@@ -143,12 +189,17 @@ class ConfirmationSpeaker(
         val (text, id) = pending ?: return
         pending = null
         if (!session.accepts(id)) return
-        engine?.setOnUtteranceProgressListener(listener)
+        SharedTextToSpeech.claimPlayback(this, listener)
         if (engine?.speak(text, TextToSpeech.QUEUE_FLUSH, null, id) != TextToSpeech.SUCCESS) complete(id)
     }
 
     private fun complete(id: String?) {
         if (!session.finish(id)) return
+        if (BuildConfig.DEBUG) Log.i("FridayVoice", "event=confirmation_finished detached=$detached")
+        SharedTextToSpeech.releasePlayback(this, stop = false)
+        DebugTools.endSpeechPlayback(this)
+        detachedTimeout?.let(main::removeCallbacks)
+        detachedTimeout = null
         frames.clear()
         main.removeCallbacksAndMessages(audioCallbacks)
         if (speaking) { speaking = false; onSpeaking(false) }
@@ -158,6 +209,7 @@ class ConfirmationSpeaker(
     private val listener = object : UtteranceProgressListener() {
         override fun onStart(id: String?) { main.post {
             if (!session.accepts(id)) return@post
+            if (BuildConfig.DEBUG) Log.i("FridayVoice", "event=confirmation_playback_started detached=$detached")
             speaking = true
             playbackStart = SystemClock.uptimeMillis()
             onSpeaking(true)
@@ -184,7 +236,7 @@ class ConfirmationSpeaker(
         override fun onAudioAvailable(id: String?, audio: ByteArray?) {
             if (audio == null) return
             main.post {
-                if (!session.accepts(id) || format != AudioFormat.ENCODING_PCM_16BIT) return@post
+                if (detached || !session.accepts(id) || format != AudioFormat.ENCODING_PCM_16BIT) return@post
                 val stride = channels * 2
                 val count = audio.size / stride
                 val chunkSize = maxOf(1, sampleRate / 25)
@@ -215,5 +267,6 @@ class ConfirmationSpeaker(
 
     companion object {
         fun warmUp(context: Context) = SharedTextToSpeech.prepare(context.applicationContext)
+        fun stopPlayback() = SharedTextToSpeech.stopPlayback()
     }
 }

@@ -4,6 +4,37 @@
 
 Add a repeatable test when a build or feature failure has a deterministic reproduction. Keep hardware, OEM, permission-panel, launcher, and other device-only failures in the phone checklist with the exact reproduction steps. Do not mark a device case as automated coverage.
 
+## Timer screen closure and speech regression, 22 November 2026
+
+When Clock opened for a timer, Android paused Friday before its speech finished. The old pause cleanup cleared the successful result and cancelled dismissal, so an empty assistant panel could return. Closing that panel also stopped the timer confirmation. Friday now closes completed compact panels on pause and lets that one short confirmation finish after the screen closes. The owner confirmed the locked Hey Friday → “Set a timer for two minutes” test: **“Yes, it spoke and closed.”**
+
+`app:confirmationSpeakerTest` runs the production `ConfirmationSpeaker` bytecode with test-only Android/TTS doubles and a controlled clock. Its **59 checks across seven scenarios** cover destruction before TTS startup, playback after closure, removal of Activity callbacks and waveform work, replacement-command cancellation, stale and duplicate callbacks, missing English TTS, rejected playback, and startup/playback watchdogs. Each engine scenario runs in a fresh JVM because Friday shares one TTS engine per process. The doubles live in `app/src/testSpeaker/java`; they enter neither Android source sets nor APKs and add no dependency. `test`, `check` and the existing CI Android verification run this task.
+
+The Kotlin suites also cover completed-panel dismissal without a display delay, retention of full Home/errors/permission controls, process-wide utterance IDs, and wake-gate ownership through speech completion. These tests simulate lifecycle events; they do not prove a manufacturer's Clock UI, audible quality, secure-keyguard behavior or long-term wake reliability.
+
+Final commands run:
+
+```bash
+friday_timer_gradle=/home/puneet/.gradle/wrapper/dists/gradle-9.4.1-bin/arn2x92ynaizyzdaamcbpbhtj/gradle-9.4.1/bin/gradle
+"$friday_timer_gradle" --offline --no-daemon -PwakeTrialNativeDir=/tmp/friday-rust-measure/wake-jni assembleDebug assembleRelease test lintDebug --console=plain
+"$friday_timer_gradle" --offline --no-daemon :app:dependencies --configuration releaseRuntimeClasspath --console=plain > /tmp/friday-timer-release-dependencies.log
+python3 scripts/check-app-dependencies.py /tmp/friday-timer-release-dependencies.log
+python3 -m unittest discover -s scripts -p 'test_*.py'
+python3 scripts/check-release-manifest.py
+python3 scripts/check-secrets.py
+git diff --check
+```
+
+Both APK builds passed, along with **546 Kotlin checks** (101 action, 231 voice and 214 wake), the 59 speaker checks and **40 Python tests**. Lint reported zero errors and 52 warnings. Debug APK: **7,016,765 bytes**. Unsigned release APK: **847,924 bytes**, below 15 MB. Dependency and release isolation checks passed; no app or backend dependency changed. The build used cached Gradle 9.4.1 and did not verify the wrapper's pinned 9.1.0 installation. The speaker test task leaves both APK sizes unchanged.
+
+The installed build's phone logs show the timer confirmation detaching when Clock paused the panel, then starting and completing after closure. After the owner's test, the service returned to Listening with wake capture active, command capture and speech playback inactive, and zero visible assistants. The Vivo V2168 ran API 34 with an unsecured keyguard; PIN and biometric coverage remain unverified. The local `.local/tools/result-dismissal-phone-check.py` preview attempts did not pass because of locked-window/focus timing. The owner's real spoken test and its logs passed; do not count the failed preview run as verification. CI uses the committed JVM tests and requires no local phone helper.
+
+## Audio processing and background listening, 22 November 2026
+
+The [Kotlin, Rust and C++ measurement](audio-processing-benchmark.md) records the same-device synthetic CPU comparison and the applied Kotlin optimization. The owner confirmed the improvement at **2:06 PM IST**. Keep that owner result separate from the measured CPU figures and the still-unmeasured end-to-end command latency.
+
+The [background listening check](wake-detector-trial.md#background-listening) covers Friday's Recents removal, a short screen-off interval, a live Calculator command and notification Pause/Resume on the Vivo. The phone retained its **Optimized** battery setting. The background build passed 532 Kotlin checks and 40 repository Python tests, with no lint errors. Debug APK: 7,016,765 bytes. Unsigned release APK: 847,608 bytes. All-day battery use remains unmeasured.
+
 ## Sign-in exchange regression, 21 November 2026
 
 The owner selected a Google account on the connected Vivo V2168, then saw Friday's generic connection error. The production backend returned 200 for a temporary login challenge and 503 for an exchange with an invalid dummy ID token. That probe used no Google account, real token or Gemini request.
