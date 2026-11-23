@@ -2,14 +2,31 @@ package com.puneet.friday.voice
 
 import com.puneet.friday.actions.PhoneAction
 import com.puneet.friday.actions.RingerMode
+import com.puneet.friday.actions.SettingState
+import com.puneet.friday.actions.SettingsTarget
+import com.puneet.friday.actions.VolumeStream
+import com.puneet.friday.actions.validationError
+import org.json.JSONException
 import org.json.JSONObject
 
 object VoiceProtocol {
     fun parseCommand(body: String, serverTimingHeader: String?): VoiceCommandResponse {
         val value = try {
             JSONObject(body)
-        } catch (_: RuntimeException) {
-            return VoiceCommandResponse.Error(VoiceCommandResponse.Reason.BAD_AUDIO)
+        } catch (_: JSONException) {
+            return VoiceCommandResponse.Error(VoiceCommandResponse.Reason.BUSY)
+        }
+        if (value.optString("type") == "actions") {
+            val array = value.optJSONArray("actions")
+                ?: return VoiceCommandResponse.Error(VoiceCommandResponse.Reason.BAD_AUDIO)
+            if (array.length() !in 2..3) return VoiceCommandResponse.Error(VoiceCommandResponse.Reason.BAD_AUDIO)
+            val steps = (0 until array.length()).map { index ->
+                val step = array.optJSONObject(index)
+                    ?: return VoiceCommandResponse.Error(VoiceCommandResponse.Reason.BAD_AUDIO)
+                VoiceResponseParser.parseFields(step.optString("type"), step.optString("action"),
+                    step.optJSONObject("args")?.let(::toMap))
+            }
+            return VoiceResponseParser.parseSequence(steps, serverTimingHeader)
         }
         val args = value.optJSONObject("args")?.let(::toMap)
         return VoiceResponseParser.parseFields(
@@ -35,6 +52,14 @@ object VoiceProtocol {
 }
 
 object VoiceResponseParser {
+    fun parseSequence(steps: List<VoiceCommandResponse>, timingHeader: String?): VoiceCommandResponse {
+        if (steps.size !in 2..3) return badResponse()
+        val actions = steps.map { (it as? VoiceCommandResponse.Action)?.action ?: return badResponse() }
+        val sequence = PhoneAction.Sequence(actions)
+        if (sequence.validationError() != null) return badResponse()
+        return VoiceCommandResponse.Action(sequence, parseServerDuration(timingHeader))
+    }
+
     fun parseServerDuration(header: String?): Double? {
         if (header == null) return null
         return SERVER_DURATION.find(header)?.groupValues?.getOrNull(1)?.toDoubleOrNull()
@@ -91,6 +116,7 @@ object VoiceResponseParser {
             "open_app" -> if (hasOnlyKeys(args, "name")) {
                 requiredString(args, "name", MAX_NAME_LENGTH)?.let(PhoneAction::OpenApp)
             } else null
+            "open_music" -> if (args.isEmpty()) PhoneAction.OpenMusic else null
             "close_app" -> {
                 if (!hasOnlyKeys(args, "name")) return badResponse()
                 val name = optionalString(args, "name", MAX_NAME_LENGTH) ?: return badResponse()
@@ -103,6 +129,32 @@ object VoiceResponseParser {
                     "normal" -> PhoneAction.SetRingerMode(RingerMode.NORMAL)
                     else -> null
                 }
+            } else null
+            "flashlight" -> if (hasOnlyKeys(args, "on")) {
+                (args["on"] as? Boolean)?.let(PhoneAction::Flashlight)
+            } else null
+            "set_volume" -> if (hasOnlyKeys(args, "stream", "percent")) {
+                val percent = requiredInt(args, "percent")
+                val stream = when (args["stream"]) {
+                    "media" -> VolumeStream.MEDIA
+                    "ring" -> VolumeStream.RING
+                    "alarm" -> VolumeStream.ALARM
+                    else -> null
+                }
+                if (stream != null && percent != null && percent in 0..100) PhoneAction.SetVolume(stream, percent) else null
+            } else null
+            "open_settings" -> if (hasOnlyKeys(args, "setting", "state")) {
+                val target = when (requiredString(args, "setting", 32)) {
+                    "airplane_mode" -> SettingsTarget.AIRPLANE_MODE
+                    else -> null
+                }
+                val state = when (val value = args["state"]) {
+                    null -> null
+                    "on" -> SettingState.ON
+                    "off" -> SettingState.OFF
+                    else -> return badResponse()
+                }
+                target?.let { PhoneAction.OpenSettings(it, state) }
             } else null
             else -> null
         } ?: return badResponse()

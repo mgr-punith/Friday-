@@ -28,6 +28,8 @@ import com.puneet.friday.actions.AndroidActionExecutor
 import com.puneet.friday.actions.PhoneAction
 import com.puneet.friday.actions.RequiredAccess
 import com.puneet.friday.actions.RingerMode
+import com.puneet.friday.actions.SettingState
+import com.puneet.friday.actions.SettingsTarget
 import com.puneet.friday.actions.validationError
 import com.puneet.friday.ui.AppUi
 import com.puneet.friday.ui.FridayDialog
@@ -181,12 +183,25 @@ class ActionDebugActivity : Activity() {
                 val name = field(body, "app", "App name", "Name on your home screen", initial = "Clock")
                 actionButton("Open app") { PhoneAction.OpenApp(name.text.toString()) }
             }
+            Tool.MUSIC -> actionButton("Find music apps") { PhoneAction.OpenMusic }
             Tool.HOME -> {
                 body.addView(
                     AppUi.text(this, "Return to your launcher. Other apps keep running in the background.", 14f, secondary = true),
                     AppUi.params(this, 20),
                 )
                 actionButton("Go to Home") { PhoneAction.CloseApp() }
+            }
+            Tool.FLASHLIGHT -> {
+                actionButton("Turn on flashlight") { PhoneAction.Flashlight(true) }
+                actionButton("Turn off flashlight") { PhoneAction.Flashlight(false) }
+            }
+            Tool.AIRPLANE_MODE -> {
+                body.addView(
+                    AppUi.text(this, "Friday opens Android Settings. Change airplane mode there.", 14f, secondary = true),
+                    AppUi.params(this, 20),
+                )
+                actionButton("Open to turn on") { PhoneAction.OpenSettings(SettingsTarget.AIRPLANE_MODE, SettingState.ON) }
+                actionButton("Open to turn off") { PhoneAction.OpenSettings(SettingsTarget.AIRPLANE_MODE, SettingState.OFF) }
             }
             Tool.SOUND -> {
                 val modes = RadioGroup(this).apply { orientation = RadioGroup.VERTICAL }
@@ -320,6 +335,7 @@ class ActionDebugActivity : Activity() {
         val text = when (result) {
             ActionResult.NeedsUnlock -> "Unlock your phone, then try again."
             is ActionResult.Success -> result.confirmation
+            is ActionResult.Handoff -> result.instruction
             is ActionResult.Failed -> result.reason
             is ActionResult.NeedsPermission -> when (result.which) {
                 RequiredAccess.MICROPHONE -> "Allow microphone access to use voice input."
@@ -379,7 +395,10 @@ class ActionDebugActivity : Activity() {
         ALARM("Set an alarm"),
         TIMER("Set a timer"),
         APP("Open an app"),
+        MUSIC("Music apps"),
         HOME("Go to Home"),
         SOUND("Sound mode"),
+        FLASHLIGHT("Flashlight"),
+        AIRPLANE_MODE("Airplane mode settings"),
     }
 }

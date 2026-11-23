@@ -6,6 +6,7 @@ import re
 
 ANDROID = "{http://schemas.android.com/apk/res/android}"
 MODEL_EXTENSIONS = (".tflite", ".onnx", ".pcm", ".wav")
+FRIDAY_WAKE_ASSET = "assets/friday-keyword.bin"
 JNI_SYMBOL_PREFIX = b"Java_com_puneet_friday_debug_wake_MicroWakeWordNative_"
 
 
@@ -26,13 +27,14 @@ def check_release_manifest(xml):
         "Release includes a wake-trial component"
 
 
-def check_apk(path, release=True, require_runtime=False):
+def check_apk(path, release=True, require_runtime=False, require_bundled_model=False):
     with ZipFile(path) as archive:
         names = archive.namelist()
         assert not any(name.lower().endswith(MODEL_EXTENSIONS) for name in names), \
             "APK includes an audio model or test recording"
         runtimes = [name for name in names if "microwakeword" in name.lower() and name.endswith(".so")]
         if release:
+            assert FRIDAY_WAKE_ASSET not in names, "Release includes the Friday wake model"
             assert not runtimes, "Release includes the trial runtime"
             assert not any("wake-trial" in name for name in names), "Release includes trial assets"
             for name in names:
@@ -45,3 +47,9 @@ def check_apk(path, release=True, require_runtime=False):
             for method in (b"create", b"process", b"destroy"):
                 assert JNI_SYMBOL_PREFIX + method + b"\0" in library, \
                     "Wake runtime does not match the app's JNI bridge; rebuild it for this package"
+        if require_bundled_model:
+            assert names.count(FRIDAY_WAKE_ASSET) == 1, "Expected one bundled Friday wake model"
+            model = archive.getinfo(FRIDAY_WAKE_ASSET)
+            assert model.file_size == 48_468, "Bundled Friday wake model has the wrong size"
+            with archive.open(model) as stream:
+                assert stream.read(4) == b"1KWF", "Bundled Friday wake model has the wrong format"

@@ -125,6 +125,83 @@ test("silence, uncertain speech and missing Whisper metadata cannot reach action
   }
 });
 
+test("Groq exposes versioned tools only to clients that request them", async () => {
+  const tools: string[][] = [];
+  const provider = new GroqProvider(CONFIG, async (_, init) => {
+    const body = JSON.parse(String(init?.body)) as { tools: { function: { name: string } }[] };
+    const names = body.tools.map(entry => entry.function.name);
+    tools.push(names);
+    return names.includes("run_actions") ? tool("run_actions", JSON.stringify({
+      actions: [{ action: "flashlight", args: { on: true } }, { action: "open_app", args: { name: "Clock" } }]
+    })) : tool("unsupported", "{}");
+  }, new Runtime());
+  const api = createApi({ assistant: provider, usage: new MockUsage(), secrets: new StaticSecrets(), logger: new RecordingLogger(), clock: new StaticClock() });
+  const event = { rawPath: "/v1/command", headers: {
+    authorization: "Bearer " + signInstallToken(TEST_INSTALL_ID, TEST_SECRETS.jwtSigningKey, TEST_NOW),
+    "content-type": "application/json", "x-now": NOW
+  }, requestContext: { http: { method: "POST" } },
+  body: JSON.stringify({ text: "Turn on the flashlight and open Clock" }) };
+  const old = await api.handle(event);
+  const expanded = await api.handle({ ...event, headers: { ...event.headers, "x-friday-actions": "2" } });
+  const current = await api.handle({ ...event, headers: { ...event.headers, "x-friday-actions": "3" } });
+  assert.deepEqual(JSON.parse(old.body ?? "null"), { type: "unsupported" });
+  assert.deepEqual(JSON.parse(expanded.body ?? "null"), {
+    type: "actions",
+    actions: [
+      { type: "action", action: "flashlight", args: { on: true } },
+      { type: "action", action: "open_app", args: { name: "Clock" } }
+    ]
+  });
+  assert.equal(tools[0]?.includes("flashlight"), false);
+  assert.equal(tools[1]?.includes("set_volume"), true);
+  assert.equal(tools[1]?.includes("open_settings"), false);
+  assert.equal(tools[2]?.includes("open_settings"), true);
+  assert.deepEqual(JSON.parse(current.body ?? "null"), JSON.parse(expanded.body ?? "null"));
+});
+
+test("v3 describes Settings as a user handoff with allowlisted arguments", async () => {
+  let request: Record<string, any> | undefined;
+  const provider = new GroqProvider(CONFIG, async (_url, init) => {
+    request = JSON.parse(String(init?.body));
+    return tool("open_settings", '{"setting":"airplane_mode","state":"on"}');
+  }, new Runtime());
+  const result = await provider.select({ ...INPUT, actionVersion: 3 }, NOW);
+  const declaration = request?.tools.find(
+    (entry: Record<string, any>) => entry.function.name === "open_settings",
+  )?.function;
+
+  assert.deepEqual(declaration.parameters.properties.setting.enum, ["airplane_mode"]);
+  assert.deepEqual(declaration.parameters.properties.state.enum, ["on", "off"]);
+  assert.match(declaration.description, /user completes the switch in Settings/);
+  assert.match(request?.messages[0].content, /user completes the change/);
+  assert.deepEqual(result.selection, {
+    name: "open_settings", args: { setting: "airplane_mode", state: "on" }
+  });
+});
+
+test("exact spoken music and torch commands survive an unsupported model response", async () => {
+  const cases = [
+    ["Turn on the flash light.", { name: "flashlight", args: { on: true } }],
+    ["Could you switch my torch off, please?", { name: "flashlight", args: { on: false } }],
+    ["Play a music.", { name: "open_music", args: {} }],
+    ["Do not turn on the flashlight", { name: "unsupported", args: {} }],
+    ["Turn on the flashlight and take a screenshot", { name: "unsupported", args: {} }],
+    ["Play music in Spotify", { name: "open_app", args: { name: "spotify" } }]
+  ] as const;
+  for (const [phrase, expected] of cases) {
+    let count = 0;
+    const provider = new GroqProvider(CONFIG, async (url) => {
+      count++;
+      return String(url).endsWith("/transcriptions")
+        ? Response.json({ ...TRANSCRIPT, text: phrase })
+        : tool("unsupported", "{}");
+    }, new Runtime());
+    const result = await provider.select({ kind: "audio", bytes: createPcmWav(), mimeType: "audio/wav", actionVersion: 2 }, NOW);
+    assert.deepEqual(result.selection, expected);
+    assert.equal(count, 2);
+  }
+});
+
 test("repairs the reported tool_use_failed JSON error once without retranscribing", async () => {
   const runtime = new Runtime();
   const bodies: Record<string, any>[] = [];

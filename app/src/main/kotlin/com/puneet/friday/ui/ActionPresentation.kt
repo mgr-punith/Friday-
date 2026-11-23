@@ -12,7 +12,16 @@ object ActionPresentation {
         is PhoneAction.SetAlarm -> "Set alarm · ${String.format(Locale.ENGLISH, "%02d:%02d", action.hour, action.minute)}"
         is PhoneAction.SetTimer -> "Set timer · ${duration(action.seconds)}"
         is PhoneAction.OpenApp -> "Open ${action.name}"
+        PhoneAction.OpenMusic -> "Open a music app"
         is PhoneAction.CloseApp -> "Go to home screen"
+        is PhoneAction.Flashlight -> if (action.on) "Turn on flashlight" else "Turn off flashlight"
+        is PhoneAction.SetVolume -> "Set ${action.stream.label.lowercase(Locale.ENGLISH)} volume to ${action.percent}%"
+        is PhoneAction.OpenSettings -> when (action.state) {
+            com.puneet.friday.actions.SettingState.ON -> "Open airplane mode settings · turn on"
+            com.puneet.friday.actions.SettingState.OFF -> "Open airplane mode settings · turn off"
+            null -> "Open airplane mode settings"
+        }
+        is PhoneAction.Sequence -> action.steps.joinToString(" · ", transform = ::describe)
         is PhoneAction.SetRingerMode -> when (action.mode) {
             RingerMode.SILENT -> "Turn on silent mode"
             RingerMode.VIBRATE -> "Turn on vibrate mode"

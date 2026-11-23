@@ -1,4 +1,11 @@
 import type { FunctionSelection } from "./contracts";
+import {
+  LATEST_ACTION_PROTOCOL_VERSION,
+  canPrecedeAnotherAction,
+  supportsAction,
+  type ActionName,
+  type ActionProtocolVersion
+} from "./capabilities";
 
 export const SYSTEM_PROMPT =
   "You control an Android phone. The user speaks English. Pick exactly one function. " +
@@ -52,7 +59,7 @@ export const FUNCTION_DECLARATIONS = [
   },
   {
     name: "open_app",
-    description: "Open, launch, start, or go to a named Android app.",
+    description: "Open, launch, start, or go to a named Android app. When a music request names an app such as Spotify or YouTube, use the named app.",
     parameters: {
       type: "object",
       properties: { name: { type: "string", description: "Full app name as spoken (e.g. Google Chrome), without the launch verb." } },
@@ -93,21 +100,118 @@ export const FUNCTION_DECLARATIONS = [
 
 export const FUNCTION_NAMES = FUNCTION_DECLARATIONS.map((declaration) => declaration.name);
 
-export type ActionName =
-  | "call_contact"
-  | "call_number"
-  | "set_alarm"
-  | "set_timer"
-  | "open_app"
-  | "close_app"
-  | "set_ringer_mode";
+const DEVICE_CONTROLS = [
+  {
+    name: "open_music",
+    description: "Find an installed music app when the user asks to play music or open a music player without naming an app. The phone can ask the user to choose. Do not use for questions, specific tracks, or audio controls.",
+    parameters: { type: "object", properties: {} }
+  },
+  {
+    name: "flashlight",
+    description: "Turn the phone flashlight, flash light, or torch on or off. Require an explicit instruction.",
+    parameters: {
+      type: "object", properties: { on: { type: "boolean" } }, required: ["on"]
+    }
+  },
+  {
+    name: "set_volume",
+    description: "Set media, ring, or alarm volume to a specific percentage. Use media when no stream is named. Do not infer a percentage for a relative change.",
+    parameters: {
+      type: "object",
+      properties: {
+        stream: { type: "string", enum: ["media", "ring", "alarm"] },
+        percent: { type: "integer", minimum: 0, maximum: 100 }
+      },
+      required: ["stream", "percent"]
+    }
+  }
+] as const;
+
+const SETTINGS_HANDOFFS = [
+  {
+    name: "open_settings",
+    description: "Open an allowlisted Android Settings screen when Friday cannot change the setting directly. For airplane mode, the user completes the switch in Settings. This action never claims the setting changed.",
+    parameters: {
+      type: "object",
+      properties: {
+        setting: { type: "string", enum: ["airplane_mode"] },
+        state: { type: "string", enum: ["on", "off"], description: "Requested state, only when the user said on or off." }
+      },
+      required: ["setting"]
+    }
+  }
+] as const;
+
+const MAX_ACTIONS = 3;
+const baseActions = FUNCTION_DECLARATIONS.filter(tool => tool.name !== "unsupported" && tool.name !== "unclear_command");
+const actionDeclarations = [...baseActions, ...DEVICE_CONTROLS, ...SETTINGS_HANDOFFS];
+
+function actionSequence(version: ActionProtocolVersion) {
+  const supported = actionDeclarations.filter(tool =>
+    supportsAction(tool.name as ActionName, version));
+  return {
+    name: "run_actions",
+    description: "Run two or three supported, explicitly requested actions in spoken order. Only flashlight, volume, and ringer changes can precede another action. A call, clock request, app launch, Settings handoff, or Home must be last. If any part is unsupported, use unsupported for the whole request.",
+    parameters: {
+      type: "object",
+      properties: {
+        actions: {
+          type: "array", minItems: 2, maxItems: MAX_ACTIONS,
+          items: {
+            anyOf: supported.map(tool => ({
+              type: "object",
+              properties: {
+                action: { type: "string", enum: [tool.name] },
+                args: { ...tool.parameters, additionalProperties: false }
+              },
+              required: ["action", "args"],
+              additionalProperties: false
+            }))
+          }
+        }
+      },
+      required: ["actions"]
+    }
+  } as const;
+}
+
+export function functionDeclarationsFor(version: ActionProtocolVersion) {
+  if (version === 1) return FUNCTION_DECLARATIONS;
+  const additions = version >= 3 ? [...DEVICE_CONTROLS, ...SETTINGS_HANDOFFS] : DEVICE_CONTROLS;
+  return [...FUNCTION_DECLARATIONS, ...additions, actionSequence(version)] as const;
+}
+
+export function functionNamesFor(version: ActionProtocolVersion): readonly string[] {
+  return functionDeclarationsFor(version).map(tool => tool.name);
+}
+
+export function actionInstructionsFor(version: ActionProtocolVersion): string {
+  if (version === 1) return "";
+  const settings = version >= 3
+    ? " Use open_settings for its allowlisted settings. It opens Android Settings; the user completes the change."
+    : "";
+  return " For several actions, use run_actions for the entire request in spoken order. If any step is unsupported or must leave Friday before a later step, return unsupported without picking a subset." + settings;
+}
+
+export const EXPANDED_FUNCTION_DECLARATIONS = functionDeclarationsFor(2);
+export const EXPANDED_FUNCTION_NAMES = EXPANDED_FUNCTION_DECLARATIONS.map(tool => tool.name);
+export const LATEST_FUNCTION_DECLARATIONS = functionDeclarationsFor(LATEST_ACTION_PROTOCOL_VERSION);
+export const LATEST_FUNCTION_NAMES = functionNamesFor(LATEST_ACTION_PROTOCOL_VERSION);
+
+export type { ActionName, ActionProtocolVersion } from "./capabilities";
+
+type ActionResponse = { readonly type: "action"; readonly action: ActionName; readonly args: Record<string, unknown> };
 
 export type CommandResponse =
-  | { readonly type: "action"; readonly action: ActionName; readonly args: Record<string, unknown> }
+  | ActionResponse
+  | { readonly type: "actions"; readonly actions: readonly ActionResponse[] }
   | { readonly type: "unsupported" }
   | { readonly type: "error"; readonly reason: "bad_audio" };
 
-export function parseFunctionSelection(selection: FunctionSelection): CommandResponse {
+export function parseFunctionSelection(
+  selection: FunctionSelection,
+  version: ActionProtocolVersion = 1
+): CommandResponse {
   const args = isRecord(selection.args) ? selection.args : {};
 
   switch (selection.name) {
@@ -157,6 +261,34 @@ export function parseFunctionSelection(selection: FunctionSelection): CommandRes
         ? action("set_ringer_mode", { mode })
         : badAudio();
     }
+    case "flashlight":
+      if (!supportsAction("flashlight", version)) return unsupported();
+      return typeof args.on === "boolean" && hasOnlyKeys(args, ["on"])
+        ? action("flashlight", { on: args.on })
+        : badAudio();
+    case "open_music":
+      if (!supportsAction("open_music", version)) return unsupported();
+      return hasOnlyKeys(args, []) ? action("open_music", {}) : badAudio();
+    case "set_volume": {
+      if (!supportsAction("set_volume", version)) return unsupported();
+      const stream = args.stream;
+      const percent = readInteger(args, "percent", 0, 100);
+      return (stream === "media" || stream === "ring" || stream === "alarm") &&
+        percent !== undefined && hasOnlyKeys(args, ["stream", "percent"])
+        ? action("set_volume", { stream, percent })
+        : badAudio();
+    }
+    case "open_settings": {
+      if (!supportsAction("open_settings", version)) return unsupported();
+      const setting = args.setting;
+      const state = args.state;
+      if (setting !== "airplane_mode" ||
+          (state !== undefined && state !== "on" && state !== "off") ||
+          !hasOnlyKeys(args, ["setting", "state"])) return badAudio();
+      return action("open_settings", state === undefined ? { setting } : { setting, state });
+    }
+    case "run_actions":
+      return version >= 2 ? parseSequence(args, version) : unsupported();
     case "unclear_command":
       return badAudio();
     case "unsupported":
@@ -173,10 +305,25 @@ export function parseExpectedAction(name: string, args: unknown): CommandRespons
       return action("set_ringer_mode", { mode });
     }
   }
-  return parseFunctionSelection({ name, args });
+  return parseFunctionSelection({ name, args }, LATEST_ACTION_PROTOCOL_VERSION);
 }
 
-function action(actionName: ActionName, args: Record<string, unknown>): CommandResponse {
+function parseSequence(args: Record<string, unknown>, version: ActionProtocolVersion): CommandResponse {
+  const requested = args.actions;
+  if (!hasOnlyKeys(args, ["actions"]) || !Array.isArray(requested) || requested.length < 2 || requested.length > MAX_ACTIONS) return badAudio();
+  const actions: ActionResponse[] = [];
+  for (const step of requested) {
+    if (!isRecord(step) || !hasOnlyKeys(step, ["action", "args"]) ||
+        typeof step.action !== "string" || step.action === "run_actions" || !isRecord(step.args)) return badAudio();
+    const result = parseFunctionSelection({ name: step.action, args: step.args }, version);
+    if (result.type !== "action") return result;
+    if (actions.length < requested.length - 1 && !canPrecedeAnotherAction(result.action)) return unsupported();
+    actions.push(result);
+  }
+  return { type: "actions", actions };
+}
+
+function action(actionName: ActionName, args: Record<string, unknown>): ActionResponse {
   return { type: "action", action: actionName, args };
 }
 

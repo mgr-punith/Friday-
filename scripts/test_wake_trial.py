@@ -7,7 +7,7 @@ from pathlib import Path
 from zipfile import ZipFile
 from xml.etree import ElementTree
 
-from wake_trial_checks import JNI_SYMBOL_PREFIX, check_apk, check_release_manifest, check_signing_certificate
+from wake_trial_checks import FRIDAY_WAKE_ASSET, JNI_SYMBOL_PREFIX, check_apk, check_release_manifest, check_signing_certificate
 
 
 class WakeTrialTests(unittest.TestCase):
@@ -173,6 +173,18 @@ class WakeTrialTests(unittest.TestCase):
                 with self.assertRaisesRegex(AssertionError, "JNI bridge"):
                     check_apk(path, release=False, require_runtime=True)
 
+    def test_owner_model_is_debug_only_and_has_expected_format(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "test.apk"
+            with ZipFile(path, "w") as archive:
+                archive.writestr(FRIDAY_WAKE_ASSET, b"1KWF" + bytes(48_464))
+            check_apk(path, release=False, require_bundled_model=True)
+            with self.assertRaisesRegex(AssertionError, "Release includes the Friday wake model"):
+                check_apk(path)
+            with ZipFile(path, "w") as archive:
+                archive.writestr(FRIDAY_WAKE_ASSET, b"bad")
+            with self.assertRaisesRegex(AssertionError, "wrong size"):
+                check_apk(path, release=False, require_bundled_model=True)
 
 
 if __name__ == "__main__":

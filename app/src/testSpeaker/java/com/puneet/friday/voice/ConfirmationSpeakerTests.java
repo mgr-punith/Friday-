@@ -28,7 +28,7 @@ public final class ConfirmationSpeakerTests {
     public static void main(String[] args) throws Exception {
         if (args.length == 0) {
             // SharedTextToSpeech is a process singleton; each engine-failure scenario gets a fresh JVM.
-            for (String scenario : List.of("detached", "launcher", "replacement", "missing", "language", "rejected", "startup-timeout", "playback-timeout")) {
+            for (String scenario : List.of("detached", "launcher", "replacement", "missing", "language", "rejected", "startup-timeout", "playback-timeout", "network-choice", "offline-choice", "offline-alternative")) {
                 Process child = new ProcessBuilder(
                     Path.of(System.getProperty("java.home"), "bin", "java").toString(),
                     "-cp", System.getProperty("java.class.path"),
@@ -46,11 +46,39 @@ public final class ConfirmationSpeakerTests {
             case "rejected" -> rejected();
             case "startup-timeout" -> timeout(false);
             case "playback-timeout" -> timeout(true);
+            case "network-choice" -> privateChoice(true);
+            case "offline-choice" -> privateChoice(false);
+            case "offline-alternative" -> {
+                TextToSpeech.offlineAlternative = true;
+                privateChoice(true);
+            }
             default -> throw new AssertionError("Unknown speaker scenario");
         }
         expect(DebugTools.INSTANCE.activeSpeakers() == 0, "Speech cleanup releases the wake gate");
         expect(Handler.pendingTasks() == 0, "Speech cleanup removes watchdog and waveform tasks");
         System.out.println(checks + " confirmation speaker checks passed (" + args[0] + ")");
+    }
+
+    private static void privateChoice(boolean networkRequired) {
+        TextToSpeech.networkVoice = networkRequired;
+        Screen screen = new Screen();
+        ConfirmationSpeaker speaker = screen.speaker();
+        String question = "Sample contact one. Sample contact two. Which one should I call?";
+        speaker.speakOffline(question);
+        Handler.idle();
+        TextToSpeech engine = TextToSpeech.current;
+        if (networkRequired && !TextToSpeech.offlineAlternative) {
+            expect(engine.utterances.isEmpty(), "Never pass the contact list to a network voice");
+            expect(screen.completions == 1, "Skipped speech releases the playback session");
+        } else {
+            expect(engine.utterances.size() == 1, "Read the choices with an offline voice");
+            expect(engine.utterances.get(0).text().equals(question), "Read the names and question together");
+            expect(!engine.getVoice().isNetworkConnectionRequired(), "Contact choices use the local voice");
+            speaker.stop();
+            Handler.idle();
+            expect(engine.listener == null, "Canceling the chooser stops reading the names");
+            expect(engine.getVoice().isNetworkConnectionRequired() == networkRequired, "Restore the normal voice after the contact chooser");
+        }
     }
 
     private static void detached() {

@@ -5,14 +5,18 @@ import android.app.Dialog
 import com.puneet.friday.actions.ActionResult
 import com.puneet.friday.actions.AndroidActionExecutor
 import com.puneet.friday.actions.DeviceLock
+import com.puneet.friday.actions.PhoneAction
 import com.puneet.friday.ui.FridayDialog
 
 /** Completes a prepared action from the visible assistant UI. */
 class VoiceActionRunner(
     private val activity: Activity,
     private val onResult: (ActionResult, Long) -> Unit,
+    private val speakChoices: (String) -> Unit,
+    private val stopSpeech: () -> Unit,
 ) {
     private var activeDialog: Dialog? = null
+    private var speakingChoices = false
 
     fun handle(prepared: AndroidActionExecutor.Preparation) {
         val action = when (prepared) {
@@ -35,8 +39,15 @@ class VoiceActionRunner(
                     onCancel = { completeCancelled() },
                 ) { index ->
                     activeDialog = null
+                    stopChoiceSpeech()
                     prepared.options.getOrNull(index)?.ready?.let(::finish)
                         ?: onResult(ActionResult.Failed("Try again"), 0L)
+                }
+                if (prepared.action is PhoneAction.CallContact && !DeviceLock.isLocked(activity)) {
+                    val labels = prepared.options.take(5).map { it.spokenLabel }
+                    val remaining = if (prepared.options.size > labels.size) ". More matches are on screen" else ""
+                    speakingChoices = true
+                    speakChoices(labels.joinToString(". ", postfix = "$remaining. ${prepared.question}"))
                 }
             }
         }
@@ -45,6 +56,7 @@ class VoiceActionRunner(
     fun cancel() {
         activeDialog?.dismiss()
         activeDialog = null
+        stopChoiceSpeech()
     }
 
     private fun finish(ready: AndroidActionExecutor.Preparation.Ready) {
@@ -55,6 +67,12 @@ class VoiceActionRunner(
         val target = ready.confirmationTarget
         if (target == null) {
             run(ready)
+            return
+        }
+        val started = android.os.SystemClock.elapsedRealtime()
+        val direct = ready.runDirectIfUnlocked?.invoke()
+        if (direct != null) {
+            onResult(direct, android.os.SystemClock.elapsedRealtime() - started)
             return
         }
         activeDialog = FridayDialog.show(
@@ -78,6 +96,13 @@ class VoiceActionRunner(
 
     private fun completeCancelled() {
         activeDialog = null
+        stopChoiceSpeech()
         onResult(ActionResult.Failed("Cancelled"), 0L)
+    }
+
+    private fun stopChoiceSpeech() {
+        if (!speakingChoices) return
+        speakingChoices = false
+        stopSpeech()
     }
 }

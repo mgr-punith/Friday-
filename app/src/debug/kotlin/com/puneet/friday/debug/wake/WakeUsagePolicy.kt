@@ -13,8 +13,11 @@ internal object WakeUsagePolicy {
     fun accepts(mode: Mode, currentRevision: Long, requestedRevision: Long): Boolean =
         mode == Mode.HEY_FRIDAY && currentRevision > 0 && requestedRevision == currentRevision
 
-    fun canAdopt(state: WakeTrialSession.Snapshot): Boolean = state.active && state.commandMode &&
-        state.threshold == WakeTrialSession.DEFAULT_THRESHOLD && state.phase != WakeTrialSession.Phase.STOPPING
+    fun threshold(higherSensitivity: Boolean): Float =
+        if (higherSensitivity) WakeTrialSession.HIGHER_SENSITIVITY_THRESHOLD else WakeTrialSession.DEFAULT_THRESHOLD
+
+    fun canAdopt(state: WakeTrialSession.Snapshot, threshold: Float = WakeTrialSession.DEFAULT_THRESHOLD): Boolean =
+        state.active && state.commandMode && state.threshold == threshold && state.phase != WakeTrialSession.Phase.STOPPING
 
     fun retainsNotification(controlled: Boolean, mode: Mode): Boolean = controlled && mode == Mode.HEY_FRIDAY
 

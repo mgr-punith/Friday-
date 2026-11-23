@@ -20,7 +20,6 @@ internal object WakeUsageNotification {
         val intent = Intent(context, WakeTrialService::class.java)
             .setAction(if (active) WakeTrialService.PAUSE_USAGE else WakeTrialService.START)
             .putExtra(WakeTrialService.USAGE_REVISION, WakeUsageStore.revision(context))
-            .putExtra(WakeTrialService.THRESHOLD, WakeTrialSession.DEFAULT_THRESHOLD)
             .putExtra(WakeTrialService.COMMAND_MODE, true)
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         val toggle = if (active) PendingIntent.getService(context, 71, intent, flags)

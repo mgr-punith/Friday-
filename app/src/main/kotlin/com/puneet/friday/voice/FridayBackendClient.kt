@@ -5,6 +5,7 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.SystemClock
 import com.puneet.friday.BuildConfig
+import com.puneet.friday.actions.PhoneCapabilityRegistry
 import com.puneet.friday.auth.AccountClient
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -78,6 +79,7 @@ class FridayBackendClient(
             setRequestProperty("content-type", "audio/wav")
             setRequestProperty("authorization", "Bearer $token")
             setRequestProperty("x-now", OffsetDateTime.now().toString())
+            setRequestProperty("x-friday-actions", PhoneCapabilityRegistry.ACTION_PROTOCOL_VERSION.toString())
             setFixedLengthStreamingMode(wavBytes.size)
             doOutput = true
         }
@@ -126,7 +128,17 @@ class FridayBackendClient(
 
     private fun HttpURLConnection.responseBody(code: Int): String {
         val stream = if (code in 200..299) inputStream else errorStream
-        return stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+        return stream?.bufferedReader(Charsets.UTF_8)?.use { reader ->
+            val buffer = CharArray(16_385)
+            var size = 0
+            while (size < buffer.size) {
+                val count = reader.read(buffer, size, buffer.size - size)
+                if (count < 0) break
+                size += count
+            }
+            if (size == buffer.size) throw IOException("response_too_large")
+            String(buffer, 0, size)
+        }.orEmpty()
     }
 
     private inline fun <T> HttpURLConnection.useResponse(block: (HttpURLConnection) -> T): T = try {

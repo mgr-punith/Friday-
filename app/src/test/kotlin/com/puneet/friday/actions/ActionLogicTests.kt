@@ -69,6 +69,24 @@ object ActionLogicTests {
             NameMatcher.matchContact("When I call Mom", listOf("Mom")) == MatchResult.NotFound,
             "Do not pull a contact out of the middle of a sentence",
         )
+        expect(NameMatcher.matchContact("Call Sara", listOf("Sarah Rao", "Alexander")) ==
+            MatchResult.Ambiguous(listOf(0)), "A nearby spelling needs an explicit contact choice")
+        expect(NameMatcher.matchContact("Call my mother", listOf("Mom", "Amrita")) ==
+            MatchResult.Ambiguous(listOf(0)), "A family-name alias never bypasses the contact chooser")
+        expect(NameMatcher.matchContact("Call my mom", listOf("Mom")) ==
+            MatchResult.Matched(0), "A possessive prefix can be removed before exact matching")
+        expect(NameMatcher.matchContact("Call Rohan", listOf("Mohan", "Ravi")) ==
+            MatchResult.NotFound, "A nearby name with a different initial is not suggested")
+        expect(NameMatcher.matchContact("Kaul Pradeep", listOf("Pradeep", "Prateek")) ==
+            MatchResult.Ambiguous(listOf(0)), "A misheard call prefix leads to a contact choice")
+        expect(NameMatcher.matchContact("Call Kaul Pradeep", listOf("Pradeep", "Kaul Pradeep")) ==
+            MatchResult.Ambiguous(listOf(1, 0)), "A saved Kaul name remains available beside the speech correction")
+        expect(NameMatcher.matchContact("Call Pradeer", listOf("Pradeep")) ==
+            MatchResult.Ambiguous(listOf(0)), "A single spelling error leads to a contact choice")
+        expect(NameMatcher.isExactContactName("Please call Pradeep", "Pradeep"), "An exact saved name can dial directly")
+        expect(!NameMatcher.isExactContactName("Kaul Pradeep", "Kaul Pradeep"), "A possible misheard prefix cannot dial directly")
+        expect(!NameMatcher.isExactContactName("Pradeer", "Pradeep"), "A similar spelling cannot dial directly")
+        expect(!NameMatcher.isExactContactName("Pradeep", "Pradeep Rao"), "A partial name cannot dial directly")
 
         val chrome = LauncherApp("Chrome", "com.android.chrome")
         val beta = LauncherApp("Chrome Beta", "com.chrome.beta")
@@ -123,9 +141,22 @@ object ActionLogicTests {
             AppNameMatcher.match("Clock", listOf(LauncherApp("Clock", "com.example.clock"))) == MatchResult.Matched(0),
             "Retain ordinary launcher-label matching",
         )
+        val youtube = LauncherApp("YouTube", "com.google.android.youtube")
+        val music = LauncherApp("Music", "com.android.bbkmusic")
+        val files = LauncherApp("Files", "com.example.files")
+        val offline = LauncherApp("Offline Audio", "com.example.audio")
+        val audioApps = listOf(youtube, music, offline, offline, files)
+        expect(AppNameMatcher.match("YouTube Music", audioApps) == MatchResult.NotFound,
+            "An absent YouTube Music app does not open YouTube")
+        expect(MusicApps.find(audioApps, emptySet(), setOf(files.packageName, offline.packageName)) ==
+            listOf(music, offline, youtube), "Music candidates are installed, deduplicated, and exclude a generic file handler")
+        expect(MusicApps.find(listOf(offline), setOf(offline.packageName), emptySet()) == listOf(offline),
+            "An installed app that advertises music playback is eligible without a known package")
 
         expect(normalizePhoneNumber("+91 (98765) 43210") == "+919876543210", "Normalize formatted international numbers")
         expect(normalizePhoneNumber("555-0100") == "5550100", "Normalize local numbers")
+        expect(normalizePhoneNumber("+९१\u00A0९८७६५‑४३२१०") == "+919876543210", "Accept saved Unicode digits and phone formatting")
+        expect(normalizePhoneNumber("९८७६५,१२") == null, "Unicode digits do not allow post-dial instructions")
         expect(normalizePhoneNumber("*123#") == null, "USSD must never become a phone call")
         expect(normalizePhoneNumber("5550100,12") == null, "Reject post-dial digits")
         expect(normalizePhoneNumber("5550100;12") == null, "Reject wait instructions")
@@ -146,6 +177,52 @@ object ActionLogicTests {
         expect(PhoneAction.SetTimer(-10).validationError() != null, "Negative timer is invalid")
         expect(PhoneAction.CloseApp().validationError() == null, "Going home needs no name")
         expect(PhoneAction.SetRingerMode(RingerMode.SILENT).validationError() == null, "Typed ringer modes are valid")
+        val airplaneOn = PhoneAction.OpenSettings(SettingsTarget.AIRPLANE_MODE, SettingState.ON)
+        expect(airplaneOn.validationError() == null, "Typed Settings handoffs are valid")
+        expect(PhoneCapabilityRegistry.ACTION_PROTOCOL_VERSION == 3, "Android requests the v3 capability contract")
+        expect(PhoneCapabilityRegistry.capability(airplaneOn).id == "open_settings", "Settings uses a stable capability id")
+        expect(!PhoneCapabilityRegistry.canPrecedeAnother(airplaneOn), "A Settings handoff is terminal")
+        expect(
+            PhoneAction.Sequence(listOf(airplaneOn, PhoneAction.Flashlight(false))).validationError() != null,
+            "A Settings handoff cannot run before another step",
+        )
+        expect(
+            PhoneAction.Sequence(listOf(PhoneAction.Flashlight(false), airplaneOn)).validationError() == null,
+            "A local control can run before a Settings handoff",
+        )
+        val routes = SettingsHandoff.routes(SettingsTarget.AIRPLANE_MODE)
+        expect(
+            routes == listOf(
+                SettingsHandoff.Route.AIRPLANE_MODE,
+                SettingsHandoff.Route.WIRELESS,
+                SettingsHandoff.Route.SETTINGS,
+            ),
+            "Airplane mode uses bounded public Settings fallbacks",
+        )
+        expect(
+            routes.map { it.intentAction } == listOf(
+                "android.settings.AIRPLANE_MODE_SETTINGS",
+                "android.settings.WIRELESS_SETTINGS",
+                "android.settings.SETTINGS",
+            ),
+            "Settings intents come from fixed route templates",
+        )
+        val attempts = mutableListOf<SettingsHandoff.Route>()
+        val fallback = SettingsHandoff.firstAvailable(routes) { route ->
+            attempts += route
+            if (route != SettingsHandoff.Route.SETTINGS) throw UnsupportedOperationException("Unavailable")
+        }
+        expect(fallback == SettingsHandoff.Route.SETTINGS && attempts == routes,
+            "Missing Settings screens fall back in order")
+        expect(SettingsHandoff.firstAvailable(routes) { throw SecurityException("Blocked") } == null,
+            "Blocked Settings screens fail without a crash")
+        expect(SettingsHandoff.instruction(airplaneOn) == "Turn airplane mode on here",
+            "Settings handoff names the remaining user step")
+        expect(
+            SettingsHandoff.instruction(PhoneAction.OpenSettings(SettingsTarget.AIRPLANE_MODE)) ==
+                "Change airplane mode here",
+            "A state-free request stays truthful",
+        )
         expect(
             RingerModePolicy.requiredAccess(RingerMode.SILENT, notificationPolicyGranted = false) ==
                 RequiredAccess.NOTIFICATION_POLICY,
@@ -174,6 +251,7 @@ object ActionLogicTests {
             PhoneAction.SetRingerMode(RingerMode.SILENT) to false,
             PhoneAction.SetRingerMode(RingerMode.VIBRATE) to false,
             PhoneAction.SetRingerMode(RingerMode.NORMAL) to false,
+            airplaneOn to true,
         )
         lockPolicyCases.forEach { (action, requiresUnlock) ->
             expect(

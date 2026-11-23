@@ -4,10 +4,6 @@ package com.puneet.friday.actions
 object LockedActionPolicy {
     fun requiresUnlock(action: PhoneAction, locked: Boolean): Boolean {
         if (!locked) return false
-        return when (action) {
-            is PhoneAction.CallContact, is PhoneAction.CallNumber,
-            is PhoneAction.SetTimer, is PhoneAction.SetRingerMode -> false
-            else -> true
-        }
+        return PhoneCapabilityRegistry.requiresUnlock(action)
     }
 }
