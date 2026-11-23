@@ -59,7 +59,7 @@ export const FUNCTION_DECLARATIONS = [
   },
   {
     name: "open_app",
-    description: "Open, launch, start, or go to a named Android app. When a music request names an app such as Spotify or YouTube, use the named app.",
+    description: "Open, launch, start, or go to a named Android app, including requests to open a music player by name.",
     parameters: {
       type: "object",
       properties: { name: { type: "string", description: "Full app name as spoken (e.g. Google Chrome), without the launch verb." } },
@@ -143,8 +143,20 @@ const SETTINGS_HANDOFFS = [
 ] as const;
 
 const MAX_ACTIONS = 3;
+const PLAY_MEDIA = {
+  name: "play_media",
+  description: "Request a specific song, artist, or album in a music player. Include the player only if the user named it.",
+  parameters: {
+    type: "object",
+    properties: {
+      query: { type: "string", description: "Spoken title and any artist, without the play command or player name." },
+      appName: { type: "string", description: "Optional music player name as spoken." }
+    },
+    required: ["query"]
+  }
+} as const;
 const baseActions = FUNCTION_DECLARATIONS.filter(tool => tool.name !== "unsupported" && tool.name !== "unclear_command");
-const actionDeclarations = [...baseActions, ...DEVICE_CONTROLS, ...SETTINGS_HANDOFFS];
+const actionDeclarations = [...baseActions, ...DEVICE_CONTROLS, ...SETTINGS_HANDOFFS, PLAY_MEDIA];
 
 function actionSequence(version: ActionProtocolVersion) {
   const supported = actionDeclarations.filter(tool =>
@@ -178,7 +190,7 @@ function actionSequence(version: ActionProtocolVersion) {
 export function functionDeclarationsFor(version: ActionProtocolVersion) {
   if (version === 1) return FUNCTION_DECLARATIONS;
   const additions = version >= 3 ? [...DEVICE_CONTROLS, ...SETTINGS_HANDOFFS] : DEVICE_CONTROLS;
-  return [...FUNCTION_DECLARATIONS, ...additions, actionSequence(version)] as const;
+  return [...FUNCTION_DECLARATIONS, ...additions, ...(version >= 4 ? [PLAY_MEDIA] : []), actionSequence(version)] as const;
 }
 
 export function functionNamesFor(version: ActionProtocolVersion): readonly string[] {
@@ -190,7 +202,8 @@ export function actionInstructionsFor(version: ActionProtocolVersion): string {
   const settings = version >= 3
     ? " Use open_settings for its allowlisted settings. It opens Android Settings; the user completes the change."
     : "";
-  return " For several actions, use run_actions for the entire request in spoken order. If any step is unsupported or must leave Friday before a later step, return unsupported without picking a subset." + settings;
+  const music = version >= 4 ? " Use play_media for named music, including a title followed by a player name. Use open_music for generic music requests and open_app to open a named player." : "";
+  return " For several actions, use run_actions for the entire request in spoken order. If any step is unsupported or must leave Friday before a later step, return unsupported without picking a subset." + settings + music;
 }
 
 export const EXPANDED_FUNCTION_DECLARATIONS = functionDeclarationsFor(2);
@@ -269,6 +282,15 @@ export function parseFunctionSelection(
     case "open_music":
       if (!supportsAction("open_music", version)) return unsupported();
       return hasOnlyKeys(args, []) ? action("open_music", {}) : badAudio();
+    case "play_media": {
+      if (!supportsAction("play_media", version)) return unsupported();
+      if (!hasOnlyKeys(args, ["query", "appName"]) || Object.values(args).some(value =>
+        typeof value !== "string" || /[\u0000-\u001f\u007f-\u009f]/u.test(value))) return badAudio();
+      const query = readShortString(args, "query", 160);
+      const appName = readOptionalShortString(args, "appName");
+      if (!query || appName === null) return badAudio();
+      return action("play_media", appName === undefined ? { query } : { query, appName });
+    }
     case "set_volume": {
       if (!supportsAction("set_volume", version)) return unsupported();
       const stream = args.stream;
