@@ -7,6 +7,27 @@ import {
 } from "../src/core/action-schema";
 import { actionProtocolVersion } from "../src/core/capabilities";
 
+test("named media is a validated terminal v4 handoff", () => {
+  const args = { query: "Believer", appName: "Spotify" };
+  const play = { name: "play_media", args };
+  assert.equal(actionProtocolVersion("4"), 4);
+  for (const version of [1, 2, 3] as const) {
+    assert.equal(functionNamesFor(version).includes(play.name), false);
+    assert.deepEqual(parseFunctionSelection(play, version), { type: "unsupported" });
+  }
+  assert.equal(functionNamesFor(4).includes(play.name), true);
+  assert.deepEqual(parseFunctionSelection(play, 4), { type: "action", action: play.name, args });
+  for (const fields of [{}, { query: "x".repeat(161) }, { query: "\nBeliever" },
+    { ...args, package: "app" }, { ...args, appName: null }]) {
+    assert.deepEqual(parseFunctionSelection({ ...play, args: fields }, 4), { type: "error", reason: "bad_audio" });
+  }
+  const media = { action: play.name, args };
+  const light = { action: "flashlight", args: { on: true } };
+  const sequence = (actions: unknown[]) => parseFunctionSelection({ name: "run_actions", args: { actions } }, 4);
+  assert.equal(sequence([light, media]).type, "actions");
+  assert.equal(sequence([media, light]).type, "unsupported");
+});
+
 test("accepts every v1 action with valid arguments", () => {
   const cases = [
     ["call_contact", { name: "Mom" }, { type: "action", action: "call_contact", args: { name: "Mom" } }],

@@ -131,6 +131,7 @@ test("Groq exposes versioned tools only to clients that request them", async () 
     const body = JSON.parse(String(init?.body)) as { tools: { function: { name: string } }[] };
     const names = body.tools.map(entry => entry.function.name);
     tools.push(names);
+    if (names.includes("play_media")) return tool("play_media", '{"query":"Believer","appName":"YouTube"}');
     return names.includes("run_actions") ? tool("run_actions", JSON.stringify({
       actions: [{ action: "flashlight", args: { on: true } }, { action: "open_app", args: { name: "Clock" } }]
     })) : tool("unsupported", "{}");
@@ -144,6 +145,12 @@ test("Groq exposes versioned tools only to clients that request them", async () 
   const old = await api.handle(event);
   const expanded = await api.handle({ ...event, headers: { ...event.headers, "x-friday-actions": "2" } });
   const current = await api.handle({ ...event, headers: { ...event.headers, "x-friday-actions": "3" } });
+  const namedSong = await api.handle({ ...event, headers: { ...event.headers, "x-friday-actions": "4" },
+    body: JSON.stringify({ text: "Play Believer in YouTube" }) });
+  assert.equal(tools[2]?.includes("play_media"), false);
+  assert.deepEqual(JSON.parse(namedSong.body ?? "null"), {
+    type: "action", action: "play_media", args: { query: "Believer", appName: "YouTube" }
+  });
   assert.deepEqual(JSON.parse(old.body ?? "null"), { type: "unsupported" });
   assert.deepEqual(JSON.parse(expanded.body ?? "null"), {
     type: "actions",

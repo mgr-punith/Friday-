@@ -112,7 +112,7 @@ test("authorized text command returns a validated action and timing", async () =
 });
 
 test("command header negotiates the action protocol version", async () => {
-  for (const [headerValue, expectedVersion] of [[undefined, undefined], ["2", 2], ["3", 3], ["99", undefined]] as const) {
+  for (const [headerValue, expectedVersion] of [[undefined, undefined], ["2", 2], ["3", 3], ["4", 4], ["99", undefined]] as const) {
     const { api, assistant } = harness();
     const headers: Record<string, string> = {
       authorization: `Bearer ${token()}`,
