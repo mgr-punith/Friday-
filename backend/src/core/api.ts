@@ -1,4 +1,5 @@
 import { parseFunctionSelection, type CommandResponse } from "./action-schema";
+import { actionProtocolVersion } from "./capabilities";
 import {
   AssistantProviderError,
   type AssistantProvider,
@@ -156,8 +157,12 @@ async function handleCommand(
   }
 
   try {
-    const result = await dependencies.assistant.select(input, now);
-    const response = parseFunctionSelection(result.selection);
+    const actionVersion = actionProtocolVersion(header(event, "x-friday-actions"));
+    const result = await dependencies.assistant.select(
+      actionVersion === 1 ? input : { ...input, actionVersion },
+      now,
+    );
+    const response = parseFunctionSelection(result.selection, actionVersion);
     return response.type === "error"
       ? commandError(400, response.reason, result.durationMs, result.timingMetric, result.stages)
       : commandSuccess(response, result.durationMs, result.timingMetric, result.stages);

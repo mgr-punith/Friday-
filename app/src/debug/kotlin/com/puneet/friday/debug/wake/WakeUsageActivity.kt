@@ -10,14 +10,12 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
 import android.widget.Button
 import android.widget.LinearLayout
-import android.widget.ProgressBar
 import android.widget.RadioButton
 import android.widget.TextView
 import com.puneet.friday.R
@@ -28,9 +26,6 @@ import com.puneet.friday.ui.FridayDialog
 import com.puneet.friday.ui.AnchoredPopup
 import com.puneet.friday.ui.SettingsGroup
 import com.puneet.friday.ui.SettingsRow
-import java.io.IOException
-import java.util.concurrent.Executors
-import java.util.concurrent.Future
 
 /** Entry choice for the existing opt-in trial; selecting a row never starts audio. */
 class WakeUsageActivity : Activity() {
@@ -38,28 +33,22 @@ class WakeUsageActivity : Activity() {
     private val options = mutableMapOf<WakeUsagePolicy.Mode, RadioButton>()
     private lateinit var apply: Button
     private lateinit var status: TextView
-    private lateinit var progress: ProgressBar
-    private lateinit var cancelDownload: Button
     private lateinit var assistantFallback: Button
     private lateinit var backgroundSettings: SettingsGroup
+    private lateinit var sensitivity: SettingsRow
+    private lateinit var audioTrace: SettingsRow
     private val help by lazy { AnchoredPopup(this) }
     private var pendingPermission = false
     private var pendingAssistantSettings = false
     private var assistantSelected = false
     private var showAssistantFallback = false
     private var message: String? = null
-    private enum class ModelState { CHECKING, REQUIRED, DOWNLOADING, INSTALLING, READY, RUNTIME_MISSING, UNSUPPORTED }
     private data class RenderState(val mode: WakeUsagePolicy.Mode, val phase: WakeTrialSession.Phase,
-        val message: String?, val model: ModelState, val progress: Int,
-        val assistantSelected: Boolean, val assistantFallback: Boolean)
-    private var model = ModelState.CHECKING
-    private var downloadPercent = 0
+        val message: String?,
+        val assistantSelected: Boolean, val assistantFallback: Boolean, val higherSensitivity: Boolean,
+        val tracking: Boolean)
+    private val modelAvailable by lazy { FridayKeywordModel.available(assets) }
     private var rendered: RenderState? = null
-    private val worker = Executors.newSingleThreadExecutor()
-    private var work: Future<*>? = null
-    private var installer: WakeModelInstaller? = null
-    private var workGeneration = 0
-    private var downloadTimeout: Runnable? = null
     private val main = Handler(Looper.getMainLooper())
     private val refresh = object : Runnable {
         override fun run() { render(); main.postDelayed(this, 500) }
@@ -84,25 +73,17 @@ class WakeUsageActivity : Activity() {
             accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
         }
         content.addView(status, AppUi.params(this, 16))
-        progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 100
-            progressTintList = ColorStateList.valueOf(getColor(R.color.accent))
-            contentDescription = "Hey Friday download"
-        }
-        content.addView(progress, AppUi.params(this, 8).apply { height = AppUi.dp(this@WakeUsageActivity, 4) })
         apply = AppUi.button(this, "Use Tap to speak", AppUi.ButtonTone.PRIMARY) { useSelection() }
         content.addView(apply, AppUi.params(this, 16))
         assistantFallback = AppUi.button(this, "Open Default apps") {
             openAssistantSettings(AssistantSettings.Destination.DEFAULT_APPS)
         }
         content.addView(assistantFallback, AppUi.params(this, 8))
-        cancelDownload = AppUi.button(this, "Cancel download") {
-            cancelWork()
-            message = "Download cancelled."
-            checkModel()
-        }
-        content.addView(cancelDownload, AppUi.params(this, 8))
+        sensitivity = SettingsRow(this, "Wake sensitivity") { chooseSensitivity() }
+        audioTrace = SettingsRow(this, "Wake audio tracker") { showAudioTraceOptions() }
         backgroundSettings = SettingsGroup(this).apply {
+            addRow(sensitivity)
+            addRow(audioTrace)
             addRow(SettingsRow(this@WakeUsageActivity, "Background listening") {
                 startActivity(Intent(this@WakeUsageActivity, WakeBackgroundActivity::class.java))
             })
@@ -122,7 +103,6 @@ class WakeUsageActivity : Activity() {
         }
         setContentView(scroll)
         render()
-        checkModel()
     }
 
     private fun addOption(content: SettingsGroup, mode: WakeUsagePolicy.Mode, label: String, explanation: String) {
@@ -156,22 +136,20 @@ class WakeUsageActivity : Activity() {
         message = null
         if (selected == WakeUsagePolicy.Mode.TAP) {
             if (!WakeUsageStore.select(this, selected)) { showError("Couldn't save your choice. Try again."); return }
-            cancelWork()
             WakeTrialService.stopForAssistant()
             WakeUsageNotification.cancel(this)
             finish()
             return
         }
-        if (model == ModelState.REQUIRED) { downloadModel(); return }
-        if (model != ModelState.READY) return
+        if (!modelAvailable) return
         val state = WakeTrialService.session.snapshot()
-        if (state.active && !WakeUsagePolicy.canAdopt(state)) {
+        if (state.active && !WakeUsagePolicy.canAdopt(state, WakeUsageStore.threshold(this))) {
             showError("Stop the wake detector test, then try again.")
             return
         }
         if (!WakeUsageStore.consented(this)) {
             FridayDialog.show(this, "Use Hey Friday?",
-                "Friday checks for “Hey Friday” on this phone. After a wake, Friday sends your command audio to its Vercel backend and Groq to transcribe it and choose a phone action. Friday does not save audio or transcripts.",
+                "Friday checks for “Hey Friday” on this phone. After a wake, Friday sends your command audio to its Vercel backend and Groq to transcribe it and choose a phone action. Friday does not save command recordings or transcripts.",
                 positive = "Allow Hey Friday", negative = "Not now",
             ) { WakeUsageStore.consent(this); checkPermissions() }
         } else checkPermissions()
@@ -222,7 +200,6 @@ class WakeUsageActivity : Activity() {
         try {
             startForegroundService(Intent(this, WakeTrialService::class.java).setAction(WakeTrialService.START)
                 .putExtra(WakeTrialService.USAGE_REVISION, WakeUsageStore.revision(this))
-                .putExtra(WakeTrialService.THRESHOLD, WakeTrialSession.DEFAULT_THRESHOLD)
                 .putExtra(WakeTrialService.COMMAND_MODE, true))
             ReadyNotification.setEnabled(this, false)
             finish()
@@ -233,81 +210,36 @@ class WakeUsageActivity : Activity() {
 
     private fun showError(value: String) { message = value; render() }
 
-    private fun checkModel() {
-        model = ModelState.CHECKING
-        render()
-        val generation = ++workGeneration
-        val task = WakeModelInstaller(filesDir)
-        installer = task
-        work = worker.submit {
-            val result = when {
-                "arm64-v8a" !in Build.SUPPORTED_ABIS -> ModelState.UNSUPPORTED
-                !MicroWakeWordNative.available -> ModelState.RUNTIME_MISSING
-                else -> try {
-                    if (task.isInstalled()) ModelState.READY else ModelState.REQUIRED
-                } catch (_: IOException) { ModelState.REQUIRED }
-                  catch (_: SecurityException) { ModelState.REQUIRED }
-            }
-            main.post {
-                if (!isDestroyed && generation == workGeneration) { model = result; render() }
-            }
+    private fun chooseSensitivity() {
+        if (WakeTrialService.session.snapshot().active) {
+            FridayDialog.show(this, "Wake sensitivity", "Pause Hey Friday from its notification to change sensitivity.")
+            return
+        }
+        FridayDialog.choices(
+            this, "Wake sensitivity", listOf("Standard", "Higher · May wake during other speech"),
+        ) { choice ->
+            WakeUsageStore.setHigherSensitivity(this, choice == 1)
+            render()
         }
     }
 
-    private fun downloadModel() {
-        model = ModelState.DOWNLOADING
-        downloadPercent = 0
-        message = null
-        render()
-        val generation = ++workGeneration
-        val task = WakeModelInstaller(filesDir, trace = { Log.d("FridayWakeSetup", it) })
-        installer = task
-        downloadTimeout = Runnable {
-            if (generation == workGeneration) {
-                cancelWork()
-                model = ModelState.REQUIRED
-                showError("Download took too long. Try again.")
+    private fun showAudioTraceOptions() {
+        val tracking = WakeAudioTrace.isActive()
+        val count = WakeAudioTrace.count(this)
+        val action = if (tracking) "Stop tracking" else "Start tracking"
+        val choices = if (count == 0) listOf(action) else listOf(action, "Delete recorded clips ($count)")
+        FridayDialog.choices(this, "Wake audio tracker", choices) { selection ->
+            when {
+                selection == 1 -> WakeAudioTrace.clear(this)
+                tracking -> WakeAudioTrace.stop()
+                else -> FridayDialog.show(
+                    this, "Collect wake clips?",
+                    "For 15 minutes, Friday can save up to two seconds of audio before each wake. It keeps the last 16 clips in private storage on this phone. You can delete them here. USB or wireless debugging can retrieve them.",
+                    positive = "Start tracking", negative = "Cancel",
+                ) { WakeAudioTrace.start(); render() }
             }
-        }.also { main.postDelayed(it, 25_000) }
-        work = worker.submit {
-            var installing = false
-            val error = try {
-                task.install(onInstalling = { installing = true; main.post {
-                    if (!isDestroyed && generation == workGeneration) { model = ModelState.INSTALLING; render() }
-                } }) { percent -> main.post {
-                    if (!isDestroyed && generation == workGeneration) { downloadPercent = percent; render() }
-                } }
-                null
-            } catch (_: WakeModelInstaller.InvalidModel) {
-                "Couldn't verify the download. Try again."
-            } catch (error: IOException) {
-                Log.d("FridayWakeSetup", "Setup failed: ${error.javaClass.simpleName}")
-                if (installing) "Couldn't install Hey Friday. Try again."
-                else "Couldn't download Hey Friday. Check your connection and try again."
-            } catch (_: SecurityException) {
-                "Couldn't save Hey Friday. Try again."
-            } catch (error: RuntimeException) {
-                Log.d("FridayWakeSetup", "Setup failed: ${error.javaClass.name}")
-                "Couldn't install Hey Friday. Try again."
-            }
-            main.post {
-                if (!isDestroyed && generation == workGeneration) {
-                    downloadTimeout?.let { main.removeCallbacks(it) }
-                    downloadTimeout = null
-                    model = if (error == null) ModelState.READY else ModelState.REQUIRED
-                    message = if (selected == WakeUsagePolicy.Mode.HEY_FRIDAY) error ?: "Download complete." else null
-                    render()
-                }
-            }
+            render()
         }
-    }
-
-    private fun cancelWork() {
-        workGeneration++
-        downloadTimeout?.let { main.removeCallbacks(it) }
-        downloadTimeout = null
-        installer?.cancel()
-        work?.cancel(true)
     }
 
     override fun onStart() { super.onStart(); WakeTrialService.assistantVisible(this) }
@@ -334,8 +266,6 @@ class WakeUsageActivity : Activity() {
     override fun onPause() { help.dismiss(); main.removeCallbacks(refresh); super.onPause() }
     override fun onStop() { WakeTrialService.assistantHidden(this); super.onStop() }
     override fun onDestroy() {
-        cancelWork()
-        worker.shutdownNow()
         main.removeCallbacksAndMessages(null)
         super.onDestroy()
     }
@@ -355,44 +285,36 @@ class WakeUsageActivity : Activity() {
 
     private fun render() {
         val state = WakeTrialService.session.snapshot()
-        val key = RenderState(selected, state.phase, message, model, downloadPercent, assistantSelected, showAssistantFallback)
+        val higherSensitivity = WakeUsageStore.higherSensitivity(this)
+        val tracking = WakeAudioTrace.isActive()
+        val key = RenderState(selected, state.phase, message, assistantSelected, showAssistantFallback, higherSensitivity, tracking)
         if (key == rendered) return
         rendered = key
         for ((mode, radio) in options) radio.isChecked = selected == mode
         val hey = selected == WakeUsagePolicy.Mode.HEY_FRIDAY
-        val value = message ?: if (!hey) "" else when (model) {
-            ModelState.CHECKING -> "Checking Hey Friday…"
-            ModelState.REQUIRED -> "61 KB download"
-            ModelState.DOWNLOADING -> "Downloading Hey Friday · $downloadPercent%"
-            ModelState.INSTALLING -> "Installing Hey Friday…"
-            ModelState.RUNTIME_MISSING -> "This build doesn't include Hey Friday. Install the wake-enabled APK."
-            ModelState.UNSUPPORTED -> "Hey Friday needs a 64-bit ARM phone. You can use Tap to speak."
-            ModelState.READY -> if (WakeUsageStore.mode(this) == selected) WakeUsagePolicy.status(state) else ""
+        val value = message ?: when {
+            !hey -> ""
+            !modelAvailable -> FridayKeywordModel.MISSING
+            WakeUsageStore.mode(this) == selected -> WakeUsagePolicy.status(state)
+            else -> ""
         }
         if (status.text.toString() != value) status.text = value
         status.visibility = if (value.isEmpty()) View.GONE else View.VISIBLE
-        val downloading = hey && model in listOf(ModelState.DOWNLOADING, ModelState.INSTALLING)
-        progress.visibility = if (downloading) View.VISIBLE else View.GONE
-        progress.isIndeterminate = model == ModelState.INSTALLING
-        progress.progress = downloadPercent
-        cancelDownload.visibility = if (downloading) View.VISIBLE else View.GONE
-        backgroundSettings.visibility = if (hey && model == ModelState.READY) View.VISIBLE else View.GONE
-        assistantFallback.visibility = if (hey && model == ModelState.READY && !assistantSelected && showAssistantFallback)
+        backgroundSettings.visibility = if (hey && modelAvailable) View.VISIBLE else View.GONE
+        sensitivity.setValue(if (higherSensitivity) "Higher" else "Standard")
+        audioTrace.setValue(if (tracking) "On" else "Off")
+        assistantFallback.visibility = if (hey && modelAvailable && !assistantSelected && showAssistantFallback)
             View.VISIBLE else View.GONE
         apply.text = when {
             selected == WakeUsagePolicy.Mode.TAP -> "Use Tap to speak"
-            model == ModelState.CHECKING -> "Checking…"
-            model == ModelState.REQUIRED -> "Download Hey Friday"
-            model == ModelState.DOWNLOADING -> "Downloading…"
-            model == ModelState.INSTALLING -> "Installing…"
             state.phase == WakeTrialSession.Phase.STOPPING -> "Stopping…"
-            model == ModelState.READY && !assistantSelected -> "Set default assistant"
-            WakeUsageStore.mode(this) == selected && WakeUsagePolicy.canAdopt(state) -> "Use Hey Friday"
+            modelAvailable && !assistantSelected -> "Set default assistant"
+            WakeUsageStore.mode(this) == selected && WakeUsagePolicy.canAdopt(state, WakeUsageStore.threshold(this)) -> "Use Hey Friday"
             WakeUsageStore.mode(this) == selected -> "Resume Hey Friday"
             else -> "Use Hey Friday"
         }
         apply.isEnabled = state.phase != WakeTrialSession.Phase.STOPPING &&
-            (!hey || model == ModelState.REQUIRED || model == ModelState.READY)
+            (!hey || modelAvailable)
         apply.alpha = if (apply.isEnabled) 1f else 0.5f
     }
 

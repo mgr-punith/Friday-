@@ -98,13 +98,22 @@ open class MainActivity : Activity() {
     private var signInOpen = false
     private var resultDismissal: Runnable? = null
     private var resultInteracted = false
+    private var pendingSequence: PendingSequence? = null
+
+    private class PendingSequence(val request: Int, val steps: List<PhoneAction>) {
+        val completed = mutableListOf<String>()
+        var actionMs = 0L
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         backend = FridayBackendClient(this)
         actionExecutor = AndroidActionExecutor(this)
-        actionRunner = VoiceActionRunner(this, ::onActionResult)
         confirmationSpeaker = createConfirmationSpeaker()
+        actionRunner = VoiceActionRunner(this, ::onActionResult,
+            speakChoices = { confirmationSpeaker.speakOffline(it) },
+            stopSpeech = { confirmationSpeaker.stop() },
+        )
         setContentView(createContentView())
         if (savedInstanceState?.getBoolean("settings_selected") == true) selectDestination(Destination.SETTINGS)
         consumeEntryPointIntent(intent)
@@ -443,7 +452,7 @@ open class MainActivity : Activity() {
         detail.setTextColor(getColor(R.color.text_secondary))
         orb.setState(AssistantOrbView.State.LISTENING)
         backend.warmAsync()
-        val commandRecorder = VoiceRecorder(applicationContext)
+        val commandRecorder = VoiceRecorder(applicationContext, afterWake = fromWake)
         activeRecorder = commandRecorder
         worker.execute {
             val capture = try {
@@ -567,10 +576,9 @@ open class MainActivity : Activity() {
                 state = VoiceState.ACTION
                 surface.showRequest(ActionPresentation.describe(response.action))
                 showVoiceStatus("Preparing action")
-                worker.execute {
-                    val prepared = actionExecutor.prepare(response.action)
-                    runIfCurrent(request) { actionRunner.handle(prepared) }
-                }
+                val sequence = response.action as? PhoneAction.Sequence
+                pendingSequence = sequence?.let { PendingSequence(request, it.steps) }
+                prepareVoiceAction(request, sequence?.steps?.first() ?: response.action)
             }
             VoiceUiOutcome.UNSUPPORTED -> showUnsupported()
             VoiceUiOutcome.BUSY,
@@ -588,23 +596,57 @@ open class MainActivity : Activity() {
         }
     }
 
-    private fun onActionResult(result: ActionResult, actionMs: Long) {
-        if (!resumed || isFinishing || isDestroyed || state != VoiceState.ACTION) return
-        if (BuildConfig.DEBUG) {
-            Log.d(
-                VOICE_LOG_TAG,
-                "uploadMs=$lastUploadMs serverMs=${lastServerMs ?: -1.0} actionMs=$actionMs",
-            )
-        }
-        when (result) {
-            ActionResult.NeedsUnlock -> showUnlockRequired()
-            is ActionResult.Success -> showResult(result.confirmation)
-            is ActionResult.Failed -> showError(result.reason)
-            is ActionResult.NeedsPermission -> showPermission(result.which)
+    private fun prepareVoiceAction(request: Int, action: PhoneAction) {
+        worker.execute {
+            val prepared = actionExecutor.prepare(action)
+            runIfCurrent(request) { actionRunner.handle(prepared) }
         }
     }
 
-    private fun showResult(message: String) {
+    private fun onActionResult(result: ActionResult, actionMs: Long) {
+        if (!resumed || isFinishing || isDestroyed || state != VoiceState.ACTION) return
+        val sequence = pendingSequence
+        if (sequence != null) {
+            sequence.actionMs += actionMs
+            val stepConfirmation = when (result) {
+                is ActionResult.Success -> result.confirmation
+                is ActionResult.Handoff -> result.instruction
+                else -> null
+            }
+            if (stepConfirmation != null) {
+                sequence.completed.add(stepConfirmation)
+                val next = sequence.steps.getOrNull(sequence.completed.size)
+                if (next != null) {
+                    prepareVoiceAction(sequence.request, next)
+                    return
+                }
+            }
+            pendingSequence = null
+        }
+        val completed = sequence?.completed.orEmpty().joinToString(". ")
+        if (BuildConfig.DEBUG) {
+            Log.d(
+                VOICE_LOG_TAG,
+                "uploadMs=$lastUploadMs serverMs=${lastServerMs ?: -1.0} actionMs=${sequence?.actionMs ?: actionMs}",
+            )
+        }
+        when (result) {
+            ActionResult.NeedsUnlock -> if (completed.isEmpty()) showUnlockRequired()
+                else showError("$completed. Unlock your phone for the remaining commands.")
+            is ActionResult.Success -> showResult(completed.ifEmpty { result.confirmation })
+            is ActionResult.Handoff -> showHandoff(completed.ifEmpty { result.instruction })
+            is ActionResult.Failed -> showError(if (completed.isEmpty()) result.reason else "$completed. ${result.reason}")
+            is ActionResult.NeedsPermission -> showPermission(result.which, completed)
+        }
+    }
+
+    private fun showResult(message: String) =
+        showCompletion(message, "Done", CompletionPolicy.spokenConfirmation(message))
+
+    private fun showHandoff(message: String) =
+        showCompletion(message, "Settings opened", CompletionPolicy.spokenHandoff(message))
+
+    private fun showCompletion(message: String, status: String, spoken: String) {
         DebugTools.cancelErrorRecovery(this)
         unlockRequired = false
         state = VoiceState.IDLE
@@ -617,7 +659,7 @@ open class MainActivity : Activity() {
         lastConfirmation = message
         surface.replay.visibility = if (speechAvailable) View.VISIBLE else View.INVISIBLE
         micButton.contentDescription = "Start listening"
-        showVoiceStatus("Done")
+        showVoiceStatus(status)
         if (compactSurface) {
             setDetail(message)
             detail.setTextColor(getColor(R.color.text_primary))
@@ -626,7 +668,7 @@ open class MainActivity : Activity() {
         }
         orb.setState(AssistantOrbView.State.SUCCESS)
         resultInteracted = false
-        confirmationSpeaker.speak(CompletionPolicy.spokenConfirmation(message))
+        confirmationSpeaker.speak(spoken)
         releaseLauncherWakeBlock()
         scheduleResultDismissal(speaking = false, waitingForSpeech = speechAvailable)
     }
@@ -652,10 +694,10 @@ open class MainActivity : Activity() {
     }
 
     private fun showUnsupported() {
-        showError("That feature isn't built yet")
+        showError("Sorry, I can't do that yet")
     }
 
-    private fun showPermission(access: RequiredAccess) {
+    private fun showPermission(access: RequiredAccess, completed: String = "") {
         cancelResultDismissal()
         if (DeviceLock.isLocked(this)) {
             showUnlockRequired()
@@ -673,7 +715,7 @@ open class MainActivity : Activity() {
         val popup = FridayDialog.show(
             this,
             "Permission needed",
-            explanation,
+            if (completed.isEmpty()) explanation else "$completed. $explanation",
             positive = "Manage permissions",
             negative = "Not now",
         ) { launchSetup(resumeAfterSetup = false) }
@@ -739,6 +781,7 @@ open class MainActivity : Activity() {
     }
 
     private fun cancelVoiceWork(resetUi: Boolean, preserveConfirmation: Boolean = false) {
+        pendingSequence = null
         orbDemoRunnable?.let(orb::removeCallbacks)
         orbDemoRunnable = null
         cancelResultDismissal()
@@ -887,6 +930,23 @@ open class MainActivity : Activity() {
                 showError("I couldn't find that app")
             }
             "unsupported" -> showUnsupported()
+            "contact-choices", "contact-exact" -> {
+                state = VoiceState.ACTION
+                val action = PhoneAction.CallContact("Sample contact")
+                val skip = scenario == "contact-exact"
+                val result = { ActionResult.Success("Preview: Contact selected") }
+                val ready = AndroidActionExecutor.Preparation.Ready(
+                    action, confirmationTarget = "Sample contact",
+                    runDirectIfUnlocked = if (skip) result else null, run = result,
+                )
+                val prepared = if (skip) ready else AndroidActionExecutor.Preparation.Choice(
+                    action, "Which one should I call?",
+                    listOf("Sample contact one", "Sample contact two").map {
+                        AndroidActionExecutor.ChoiceOption(it, ready)
+                    },
+                )
+                actionRunner.handle(prepared)
+            }
             "permission" -> showPermission(RequiredAccess.MICROPHONE)
             "lock-call", "lock-app", "lock-timer", "lock-sound" -> {
                 val action = when (scenario) {

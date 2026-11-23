@@ -111,8 +111,11 @@ internal class WakeTrialSession {
     }
 
     companion object {
-        const val DEFAULT_THRESHOLD = 0.30f
-        val THRESHOLDS = listOf(0.66f, 0.30f, 0.10f)
+        // Multipliers of the bundled model's calibration cutoff.
+        const val STRICT_THRESHOLD = 2f
+        const val DEFAULT_THRESHOLD = 1.1f
+        const val HIGHER_SENSITIVITY_THRESHOLD = 1f
+        val THRESHOLDS = listOf(STRICT_THRESHOLD, DEFAULT_THRESHOLD, HIGHER_SENSITIVITY_THRESHOLD)
     }
 }
 

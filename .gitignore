@@ -70,3 +70,8 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .venv/
+
+# Local documentation and design work. Existing tracked files remain tracked.
+/docs/
+/design/
+/design.md

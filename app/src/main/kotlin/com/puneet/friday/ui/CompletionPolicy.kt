@@ -21,5 +21,8 @@ object CompletionPolicy {
     }
 
     fun spokenConfirmation(message: String): String =
-        if (message.startsWith("Calling ") || message.startsWith("Opening ") || message.startsWith("Timer request sent") || message.startsWith("Alarm request sent")) message else "Done. $message"
+        if (message.startsWith("Calling ") || message.startsWith("Opening ") || message.startsWith("Timer request sent") ||
+            message.startsWith("Alarm request sent")) message else "Done. $message"
+
+    fun spokenHandoff(instruction: String): String = instruction
 }

@@ -20,7 +20,6 @@ import android.widget.TextView
 import com.puneet.friday.ui.AppUi
 import com.puneet.friday.ui.SettingsGroup
 import com.puneet.friday.ui.SettingsRow
-import java.io.File
 import java.util.Locale
 
 class WakeTrialActivity : Activity() {
@@ -53,11 +52,12 @@ class WakeTrialActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        threshold = savedInstanceState?.getFloat("threshold", WakeTrialSession.DEFAULT_THRESHOLD) ?: WakeTrialSession.DEFAULT_THRESHOLD
+        threshold = savedInstanceState?.getFloat("threshold")
+            ?.takeIf { it in WakeTrialSession.THRESHOLDS } ?: WakeTrialSession.DEFAULT_THRESHOLD
         commandMode = savedInstanceState?.getBoolean("commands") ?: intent.getBooleanExtra("debug_wake_commands", true)
         val (page, content) = AppUi.groupedContent(this, "Wake detector test")
         content.addView(AppUi.notice(this,
-            "Start this test to listen for Hey Friday on this phone. After a wake, Friday can open its command panel. Wait for Listening, then say your command. Only command audio goes to Friday's backend and Groq. The test saves counts and timings, without audio or transcripts."), AppUi.params(this, 24))
+            "Start this test to listen for Hey Friday on this phone. After a wake, Friday can open its command panel. Wait for Listening, then say your command. Only command audio goes to Friday's backend and Groq. The test reports counts and timings. Wake audio tracking is a separate setting."), AppUi.params(this, 24))
         status = AppUi.text(this, "Microphone off", 15f, bold = true).apply {
             accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
         }
@@ -78,7 +78,7 @@ class WakeTrialActivity : Activity() {
             addRow(sensitivity)
             addRow(mode)
         }, AppUi.params(this, 8))
-        content.addView(AppUi.text(this, "0.30 is the command-trial default. The model default is 0.66. Lower values catch more phrases but also trigger on more unrelated sounds.", 12f, secondary = true), AppUi.params(this, 24))
+        content.addView(AppUi.text(this, "Higher sensitivity can pick up quieter speech and trigger on similar phrases.", 12f, secondary = true), AppUi.params(this, 24))
         content.addView(SettingsGroup(this).apply {
             addRow(SettingsRow(this@WakeTrialActivity, "App permissions") {
                 startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
@@ -110,7 +110,7 @@ class WakeTrialActivity : Activity() {
             localMessage = "Checking saved test audio. Microphone off."
             Thread({
                 val message = try {
-                    WakeTrialDiagnostics.run(filesDir, intent.getStringExtra(WakeTrialDiagnostics.RUN_ID).orEmpty()) { replayCancelled }
+                    WakeTrialDiagnostics.run(assets, filesDir, intent.getStringExtra(WakeTrialDiagnostics.RUN_ID).orEmpty()) { replayCancelled }
                 } catch (_: Exception) {
                     "Couldn't write replay results."
                 }
@@ -166,8 +166,8 @@ class WakeTrialActivity : Activity() {
             render()
             return
         }
-        if (!MicroWakeWordNative.available || !File(filesDir, WakeTrialModel.RELATIVE_PATH).isFile) {
-            localMessage = "Install the wake-test debug build and approved test model first."
+        if (!FridayKeywordModel.available(assets)) {
+            localMessage = FridayKeywordModel.MISSING
             render()
             return
         }
@@ -225,9 +225,9 @@ class WakeTrialActivity : Activity() {
         mode.isEnabled = !replayRunning && !snapshot.active
         mode.setValue(if (commandMode) "Open Friday" else "Count detections")
         sensitivity.setValue(when (threshold) {
-            0.66f -> "0.66 · Model default"
-            0.30f -> "0.30 · Command trial"
-            else -> "0.10 · More sensitive"
+            WakeTrialSession.STRICT_THRESHOLD -> "Lower"
+            WakeTrialSession.DEFAULT_THRESHOLD -> "Standard"
+            else -> "Higher"
         })
         if (snapshot.detections > shownDetections) {
             count.performHapticFeedback(if (Build.VERSION.SDK_INT >= 30) HapticFeedbackConstants.CONFIRM else HapticFeedbackConstants.VIRTUAL_KEY)

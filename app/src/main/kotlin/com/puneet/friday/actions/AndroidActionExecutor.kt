@@ -5,25 +5,37 @@ import android.app.Activity
 import android.app.NotificationManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.hardware.camera2.CameraAccessException
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.net.Uri
+import android.os.Build
 import android.os.Looper
 import android.provider.AlarmClock
 import android.provider.ContactsContract.CommonDataKinds.Phone
+import android.provider.MediaStore
 import android.view.View
 import java.util.Locale
+import kotlin.math.roundToInt
 
 /** Resolves names locally on a worker; runs Android effects only from the visible UI. */
 class AndroidActionExecutor(private val activity: Activity) {
     sealed interface Preparation {
         /** Invoke on the UI thread after any user choice or confirmation. */
-        data class Ready(val action: PhoneAction, val confirmationTarget: String? = null, val run: () -> ActionResult) : Preparation
+        data class Ready(
+            val action: PhoneAction,
+            val confirmationTarget: String? = null,
+            val runDirectIfUnlocked: (() -> ActionResult?)? = null,
+            val run: () -> ActionResult,
+        ) : Preparation
         data class Choice(val action: PhoneAction, val question: String, val options: List<ChoiceOption>) : Preparation
         data class Finished(val result: ActionResult) : Preparation
     }
 
-    data class ChoiceOption(val label: String, val ready: Preparation.Ready)
+    data class ChoiceOption(val label: String, val ready: Preparation.Ready, val spokenLabel: String = label)
 
     /** Worker-safe. Reads local providers and builds intents; never starts an action. */
     fun prepare(action: PhoneAction): Preparation {
@@ -33,6 +45,8 @@ class AndroidActionExecutor(private val activity: Activity) {
             when (action) {
                 is PhoneAction.CallContact -> prepareContact(action)
                 is PhoneAction.OpenApp -> prepareApp(action)
+                PhoneAction.OpenMusic -> prepareMusic()
+                is PhoneAction.OpenSettings -> Preparation.Ready(action) { runAction(action) }
                 is PhoneAction.CallNumber -> Preparation.Ready(action, confirmationTarget = action.number) { runAction(action) }
                 else -> Preparation.Ready(action) { runAction(action) }
             }
@@ -78,17 +92,22 @@ class AndroidActionExecutor(private val activity: Activity) {
                         needsSuffix -> "${contact.name} · ending ${number.number.takeLast(4)}"
                         else -> contact.name
                     }
-                    ChoiceOption(label, readyCall(action, number.number, contact.name))
+                    val spoken = if (needsSuffix) "${contact.name}, ending in ${number.number.takeLast(4).toList().joinToString(" ")}"
+                        else contact.name
+                    ChoiceOption(label, readyCall(action, number.number, contact.name), spoken)
                 }
-                Preparation.Choice(action, "Which contact?", options)
+                Preparation.Choice(action, "Which one should I call?", options)
             }
-            MatchResult.NotFound -> Preparation.Finished(ActionResult.Failed("I couldn't find that contact"))
+            MatchResult.NotFound -> Preparation.Finished(ActionResult.Failed("I couldn't find that contact. Say the name as it's saved."))
         }
     }
 
     private fun prepareContactNumbers(action: PhoneAction.CallContact, contact: Contact): Preparation {
         val numbers = uniqueNumbers(contact)
-        preferredNumber(numbers)?.let { return readyCall(action, it.number, contact.name) }
+        preferredNumber(numbers)?.let {
+            val direct = numbers.size == 1 && NameMatcher.isExactContactName(action.name, contact.name)
+            return readyCall(action, it.number, contact.name, direct)
+        }
         return Preparation.Choice(
             action,
             "Which number for ${contact.name}?",
@@ -97,7 +116,8 @@ class AndroidActionExecutor(private val activity: Activity) {
                 val label = if (numbers.count { it.number.takeLast(4) == suffix } == 1) {
                     "Ending $suffix"
                 } else number.number
-                ChoiceOption(label, readyCall(action, number.number, contact.name))
+                ChoiceOption(label, readyCall(action, number.number, contact.name),
+                    "Ending in ${suffix.toList().joinToString(" ")}")
             },
         )
     }
@@ -110,40 +130,68 @@ class AndroidActionExecutor(private val activity: Activity) {
     private fun preferredNumber(numbers: List<ContactNumber>): ContactNumber? =
         if (numbers.size == 1) numbers.single() else numbers.filter { it.isDefault }.singleOrNull()
 
-    private fun readyCall(action: PhoneAction.CallContact, number: String, name: String): Preparation.Ready =
-        Preparation.Ready(action, confirmationTarget = "$name · $number") {
+    private fun readyCall(action: PhoneAction.CallContact, number: String, name: String, direct: Boolean = false): Preparation.Ready {
+        val place = {
             guarded(action) {
                 callPermissionFailure(needsContacts = true) ?: placeCall(number, name)
             }
         }
+        val directCall: (() -> ActionResult?)? =
+            if (direct) ({ if (DeviceLock.isLocked(activity)) null else place() }) else null
+        return Preparation.Ready(action, confirmationTarget = "$name · $number", runDirectIfUnlocked = directCall, run = place)
+    }
 
     private fun prepareApp(action: PhoneAction.OpenApp): Preparation {
-        val query = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        val manager = activity.packageManager
-        val apps = manager.queryIntentActivities(query, PackageManager.MATCH_ALL)
-            .distinctBy { it.activityInfo.packageName }
-            .map { LauncherApp(it.loadLabel(manager).toString(), it.activityInfo.packageName) }
+        val apps = launcherActivities().map(::launcherApp)
         return when (val match = AppNameMatcher.match(action.name, apps)) {
             is MatchResult.Matched -> readyApp(action, apps[match.index])
-            is MatchResult.Ambiguous -> {
-                val matching = match.indices.map { apps[it] }
-                val duplicateNames = matching.groupingBy { NameMatcher.normalize(it.label) }.eachCount()
-                Preparation.Choice(
-                    action,
-                    "Which app?",
-                    matching.map { app ->
-                        val label = if (duplicateNames[NameMatcher.normalize(app.label)] != 1) {
-                            "${app.label} · ${app.packageName}"
-                        } else app.label
-                        ChoiceOption(label, readyApp(action, app))
-                    },
-                )
-            }
+            is MatchResult.Ambiguous -> chooseApp(action, match.indices.map { apps[it] }, "Which app?")
             MatchResult.NotFound -> Preparation.Finished(ActionResult.Failed("I couldn't find that app"))
         }
     }
 
-    private fun readyApp(action: PhoneAction.OpenApp, app: LauncherApp): Preparation.Ready =
+    private fun prepareMusic(): Preparation {
+        val manager = activity.packageManager
+        val launchers = launcherActivities()
+        val musicPackages = launchers.filter { it.activityInfo.applicationInfo.category == ApplicationInfo.CATEGORY_AUDIO }
+            .mapTo(mutableSetOf()) { it.activityInfo.packageName }
+        val musicIntents = listOf(
+            Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_MUSIC),
+            Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH),
+        )
+        for (intent in musicIntents) {
+            manager.queryIntentActivities(intent, 0).mapTo(musicPackages) { it.activityInfo.packageName }
+        }
+        // The query declares an audio type. Friday neither opens media here nor scans the user's files.
+        val audio = Intent(Intent.ACTION_VIEW).setDataAndType(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, "audio/mpeg")
+        val audioHandlers = manager.queryIntentActivities(audio, PackageManager.MATCH_DEFAULT_ONLY)
+            .mapTo(mutableSetOf()) { it.activityInfo.packageName }
+        val available = MusicApps.find(launchers.map(::launcherApp), musicPackages, audioHandlers)
+        return when (available.size) {
+            0 -> Preparation.Finished(ActionResult.Failed("I couldn't find a music app"))
+            1 -> readyApp(PhoneAction.OpenMusic, available.single())
+            else -> chooseApp(PhoneAction.OpenMusic, available, "Which music app?")
+        }
+    }
+
+    private fun launcherActivities() = activity.packageManager
+        .queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), PackageManager.MATCH_ALL)
+        .distinctBy { it.activityInfo.packageName }
+
+    private fun launcherApp(info: android.content.pm.ResolveInfo): LauncherApp =
+        LauncherApp(info.loadLabel(activity.packageManager).toString(), info.activityInfo.packageName)
+
+    private fun chooseApp(action: PhoneAction, apps: List<LauncherApp>, question: String): Preparation.Choice {
+        val duplicateNames = apps.groupingBy { NameMatcher.normalize(it.label) }.eachCount()
+        return Preparation.Choice(action, question, apps.map { app ->
+            val label = if (duplicateNames[NameMatcher.normalize(app.label)] != 1) {
+                "${app.label} · ${app.packageName}"
+            } else app.label
+            ChoiceOption(label, readyApp(action, app))
+        })
+    }
+
+    private fun readyApp(action: PhoneAction, app: LauncherApp): Preparation.Ready =
         Preparation.Ready(action) {
             guarded(action) {
                 val intent = activity.packageManager.getLaunchIntentForPackage(app.packageName)
@@ -163,7 +211,11 @@ class AndroidActionExecutor(private val activity: Activity) {
             is PhoneAction.SetTimer -> setTimer(action.seconds)
             is PhoneAction.CloseApp -> goHome()
             is PhoneAction.SetRingerMode -> setRingerMode(action.mode)
-            is PhoneAction.CallContact, is PhoneAction.OpenApp -> ActionResult.Failed("Try again")
+            is PhoneAction.Flashlight -> setFlashlight(action.on)
+            is PhoneAction.SetVolume -> setVolume(action)
+            is PhoneAction.OpenSettings -> openSettings(action)
+            is PhoneAction.CallContact, is PhoneAction.OpenApp, is PhoneAction.Sequence, PhoneAction.OpenMusic ->
+                ActionResult.Failed("Try again")
         }
     }
 
@@ -305,7 +357,59 @@ class AndroidActionExecutor(private val activity: Activity) {
         )
     }
 
+    private fun setFlashlight(on: Boolean): ActionResult {
+        val camera = activity.getSystemService(CameraManager::class.java)
+            ?: return ActionResult.Failed("Flashlight unavailable")
+        return try {
+            val flash = camera.cameraIdList.mapNotNull { id ->
+                val properties = camera.getCameraCharacteristics(id)
+                if (properties.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) != true) null
+                else id to (properties.get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK)
+            }
+            val id = (flash.firstOrNull { it.second } ?: flash.firstOrNull())?.first
+                ?: return ActionResult.Failed("This phone has no flashlight")
+            camera.setTorchMode(id, on)
+            ActionResult.Success(if (on) "Flashlight on" else "Flashlight off")
+        } catch (error: CameraAccessException) {
+            val busy = error.reason == CameraAccessException.CAMERA_IN_USE ||
+                error.reason == CameraAccessException.MAX_CAMERAS_IN_USE
+            ActionResult.Failed(if (busy) "Close the camera and try again" else "Flashlight unavailable")
+        }
+    }
+
+    private fun setVolume(action: PhoneAction.SetVolume): ActionResult {
+        val audio = activity.getSystemService(AudioManager::class.java)
+            ?: return ActionResult.Failed("Volume controls unavailable")
+        if (audio.isVolumeFixed) return ActionResult.Failed("Volume can't be changed")
+        val stream = when (action.stream) {
+            VolumeStream.MEDIA -> AudioManager.STREAM_MUSIC
+            VolumeStream.RING -> AudioManager.STREAM_RING
+            VolumeStream.ALARM -> AudioManager.STREAM_ALARM
+        }
+        val minimum = if (Build.VERSION.SDK_INT >= 28) audio.getStreamMinVolume(stream) else 0
+        val maximum = audio.getStreamMaxVolume(stream)
+        if (maximum <= minimum) return ActionResult.Failed("Volume can't be changed")
+        val requested = minimum + ((maximum - minimum) * action.percent / 100.0).roundToInt()
+        audio.setStreamVolume(stream, requested, 0)
+        if (audio.getStreamVolume(stream) != requested) return ActionResult.Failed("Volume didn't change")
+        val percent = ((requested - minimum) * 100.0 / (maximum - minimum)).roundToInt()
+        return ActionResult.Success("${action.stream.label} volume set to $percent%")
+    }
+
+    private fun openSettings(action: PhoneAction.OpenSettings): ActionResult {
+        SettingsHandoff.open(action.target, activity::startActivity)
+            ?: return ActionResult.Failed("Android Settings unavailable")
+        return ActionResult.Handoff(SettingsHandoff.instruction(action))
+    }
+
     private fun permissionAfterFailure(action: PhoneAction): ActionResult = when (action) {
+        is PhoneAction.Flashlight -> ActionResult.Failed("Flashlight unavailable")
+        is PhoneAction.SetVolume -> {
+            val policy = activity.getSystemService(NotificationManager::class.java)
+            if (action.stream == VolumeStream.RING && policy?.isNotificationPolicyAccessGranted != true) {
+                ActionResult.NeedsPermission(RequiredAccess.NOTIFICATION_POLICY)
+            } else ActionResult.Failed("Volume can't be changed")
+        }
         is PhoneAction.CallContact -> callPermissionFailure(needsContacts = true)
             ?: ActionResult.Failed("Calling unavailable")
         is PhoneAction.CallNumber -> callPermissionFailure(needsContacts = false)

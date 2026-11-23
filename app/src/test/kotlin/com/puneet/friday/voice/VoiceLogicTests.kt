@@ -2,6 +2,8 @@ package com.puneet.friday.voice
 
 import com.puneet.friday.actions.PhoneAction
 import com.puneet.friday.actions.RingerMode
+import com.puneet.friday.actions.SettingState
+import com.puneet.friday.actions.SettingsTarget
 import com.puneet.friday.entry.EntryPointPolicy
 import com.puneet.friday.entry.AssistantSettingsTests
 import com.puneet.friday.ui.OrbMotionMath
@@ -38,6 +40,37 @@ object VoiceLogicTests {
                 "$name rejects malformed arguments",
             )
         }
+
+        val flashlight = parsedAction("flashlight", mapOf("on" to false))
+        val volume = parsedAction("set_volume", mapOf("stream" to "media", "percent" to 50))
+        val launch = parsedAction("open_app", mapOf("name" to "Clock"))
+        expect(parsedAction("open_music", emptyMap()).action == PhoneAction.OpenMusic, "Find installed music apps locally")
+        rejects("open_music", mapOf("package" to "com.spotify.music"))
+        val airplaneOn = parsedAction(
+            "open_settings",
+            mapOf("setting" to "airplane_mode", "state" to "on"),
+        )
+        expect(
+            airplaneOn.action == PhoneAction.OpenSettings(SettingsTarget.AIRPLANE_MODE, SettingState.ON),
+            "Airplane mode Settings handoff parses",
+        )
+        expect(
+            parsedAction("open_settings", mapOf("setting" to "airplane_mode")).action ==
+                PhoneAction.OpenSettings(SettingsTarget.AIRPLANE_MODE),
+            "Settings state is optional",
+        )
+        rejects("open_settings", mapOf("setting" to "wifi"))
+        rejects("open_settings", mapOf("setting" to "airplane_mode", "state" to "toggle"))
+        rejects("open_settings", mapOf("setting" to "airplane_mode", "intent" to "android.settings.SETTINGS"))
+        val steps = listOf(flashlight, volume, launch)
+        val batch = VoiceResponseParser.parseSequence(steps, null) as VoiceCommandResponse.Action
+        expect(batch.action == PhoneAction.Sequence(steps.map { it.action }), "A sequence keeps the requested order")
+        expect(VoiceResponseParser.parseSequence(listOf(launch, flashlight), null) is VoiceCommandResponse.Error,
+            "An app launch cannot run ahead of a remaining action")
+        expect(VoiceResponseParser.parseSequence(listOf(flashlight, VoiceCommandResponse.Unsupported), null) is VoiceCommandResponse.Error,
+            "An unsupported step blocks the whole sequence")
+        rejects("flashlight", mapOf("on" to "false"))
+        rejects("set_volume", mapOf("stream" to "media", "percent" to 101))
 
         val tabs = TabNavigation()
         expect(tabs.current == Destination.HOME, "Main navigation starts on Home")
@@ -108,6 +141,8 @@ object VoiceLogicTests {
             "Closing an unfinished compact screen cancels speech without flashing idle")
         expect(CompletionPolicy.spokenConfirmation("Silent mode on") == "Done. Silent mode on",
             "A completed sound change gets one short confirmation")
+        expect(CompletionPolicy.spokenHandoff("Turn airplane mode on here") == "Turn airplane mode on here",
+            "A Settings handoff does not claim Friday changed the setting")
         for (message in listOf("Calling Mom", "Opening Calculator", "Timer request sent for 2 minutes", "Alarm request sent for 6:30 AM")) {
             expect(CompletionPolicy.spokenConfirmation(message) == message,
                 "Dispatched external actions preserve honest wording: $message")
@@ -165,6 +200,12 @@ object VoiceLogicTests {
         expect(!VoicePayload.isValid(ByteArray(VoicePayload.MAX_WAV_BYTES + 1)), "The app rejects oversized uploads")
         expect(!AudioCapturePolicy.acceptsManualStop(16_000), "A one-second manual stop stays local")
         expect(AudioCapturePolicy.acceptsManualStop(24_000), "A 1.5-second manual stop can contain a command")
+        expect(!AudioCapturePolicy.canStopAfterSilence(afterWake = true, sampleCount = 31_999),
+            "Wake capture keeps listening until two seconds")
+        expect(AudioCapturePolicy.canStopAfterSilence(afterWake = true, sampleCount = 32_000),
+            "Wake capture can stop on silence after two seconds")
+        expect(AudioCapturePolicy.canStopAfterSilence(afterWake = false, sampleCount = 1),
+            "Tap capture keeps its current silence stop")
         expect(
             AudioCapturePolicy.reviewedSampleCount(24_000, manualStop = true) == 18_240,
             "Manual stop review removes the final tap window",
@@ -274,6 +315,18 @@ object VoiceLogicTests {
         repeat(5) { tapThenRoomNoise.add(0.008f) }
         expect(tapThenRoomNoise.endedBySilence, "Room noise after a screen tap reaches the silence stop")
         expect(!tapThenRoomNoise.hasClearCommand, "A screen tap followed by room noise is not a command")
+        val afterWake = AudioCapturePolicy.commandDetector(afterWake = true)
+        val afterTap = AudioCapturePolicy.commandDetector(afterWake = false)
+        repeat(3) {
+            afterWake.add(0.004f)
+            afterTap.add(0.004f)
+        }
+        expect(!afterWake.isCalibrated, "Wake capture still samples the noise floor before the ready tone")
+        afterWake.add(0.004f)
+        afterTap.add(0.004f)
+        expect(afterWake.isCalibrated && !afterTap.isCalibrated, "Wake entry is ready after four microphone frames")
+        repeat(8) { afterTap.add(0.004f) }
+        expect(afterTap.isCalibrated, "Tap entry keeps its twelve-frame calibration")
         val adaptive = SpeechEndDetector(
             minimumSpeechFrames = 3,
             silenceFramesToStop = 3,
@@ -346,6 +399,11 @@ object VoiceLogicTests {
         expect(parsedAction("close_app", mapOf("name" to "Clock")).action == PhoneAction.CloseApp("Clock"), "Close-app name parses")
         expect(parsedAction("set_ringer_mode", mapOf("mode" to "silent")).action == PhoneAction.SetRingerMode(RingerMode.SILENT), "Silent mode parses")
         expect(parsedAction("set_ringer_mode", mapOf("mode" to "vibrate")).action == PhoneAction.SetRingerMode(RingerMode.VIBRATE), "Vibrate mode parses")
+        expect(
+            ActionPresentation.describe(PhoneAction.OpenSettings(SettingsTarget.AIRPLANE_MODE, SettingState.OFF)) ==
+                "Open airplane mode settings · turn off",
+            "Settings handoff presentation includes the requested state",
+        )
         val normal = VoiceResponseParser.parseFields(
             "action", "set_ringer_mode", mapOf("mode" to "normal"), serverTimingHeader = "cache;dur=1.0, gemini;dur=42.5",
         ) as VoiceCommandResponse.Action

@@ -7,6 +7,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.speech.tts.Voice
 import android.util.Log
 import com.puneet.friday.BuildConfig
 import com.puneet.friday.DebugTools
@@ -96,7 +97,8 @@ class ConfirmationSpeaker(
     private var engine: TextToSpeech? = null
     private var starting = false
     private var ready = false
-    private var pending: Pair<String, String>? = null
+    private var pending: PendingSpeech? = null
+    private var restoreVoice: (() -> Unit)? = null
     private var speaking = false
     private var closed = false
     private var detached = false
@@ -110,14 +112,18 @@ class ConfirmationSpeaker(
 
     fun warmUp() = SharedTextToSpeech.prepare(appContext)
 
-    fun speak(message: String) {
+    fun speak(message: String) = speak(message, offlineOnly = false)
+
+    fun speakOffline(message: String) = speak(message, offlineOnly = true)
+
+    private fun speak(message: String, offlineOnly: Boolean) {
         val text = message.trim().takeIf { it.isNotEmpty() } ?: return
         stop()
         val id = session.begin()
         // Own pending engine startup too, so a new command can cancel old speech before it starts.
         SharedTextToSpeech.claimPlayback(this, listener)
         DebugTools.beginSpeechPlayback(this)
-        pending = text to id
+        pending = PendingSpeech(text, id, offlineOnly)
         if (ready) speakPending() else if (!starting) start()
     }
 
@@ -127,6 +133,7 @@ class ConfirmationSpeaker(
         frames.clear()
         main.removeCallbacksAndMessages(audioCallbacks)
         SharedTextToSpeech.releasePlayback(this, stop = true)
+        restoreSpeechVoice()
         DebugTools.endSpeechPlayback(this)
         detachedTimeout?.let(main::removeCallbacks)
         detachedTimeout = null
@@ -172,7 +179,7 @@ class ConfirmationSpeaker(
             starting = false
             if (closed) return@acquire
             if (current == null) {
-                val id = pending?.second
+                val id = pending?.id
                 pending = null
                 onAvailable(false)
                 complete(id)
@@ -186,17 +193,23 @@ class ConfirmationSpeaker(
     }
 
     private fun speakPending() {
-        val (text, id) = pending ?: return
+        val (text, id, offlineOnly) = pending ?: return
         pending = null
         if (!session.accepts(id)) return
+        val current = engine
+        if (offlineOnly && (current == null || !selectOfflineVoice(current))) {
+            complete(id)
+            return
+        }
         SharedTextToSpeech.claimPlayback(this, listener)
-        if (engine?.speak(text, TextToSpeech.QUEUE_FLUSH, null, id) != TextToSpeech.SUCCESS) complete(id)
+        if (current?.speak(text, TextToSpeech.QUEUE_FLUSH, null, id) != TextToSpeech.SUCCESS) complete(id)
     }
 
     private fun complete(id: String?) {
         if (!session.finish(id)) return
         if (BuildConfig.DEBUG) Log.i("FridayVoice", "event=confirmation_finished detached=$detached")
         SharedTextToSpeech.releasePlayback(this, stop = false)
+        restoreSpeechVoice()
         DebugTools.endSpeechPlayback(this)
         detachedTimeout?.let(main::removeCallbacks)
         detachedTimeout = null
@@ -205,6 +218,27 @@ class ConfirmationSpeaker(
         if (speaking) { speaking = false; onSpeaking(false) }
         onFinished()
     }
+
+    private fun selectOfflineVoice(current: TextToSpeech): Boolean = runCatching {
+        val original = current.voice
+        if (original?.isInstalledOffline() == true) return true
+        val available = current.voices.orEmpty().filter { it.locale.language == Locale.ENGLISH.language && it.isInstalledOffline() }
+        val voice = available.firstOrNull { it.locale == original?.locale } ?: available.firstOrNull() ?: return false
+        if (current.setVoice(voice) != TextToSpeech.SUCCESS) return false
+        restoreVoice = {
+            if (original == null) current.setLanguage(Locale.ENGLISH) else current.setVoice(original)
+        }
+        current.voice?.isInstalledOffline() == true
+    }.getOrDefault(false)
+
+    private fun restoreSpeechVoice() {
+        val restore = restoreVoice ?: return
+        restoreVoice = null
+        runCatching { restore() }
+    }
+
+    private fun Voice.isInstalledOffline(): Boolean =
+        !isNetworkConnectionRequired && TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED !in features.orEmpty()
 
     private val listener = object : UtteranceProgressListener() {
         override fun onStart(id: String?) { main.post {
@@ -263,6 +297,7 @@ class ConfirmationSpeaker(
             audioCallbacks, playbackStart + frame.offsetMs)
     }
 
+    private data class PendingSpeech(val text: String, val id: String, val offlineOnly: Boolean)
     private data class AudioFrame(val offsetMs: Long, val level: PcmProcessor.Level)
 
     companion object {

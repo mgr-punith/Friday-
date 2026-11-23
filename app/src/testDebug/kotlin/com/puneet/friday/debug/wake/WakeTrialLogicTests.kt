@@ -12,9 +12,9 @@ object WakeTrialLogicTests {
         }
         val session = WakeTrialSession()
         expect(!session.snapshot().active, "A fresh process never starts background listening")
-        val first = checkNotNull(session.begin(0.66f))
+        val first = checkNotNull(session.begin(WakeTrialSession.STRICT_THRESHOLD))
         expect(session.snapshot().phase == WakeTrialSession.Phase.STARTING, "Initialization shows Starting")
-        expect(session.begin(0.30f) == null, "Repeated Start never replaces a running detector")
+        expect(session.begin(WakeTrialSession.DEFAULT_THRESHOLD) == null, "Repeated Start never replaces a running detector")
         expect(!session.detected(first, 10), "Warm-up detections never count")
         expect(session.listening(first, 100), "The current detector can enter Listening")
         expect(session.detected(first, 900), "A live detection counts")
@@ -24,10 +24,10 @@ object WakeTrialLogicTests {
         expect(session.snapshot().active, "Stop retains microphone ownership until cleanup finishes")
         expect(!session.detected(first, 1_000), "No detection after Stop")
         expect(!session.listening(first, 200), "Delayed initialization cannot undo Stop")
-        expect(session.begin(0.30f) == null, "Start waits for previous cleanup")
+        expect(session.begin(WakeTrialSession.DEFAULT_THRESHOLD) == null, "Start waits for previous cleanup")
         session.finish(first, 1_200, "Microphone off")
         expect(!session.snapshot().active && session.snapshot().elapsedMs == 1_200L, "Cleanup leaves stopped results readable")
-        val second = checkNotNull(session.begin(0.30f))
+        val second = checkNotNull(session.begin(WakeTrialSession.DEFAULT_THRESHOLD))
         expect(second != first && session.snapshot().detections == 0, "A new trial resets its count")
         expect(!session.detected(first, 1_300) && !session.listening(first, 300), "Old callbacks cannot affect a replacement")
         session.finish(first, 0, "stale error")
@@ -37,8 +37,8 @@ object WakeTrialLogicTests {
         session.stopping(second, "Cancelled while starting")
         expect(!session.listening(second, 400), "Rapid Start then Stop cannot open a new listening session")
         session.finish(second, 0, "Microphone off")
-        for (cutoff in listOf(Float.NaN, Float.POSITIVE_INFINITY, 0f, -1f, 0.5f)) {
-            expect(runCatching { session.begin(cutoff) }.isFailure, "Only measured sensitivity settings are allowed")
+        for (cutoff in listOf(Float.NaN, Float.POSITIVE_INFINITY, 0f, -1f, 0.75f)) {
+            expect(runCatching { session.begin(cutoff) }.isFailure, "Only supported sensitivity settings are allowed")
         }
         for (cutoff in WakeTrialSession.THRESHOLDS) {
             val id = checkNotNull(session.begin(cutoff))
@@ -49,6 +49,30 @@ object WakeTrialLogicTests {
         expect(!WakeTrialModel.accepts(ByteArray(WakeTrialModel.BYTES - 1)), "Reject a truncated model")
         expect(!WakeTrialModel.accepts(ByteArray(WakeTrialModel.BYTES)), "Reject a corrupt model with the expected size")
         expect(!WakeTrialModel.accepts(ByteArray(WakeTrialModel.BYTES + 1)), "Reject a larger model")
+        val bands = FloatArray(FridayKeywordFeatures.BANDS * FridayKeywordFeatures.BINS)
+        for (band in 0 until FridayKeywordFeatures.BANDS) {
+            bands[(band + 1) * FridayKeywordFeatures.BINS - 1] = 1f
+        }
+        val features = FridayKeywordFeatures(bands)
+        repeat(800) { features.append(0) }
+        expect(!features.hasRecentSound, "Silence cannot reach the keyword scorer")
+        repeat(160) { features.append(if (it % 2 == 0) 2_300 else -2_300) }
+        expect(!features.hasRecentSound, "An isolated loud audio frame cannot reach the scorer")
+        repeat(1_600) { features.append(if (it % 2 == 0) 2_300 else -2_300) }
+        expect(features.hasRecentSound, "A sustained signal reaches the keyword scorer")
+        repeat(12_800) { features.append(0) }
+        expect(!features.hasRecentSound, "Old sound cannot keep scoring during silence")
+        repeat(2_400) { features.append(if (it % 2 == 0) 30 else -30) }
+        expect(features.hasRecentSound, "Quiet sound with a changing level reaches the scorer")
+        repeat(12_800) { features.append(if (it % 2 == 0) 30 else -30) }
+        expect(!features.hasRecentSound, "Steady quiet noise does not use the quiet speech gate")
+        val wakeAudio = WakeAudioBuffer(capacity = 5)
+        wakeAudio.append(shortArrayOf(1, 2, 3, 4), 3)
+        expect(wakeAudio.copy().contentEquals(shortArrayOf(1, 2, 3)), "Wake clips omit samples past the detection")
+        wakeAudio.append(shortArrayOf(4, 5, 6, 7), 4)
+        expect(wakeAudio.copy().contentEquals(shortArrayOf(3, 4, 5, 6, 7)), "Wake clips keep only the newest samples in order")
+        wakeAudio.clear()
+        expect(wakeAudio.copy().isEmpty(), "Stopping capture clears the rolling wake audio")
         expect(runCatching { WakeTrialHandoff.awaitStopped(null) }.isSuccess, "Capture starts when no trial owns the mic")
         expect(runCatching { WakeTrialHandoff.awaitStopped(CountDownLatch(0)) }.isSuccess, "Completed cleanup permits capture")
         expect(runCatching { WakeTrialHandoff.awaitStopped(CountDownLatch(1), 0) }.exceptionOrNull() is IllegalStateException,
@@ -58,8 +82,9 @@ object WakeTrialLogicTests {
             "Activity shutdown during handoff cannot escape as an unhandled checked exception")
         expect(Thread.interrupted(), "Cancellation preserves interruption and the test clears it afterward")
         val commands = WakeTrialSession()
-        expect(WakeTrialSession.DEFAULT_THRESHOLD == 0.30f, "The owner chose 0.30 for command trials")
-        val run = checkNotNull(commands.begin(0.30f, commandMode = true, nowMs = 100))
+        expect(WakeTrialSession.DEFAULT_THRESHOLD > WakeTrialSession.HIGHER_SENSITIVITY_THRESHOLD,
+            "Standard adds a margin above the bundled calibration cutoff")
+        val run = checkNotNull(commands.begin(WakeTrialSession.DEFAULT_THRESHOLD, commandMode = true, nowMs = 100))
         expect(commands.snapshot().commandMode, "Command mode requires an explicit trial option")
         expect(commands.listening(run, 1_000), "An opted-in command trial starts listening")
         expect(commands.detected(run, 2_000), "A live wake starts a handoff")
@@ -93,7 +118,7 @@ object WakeTrialLogicTests {
         expect(!commands.consumeWake(stoppedToken) && !commands.pause(run), "Stop cancels a pending launch and forbids resume")
         commands.finish(run, 7_000, "Microphone off")
         expect(!commands.listening(run, 8_000), "Dismissal cannot restart a stopped service")
-        val replacement = checkNotNull(commands.begin(0.30f, commandMode = true, nowMs = 200))
+        val replacement = checkNotNull(commands.begin(WakeTrialSession.DEFAULT_THRESHOLD, commandMode = true, nowMs = 200))
         expect(!commands.consumeWake(stoppedToken), "An earlier run's notification cannot wake its replacement")
         commands.listening(replacement, 10_000)
         repeat(100) { index ->
@@ -198,13 +223,19 @@ object WakeTrialLogicTests {
         }
         expect(!WakeUsagePolicy.accepts(WakeUsagePolicy.Mode.HEY_FRIDAY, 0, 0), "An uninitialized revision cannot start a microphone")
         expect(WakeUsagePolicy.accepts(WakeUsagePolicy.Mode.HEY_FRIDAY, 12, 12), "An explicit current notification tap can act")
+        expect(WakeUsagePolicy.threshold(false) == WakeTrialSession.DEFAULT_THRESHOLD, "Standard uses the default margin")
+        expect(WakeUsagePolicy.threshold(true) == WakeTrialSession.HIGHER_SENSITIVITY_THRESHOLD, "Higher sensitivity is an explicit opt-in")
         expect(!WakeUsagePolicy.accepts(WakeUsagePolicy.Mode.HEY_FRIDAY, 13, 12), "Consuming an action prevents a duplicate tap from replaying it")
         for (phase in WakeTrialSession.Phase.entries) {
             val state = errorState.copy(phase = phase, threshold = WakeTrialSession.DEFAULT_THRESHOLD)
             expect(WakeUsagePolicy.canAdopt(state) == (phase != WakeTrialSession.Phase.STOPPED && phase != WakeTrialSession.Phase.STOPPING),
                 "A choice can adopt a command trial only before cleanup")
             expect(!WakeUsagePolicy.canAdopt(state.copy(commandMode = false)), "A count-only trial cannot silently become command mode")
-            expect(!WakeUsagePolicy.canAdopt(state.copy(threshold = 0.1f)), "The choice preserves the measured 0.30 command cutoff")
+            val higher = state.copy(threshold = WakeTrialSession.HIGHER_SENSITIVITY_THRESHOLD)
+            expect(!WakeUsagePolicy.canAdopt(higher), "Standard cannot adopt a higher-sensitivity trial")
+            expect(WakeUsagePolicy.canAdopt(higher, WakeUsagePolicy.threshold(true)) ==
+                (phase != WakeTrialSession.Phase.STOPPED && phase != WakeTrialSession.Phase.STOPPING),
+                "A trial can be adopted at the explicitly saved higher sensitivity")
             expect(WakeUsagePolicy.status(state).isNotBlank(), "Each microphone lifecycle state has a notification label")
         }
         expect(WakeUsagePolicy.status(errorState.copy(phase = WakeTrialSession.Phase.PAUSED)) == "Friday is open",

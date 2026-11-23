@@ -1,13 +1,17 @@
 # Friday
 
-Friday is a native Android voice assistant for quick phone tasks. It sends one spoken command to a small backend, receives a validated action, and carries it out on the phone.
+Friday is a native Android voice assistant for quick phone tasks. It sends one spoken request to a small backend and runs the validated actions on the phone.
 
 ## What Friday can do
 
-- Call a saved contact or a phone number, with confirmation before dialing.
+- Call an exact saved contact directly when the phone is unlocked and the contact has one number. Choose between similar contacts and confirm when Friday needs help.
 - Set an alarm or timer using the phone's clock app.
 - Open an installed app or go to the Home screen.
+- Say “Play some music” to choose an installed music app. Say “Open Spotify” to open Spotify when it’s installed.
 - Switch the ringer between silent, vibrate, and normal.
+- Turn the flashlight on or off and set media, ring, or alarm volume.
+- Open Airplane mode settings and tell you which switch to change. Android requires this final tap.
+- Run up to three supported actions in one request. Say “Turn off the flashlight, set media volume to half, and open Clock.”
 - Use Friday as the selected Android assistant, a Quick Settings tile, or a notification shortcut.
 
 Friday does not answer general questions, search the web, or chat. Those requests receive a short unsupported response.
@@ -17,10 +21,12 @@ Friday does not answer general questions, search the web, or chat. Those request
 1. You tap the microphone or open Friday from an enabled entry point.
 2. Android records a short 16 kHz mono WAV command. Friday trims silence and sends the recording over HTTPS.
 3. The Groq backend transcribes the audio with Whisper Large V3 Turbo, then GPT OSS 20B selects one function from Friday's action list using the current phone time. Friday keeps the transcript in memory for that request.
-4. The backend validates the result and returns a compact action response.
-5. Friday resolves contacts and installed apps on the phone, runs the action, then shows and speaks a short confirmation when Android has an English text-to-speech engine.
+4. The backend validates one action or a short sequence.
+5. Friday resolves contacts and installed apps on the phone, runs the actions in order, then shows and speaks the result when Android has an English text-to-speech engine.
 
 The phone does not upload contacts or installed-app lists. Friday does not save command recordings. Account-enabled cloud commands require Google sign-in.
+
+Home has one Speak button and a Settings shortcut. Settings groups the account, entry points and phone tools, with their current values beside the labels. About Friday shows the build version and license notices. In Start Friday, the white info bubbles explain each option; selecting a radio button or opening help starts no microphone. Use the primary button to apply the choice.
 
 ## Technology
 
@@ -77,7 +83,7 @@ This builds debug and release APKs, runs the Kotlin action, voice, and wake-tria
 ls -lh app/build/outputs/apk/debug/*.apk app/build/outputs/apk/release/*.apk
 ```
 
-The app package is `com.puneet.friday`. Debug and release builds use different features. The opt-in Hey Friday wake detector is debug-only and needs a wake-enabled debug APK with the native runtime; standard builds do not contain it.
+The app package is `com.puneet.friday`. The opt-in **Hey Friday** detector is available in debug builds that include the local Friday model. Pass `-PfridayWakeModelDir=.local/tools/wake-model/android-assets` to `./gradlew assembleDebug` to package those weights. The model stays in the ignored local folder and out of release APKs.
 
 ### Backend
 
@@ -96,17 +102,27 @@ Vercel production setup and backend variables are documented in [the backend dep
 
 ## Try a command
 
-After building and installing the app, sign in and grant the permissions for the action you want to test. Tap the microphone, wait for **Listening**, then say:
+Invoke Friday from the assistant shortcut, tile, widget or notification to open a floating card above the current app. The orb moves with your voice. If Friday cannot hear a command, tap the microphone to retry. Tap ×, tap outside the card or press Back to dismiss it.
+
+After building and installing the app, sign in and grant the permissions for the action you want to test. Tap the orb or **Speak**, wait for **Listening**, then say:
 
 ```text
 Set a timer for two minutes
 ```
 
-Friday should return a timer action, open the phone's clock app, and show a short confirmation. The compact assistant closes after one completed command; its short speech can finish after Clock opens, and an enabled Hey Friday listener resumes when speech ends. Exact results depend on the installed clock app and Android permissions.
+Friday should send the timer request to your clock app and speak a short confirmation. On Home, Friday shows command feedback in a brief toast at the top center. Speech can finish after Clock takes focus from either Home or the compact assistant. The compact assistant closes after one completed command; Home retains the result, and an enabled Hey Friday listener resumes when speech ends. Exact results depend on the installed clock app and Android permissions.
+
+In a wake-enabled debug build, select **Settings → Start Friday → Hey Friday** and tap **Use Hey Friday**. The model is already in the APK. Allow the requested permissions and choose Friday as Android’s default assistant. After a wake, a short tone tells you when to speak. If a wake doesn’t open the assistant, Friday resumes detection after eight seconds.
+
+Pause Hey Friday before changing **Settings → Start Friday → Wake sensitivity**. Higher sensitivity can catch quiet phrases and can also wake Friday during other speech.
+
+To investigate false wakes in a debug build, open **Settings → Start Friday → Wake audio tracker**. Start tracking for up to 15 minutes. Friday keeps the latest 16 clips, each with up to two seconds from before a wake, in private storage. Use Android debugging to retrieve those clips or delete them from the tracker menu.
 
 ## Privacy and permissions
 
 Friday asks for microphone, contacts, and phone permissions when their actions need them. Contact matching stays on the phone. The backend receives the spoken command audio and current phone time, but not the contact list or installed-app list. The app does not store command audio. Google sign-in is required before cloud commands.
+
+Open **Settings → Account** to see your Google name and email, sign out on this phone, or request deletion of your Friday account across devices.
 
 See [Google sign-in and session handling](docs/google-sign-in.md), [the action contract](docs/actions.md), and the testing and deployment docs for full behavior and known limits.
 
@@ -121,6 +137,6 @@ See [Google sign-in and session handling](docs/google-sign-in.md), [the action c
 
 The [testing guide](docs/testing.md) records verification and device coverage. The [model notes](docs/model-notes.md) track accuracy and latency measurements. Wake phrase recognition remains opt-in debug work; its current phone results do not establish production accuracy.
 
-The [audio-processing comparison](docs/audio-processing-benchmark.md) records Kotlin, Rust and C++ measurements on the Vivo. Friday keeps command audio in Kotlin and skips unused pitch analysis after capture; the wake detector uses its existing C++ runtime.
+The [audio-processing comparison](docs/audio-processing-benchmark.md) records Kotlin, Rust and C++ measurements on the Vivo. Friday processes command audio and runs its bundled wake detector in Kotlin.
 
 The wake-enabled debug build can keep Hey Friday listening after you remove Friday from Recents. [Background listening setup](docs/wake-detector-trial.md#background-listening) links to optional battery settings. Pause stops the microphone; restart or force-stop requires a user-started Resume. All-day battery drain remains unmeasured.

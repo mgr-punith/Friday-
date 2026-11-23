@@ -45,7 +45,7 @@ class PermissionsActivity : Activity() {
                 Manifest.permission.CALL_PHONE,
                 "Phone calls",
                 R.drawable.ic_phone,
-                "Friday uses phone access to place a call you request from the visible assistant. You confirm the resolved number before Android starts the call. Friday does not read or upload call history.",
+                "Friday uses phone access to place calls you request. An exact contact with one saved number can dial from the visible assistant when your phone is unlocked. Other calls ask you to confirm. Friday does not read or upload call history.",
             ),
         )
         permissions.forEach { permissionInfo ->

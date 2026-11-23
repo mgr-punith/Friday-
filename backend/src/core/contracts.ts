@@ -1,8 +1,11 @@
+import type { ActionProtocolVersion } from "./capabilities";
+
 export type AudioMimeType = "audio/wav" | "audio/mp4";
 
-export type CommandInput =
+export type CommandInput = (
   | { readonly kind: "audio"; readonly bytes: Uint8Array; readonly mimeType: AudioMimeType }
-  | { readonly kind: "text"; readonly text: string };
+  | { readonly kind: "text"; readonly text: string }
+) & { readonly actionVersion?: ActionProtocolVersion };
 
 export interface FunctionSelection {
   readonly name: string;

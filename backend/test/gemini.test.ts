@@ -61,6 +61,25 @@ test("sends audio inline without logging or file storage", async () => {
   assert.equal(request?.contents[0].parts[1].inlineData.data, wav.toString("base64"));
 });
 
+test("Gemini rollback uses the negotiated v3 Settings contract", async () => {
+  let request: Record<string, any> | undefined;
+  const fetcher: FetchLike = async (_input, init) => {
+    request = JSON.parse(String(init?.body));
+    return Response.json({ candidates: [{ content: { parts: [{ functionCall: {
+      name: "open_settings", args: { setting: "airplane_mode", state: "off" }
+    } }] } }] });
+  };
+  const provider = new GeminiProvider(CONFIG, new StaticSecrets(), fetcher);
+  const result = await provider.select({ kind: "text", text: "Turn off airplane mode", actionVersion: 3 },
+    "2026-11-17T14:00:00+05:30");
+
+  assert.equal(request?.toolConfig.functionCallingConfig.allowedFunctionNames.includes("open_settings"), true);
+  assert.match(request?.systemInstruction.parts[0].text, /user completes the change/);
+  assert.deepEqual(result.selection, {
+    name: "open_settings", args: { setting: "airplane_mode", state: "off" }
+  });
+});
+
 test("retries one server error and then succeeds", async () => {
   let calls = 0;
   const fetcher: FetchLike = async () => {

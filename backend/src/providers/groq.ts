@@ -1,4 +1,9 @@
-import { FUNCTION_DECLARATIONS, FUNCTION_NAMES, SYSTEM_PROMPT } from "../core/action-schema";
+import {
+  SYSTEM_PROMPT,
+  actionInstructionsFor,
+  functionDeclarationsFor,
+  functionNamesFor
+} from "../core/action-schema";
 import { AssistantProviderError, type AssistantProvider, type AssistantProviderResult,
   type CommandInput, type FunctionSelection } from "../core/contracts";
 import type { FetchLike } from "./gemini";
@@ -59,15 +64,18 @@ export class GroqProvider implements AssistantProvider {
       return { selection: { name: "unclear_command", args: {} }, durationMs: this.elapsed(budget), timingMetric: "groq", stages };
     }
     const started = this.runtime.now();
+    const actionVersion = input.actionVersion ?? 1;
+    const tools = functionDeclarationsFor(actionVersion);
+    const actionInstructions = actionInstructionsFor(actionVersion);
     const value = await this.request("classification", (repair) => ({
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         model: this.config.actionModel,
         messages: [
-          { role: "system", content: SYSTEM_PROMPT + " Return one tool call with a valid JSON object. Omit optional fields that were not spoken. Do not output prose." },
+          { role: "system", content: SYSTEM_PROMPT + actionInstructions + " Return one tool call with a valid JSON object. Omit optional fields that were not spoken. Do not output prose." },
           { role: "user", content: `Current phone time: ${now}\nCommand: ${text}` }
         ],
-        tools: FUNCTION_DECLARATIONS.map((declaration) => ({ type: "function", function: {
+        tools: tools.map((declaration) => ({ type: "function", function: {
           ...declaration,
           parameters: { ...declaration.parameters, additionalProperties: false }
         } })),
@@ -78,10 +86,11 @@ export class GroqProvider implements AssistantProvider {
         ...(this.config.actionModel.startsWith("openai/gpt-oss-") ? { reasoning_effort: "low", include_reasoning: false } : {})
       })
     }), budget);
-    const selection = readToolCall(value);
+    const selection = readToolCall(value, functionNamesFor(actionVersion));
     if (!selection) throw this.failure(budget, "classification", "invalid_response");
     stages.classification = this.runtime.now() - started;
-    return { selection, durationMs: this.elapsed(budget), timingMetric: "groq", stages };
+    const exact = actionVersion >= 2 ? exactDeviceRequest(text) : null;
+    return { selection: exact ?? selection, durationMs: this.elapsed(budget), timingMetric: "groq", stages };
   }
 
   private readTranscript(value: unknown, budget: RequestBudget): string {
@@ -168,7 +177,22 @@ export class GroqProvider implements AssistantProvider {
   }
 }
 
-function readToolCall(value: unknown): FunctionSelection | null {
+// Pin common, explicit commands after the transcript check. Never match part of a compound or negated request.
+function exactDeviceRequest(text: string): FunctionSelection | null {
+  const words = text.toLowerCase().replace(/[.!?]+$/, "").replace(/\s+/g, " ").trim()
+    .replace(/^(?:(?:can|could|would) you )?(?:please )?/, "").replace(/,? please$/, "");
+  const torch = /^(?:turn|switch) (on|off) (?:(?:the|my) )?(?:flashlight|flash light|torch)$/.exec(words)
+    ?? /^(?:turn|switch|put) (?:(?:the|my) )?(?:flashlight|flash light|torch) (on|off)$/.exec(words);
+  if (torch) return { name: "flashlight", args: { on: torch[1] === "on" } };
+  if (/^(?:play (?:music|a music|some music|a song)|open (?:the |a |my )?music (?:app|player))$/.test(words)) {
+    return { name: "open_music", args: {} };
+  }
+  const musicApp = /^(?:play (?:music|a music|some music|a song) (?:in|on|using)|open) (spotify|youtube(?: music)?)$/.exec(words);
+  if (musicApp) return { name: "open_app", args: { name: musicApp[1] } };
+  return null;
+}
+
+function readToolCall(value: unknown, allowed: readonly string[]): FunctionSelection | null {
   if (!isRecord(value) || !Array.isArray(value.choices) || value.choices.length !== 1) return null;
   const choice = value.choices[0];
   if (!isRecord(choice) || choice.finish_reason === "length" || !isRecord(choice.message) ||
@@ -177,7 +201,7 @@ function readToolCall(value: unknown): FunctionSelection | null {
   if (!isRecord(call) || (call.type !== undefined && call.type !== "function") || !isRecord(call.function)) return null;
   const name = call.function.name;
   const args = call.function.arguments;
-  if (typeof name !== "string" || !FUNCTION_NAMES.some((allowed) => allowed === name) || typeof args !== "string") return null;
+  if (typeof name !== "string" || !allowed.includes(name) || typeof args !== "string") return null;
   try {
     const parsed: unknown = JSON.parse(args);
     if (!isRecord(parsed)) return null;

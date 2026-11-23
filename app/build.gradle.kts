@@ -21,7 +21,11 @@ android {
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
     }
   }
-  // Opt-in native trial artifacts. No library or model enters the release source set.
+  // The owner's local wake model enters only the debug APK.
+  providers.gradleProperty("fridayWakeModelDir").orNull?.let { modelDir ->
+    sourceSets.getByName("debug").assets.srcDir(rootProject.file(modelDir))
+  }
+  // Legacy native trial artifacts for comparison builds.
   providers.gradleProperty("wakeTrialNativeDir").orNull?.let { nativeDir ->
     sourceSets.getByName("debug").jniLibs.srcDir(file(nativeDir))
   }

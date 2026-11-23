@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseExpectedAction, parseFunctionSelection } from "../src/core/action-schema";
+import {
+  functionNamesFor,
+  parseExpectedAction,
+  parseFunctionSelection
+} from "../src/core/action-schema";
+import { actionProtocolVersion } from "../src/core/capabilities";
 
 test("accepts every v1 action with valid arguments", () => {
   const cases = [
@@ -28,6 +33,70 @@ test("trims short spoken names", () => {
     type: "action",
     action: "open_app",
     args: { name: "Camera" }
+  });
+});
+
+test("new device controls and ordered commands require an opted-in client", () => {
+  const flashlight = { action: "flashlight", args: { on: false } };
+  const volume = { action: "set_volume", args: { stream: "media", percent: 50 } };
+  const launch = { action: "open_app", args: { name: "Clock" } };
+  const sequence = (actions: unknown[], expanded = true) =>
+    parseFunctionSelection({ name: "run_actions", args: { actions } }, expanded ? 2 : 1);
+  const actions = [flashlight, volume, launch];
+
+  assert.deepEqual(sequence(actions, false), { type: "unsupported" });
+  assert.deepEqual(parseFunctionSelection({ name: "flashlight", args: flashlight.args }), { type: "unsupported" });
+  assert.deepEqual(sequence(actions), {
+    type: "actions",
+    actions: actions.map(step => ({ type: "action", ...step }))
+  });
+  assert.deepEqual(sequence([launch, flashlight]), { type: "unsupported" });
+  assert.deepEqual(sequence([flashlight, { action: "take_screenshot", args: {} }]), { type: "error", reason: "bad_audio" });
+  assert.deepEqual(sequence([flashlight, { action: "run_actions", args: { actions } }]), { type: "error", reason: "bad_audio" });
+  assert.deepEqual(sequence([flashlight, { action: "set_volume", args: { stream: "alarm", percent: 101 } }]), { type: "error", reason: "bad_audio" });
+  assert.deepEqual(sequence([flashlight, { action: "flashlight", args: { on: "false" } }]), { type: "error", reason: "bad_audio" });
+  assert.deepEqual(sequence([flashlight]), { type: "error", reason: "bad_audio" });
+  assert.deepEqual(sequence([...actions, flashlight]), { type: "error", reason: "bad_audio" });
+});
+
+test("negotiates v1, v2, and v3 without exposing newer actions to older clients", () => {
+  const settings = { name: "open_settings", args: { setting: "airplane_mode", state: "on" } };
+
+  assert.equal(actionProtocolVersion(undefined), 1);
+  assert.equal(actionProtocolVersion("2"), 2);
+  assert.equal(actionProtocolVersion("3"), 3);
+  assert.equal(actionProtocolVersion("99"), 1);
+  assert.equal(functionNamesFor(1).includes("flashlight"), false);
+  assert.equal(functionNamesFor(2).includes("open_settings"), false);
+  assert.equal(functionNamesFor(3).includes("open_settings"), true);
+  assert.deepEqual(parseFunctionSelection(settings, 1), { type: "unsupported" });
+  assert.deepEqual(parseFunctionSelection(settings, 2), { type: "unsupported" });
+  assert.deepEqual(parseFunctionSelection(settings, 3), {
+    type: "action", action: "open_settings", args: { setting: "airplane_mode", state: "on" }
+  });
+});
+
+test("validates allowlisted settings arguments and keeps handoffs terminal", () => {
+  for (const selection of [
+    { name: "open_settings", args: {} },
+    { name: "open_settings", args: { setting: "wifi" } },
+    { name: "open_settings", args: { setting: "airplane_mode", state: "toggle" } },
+    { name: "open_settings", args: { setting: "airplane_mode", intent: "android.settings.SETTINGS" } }
+  ]) {
+    assert.deepEqual(parseFunctionSelection(selection, 3), { type: "error", reason: "bad_audio" });
+  }
+
+  const settings = { action: "open_settings", args: { setting: "airplane_mode", state: "off" } };
+  const flashlight = { action: "flashlight", args: { on: false } };
+  const sequence = (actions: unknown[]) =>
+    parseFunctionSelection({ name: "run_actions", args: { actions } }, 3);
+  assert.deepEqual(sequence([settings, flashlight]), { type: "unsupported" });
+  assert.deepEqual(sequence([flashlight, settings]), {
+    type: "actions",
+    actions: [
+      { type: "action", ...flashlight },
+      { type: "action", ...settings }
+    ]
   });
 });
 

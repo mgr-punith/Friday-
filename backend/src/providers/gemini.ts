@@ -1,7 +1,8 @@
 import {
-  FUNCTION_DECLARATIONS,
-  FUNCTION_NAMES,
-  SYSTEM_PROMPT
+  SYSTEM_PROMPT,
+  actionInstructionsFor,
+  functionDeclarationsFor,
+  functionNamesFor
 } from "../core/action-schema";
 import {
   AssistantProviderError,
@@ -90,15 +91,17 @@ function buildRequest(
       ? { text: input.text }
       : { inlineData: { mimeType: input.mimeType, data: Buffer.from(input.bytes).toString("base64") } }
   ];
+  const actionVersion = input.actionVersion ?? 1;
+  const declarations = functionDeclarationsFor(actionVersion);
 
   return {
-    systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+    systemInstruction: { parts: [{ text: SYSTEM_PROMPT + actionInstructionsFor(actionVersion) }] },
     contents: [{ role: "user", parts }],
-    tools: [{ functionDeclarations: FUNCTION_DECLARATIONS }],
+    tools: [{ functionDeclarations: declarations }],
     toolConfig: {
       functionCallingConfig: {
         mode: "ANY",
-        allowedFunctionNames: FUNCTION_NAMES
+        allowedFunctionNames: functionNamesFor(actionVersion)
       }
     },
     generationConfig: {

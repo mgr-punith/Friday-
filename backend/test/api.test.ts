@@ -111,6 +111,51 @@ test("authorized text command returns a validated action and timing", async () =
   assert.equal(usage.commandCalls[0]?.installId, TEST_INSTALL_ID);
 });
 
+test("command header negotiates the action protocol version", async () => {
+  for (const [headerValue, expectedVersion] of [[undefined, undefined], ["2", 2], ["3", 3], ["99", undefined]] as const) {
+    const { api, assistant } = harness();
+    const headers: Record<string, string> = {
+      authorization: `Bearer ${token()}`,
+      "content-type": "application/json",
+      "x-now": "2026-11-17T14:00:00+05:30"
+    };
+    if (headerValue !== undefined) headers["x-friday-actions"] = headerValue;
+    await api.handle(event("POST", "/v1/command", {
+      headers,
+      body: JSON.stringify({ text: "Open camera" })
+    }));
+    assert.equal(assistant.calls[0]?.input.actionVersion, expectedVersion);
+  }
+});
+
+test("v3 validates settings handoffs while v2 keeps them unsupported", async () => {
+  const old = harness();
+  old.assistant.result = {
+    selection: { name: "open_settings", args: { setting: "airplane_mode", state: "on" } },
+    durationMs: 5
+  };
+  const base = {
+    authorization: `Bearer ${token()}`,
+    "content-type": "application/json",
+    "x-now": "2026-11-17T14:00:00+05:30"
+  };
+  const oldResponse = await old.api.handle(event("POST", "/v1/command", {
+    headers: { ...base, "x-friday-actions": "2" },
+    body: JSON.stringify({ text: "Turn on airplane mode" })
+  }));
+  assert.deepEqual(body(oldResponse), { type: "unsupported" });
+
+  const current = harness();
+  current.assistant.result = old.assistant.result;
+  const currentResponse = await current.api.handle(event("POST", "/v1/command", {
+    headers: { ...base, "x-friday-actions": "3" },
+    body: JSON.stringify({ text: "Turn on airplane mode" })
+  }));
+  assert.deepEqual(body(currentResponse), {
+    type: "action", action: "open_settings", args: { setting: "airplane_mode", state: "on" }
+  });
+});
+
 test("authorized WAV command reaches the provider as bytes", async () => {
   const { api, assistant } = harness();
   const wav = createPcmWav();

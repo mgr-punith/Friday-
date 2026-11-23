@@ -17,6 +17,9 @@ internal object AppNameMatcher {
         "com.google.android.apps.messaging" to listOf("google messages"),
         "com.google.android.gm" to listOf("gmail", "google mail"),
         "com.android.vending" to listOf("google play", "google play store", "play store"),
+        "com.spotify.music" to listOf("spotify"),
+        "com.google.android.youtube" to listOf("youtube"),
+        "com.google.android.apps.youtube.music" to listOf("youtube music", "yt music"),
     ).flatMap { (packageName, names) -> names.map { it.replace(" ", "") to packageName } }.toMap()
 
     fun match(query: String, apps: List<LauncherApp>): MatchResult {
@@ -51,4 +54,18 @@ internal object AppNameMatcher {
             NameMatcher.match(target, labels).takeUnless { it == MatchResult.NotFound }
         } ?: MatchResult.NotFound
     }
+}
+
+internal object MusicApps {
+    private val supportedServices = setOf(
+        "com.spotify.music", "com.google.android.youtube", "com.google.android.apps.youtube.music",
+        "org.videolan.vlc", "com.android.bbkmusic",
+    )
+    private val playerWords = setOf("music", "audio", "player")
+
+    fun find(launchers: List<LauncherApp>, musicPackages: Set<String>, audioHandlers: Set<String>): List<LauncherApp> =
+        launchers.asSequence().filter { app ->
+            app.packageName in supportedServices || app.packageName in musicPackages ||
+                (app.packageName in audioHandlers && NameMatcher.normalize(app.label).split(' ').any { it in playerWords })
+        }.distinctBy { it.packageName }.sortedBy { NameMatcher.normalize(it.label) }.toList()
 }

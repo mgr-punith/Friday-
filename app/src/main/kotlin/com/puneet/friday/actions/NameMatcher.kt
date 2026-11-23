@@ -25,6 +25,10 @@ object NameMatcher {
     private val terminalTh = Regex("th$")
     private val terminalSh = Regex("sh$")
     private val callVerb = Regex("^(?:(?:can|could|would) you )?(?:please )?(?:call|phone|ring|dial) ")
+    private val familyNames = listOf(
+        setOf("mom", "mum", "mother", "mummy", "amma"),
+        setOf("dad", "father", "daddy", "papa", "appa"),
+    )
 
     fun normalize(value: String): String {
         val decomposed = Normalizer.normalize(value, Normalizer.Form.NFD)
@@ -58,12 +62,60 @@ object NameMatcher {
     }
 
     fun matchContact(query: String, candidates: List<String>): MatchResult {
-        val direct = match(query, candidates)
-        if (direct != MatchResult.NotFound || query.length > MAX_NAME_LENGTH) return direct
+        if (query.length > MAX_NAME_LENGTH) return MatchResult.NotFound
         val spoken = normalize(query)
-        val name = callVerb.replaceFirst(spoken, "")
-        if (spoken == name) return direct
-        return match(name.removeSuffix(" please"), candidates)
+        val name = matchingForm(spokenContactName(spoken))
+        if (name.startsWith("kaul ")) {
+            // Whisper can hear the call verb as "Kaul". A real surname may use the same spelling.
+            val fullName = candidates.indices.filter { matchingForm(normalize(candidates[it])) == name }
+            val withoutPrefix = matchContactName(name.removePrefix("kaul "), candidates)
+            val indices = when (withoutPrefix) {
+                is MatchResult.Matched -> fullName + withoutPrefix.index
+                is MatchResult.Ambiguous -> fullName + withoutPrefix.indices
+                MatchResult.NotFound -> fullName
+            }.distinct()
+            if (indices.isNotEmpty()) return MatchResult.Ambiguous(indices)
+        }
+        val direct = match(query, candidates)
+        if (direct != MatchResult.NotFound) return direct
+        return matchContactName(name, candidates)
+    }
+
+    internal fun isExactContactName(query: String, savedName: String): Boolean {
+        val name = spokenContactName(normalize(query))
+        return name.isNotEmpty() && !name.startsWith("kaul ") && name == normalize(savedName)
+    }
+
+    private fun spokenContactName(normalized: String): String =
+        callVerb.replaceFirst(normalized, "").removeSuffix(" please").removePrefix("my ")
+
+    private fun matchContactName(name: String, candidates: List<String>): MatchResult {
+        val cleaned = match(name, candidates)
+        if (cleaned != MatchResult.NotFound) return cleaned
+
+        val family = familyNames.firstOrNull { name in it }
+        if (family != null) {
+            val aliases = candidates.indices.filter { normalize(candidates[it]) in family }
+            if (aliases.isNotEmpty()) return MatchResult.Ambiguous(aliases)
+        }
+
+        if (name.count(Char::isLetter) < 4) return MatchResult.NotFound
+        val joinedName = name.replace(" ", "")
+        val close = candidates.indices.filter { index ->
+            val candidate = candidates[index]
+            candidate.length <= MAX_NAME_LENGTH && nearContactName(name, joinedName, matchingForm(normalize(candidate)))
+        }
+        // Even one spelling suggestion needs a choice before the separate call confirmation.
+        return if (close.size in 1..8) MatchResult.Ambiguous(close) else MatchResult.NotFound
+    }
+
+    private fun nearContactName(name: String, joinedName: String, candidate: String): Boolean {
+        if (candidate.replace(" ", "") == joinedName) return true
+        val targets = if (' ' in name) listOf(candidate) else candidate.split(' ')
+        return targets.any { token ->
+            token.length >= 4 && kotlin.math.abs(name.length - token.length) <= 1 &&
+                name.first() == token.first() && editDistance(name, token) == 1
+        }
     }
 
     internal fun resultFor(indices: List<Int>): MatchResult = when (indices.size) {

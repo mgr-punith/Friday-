@@ -10,7 +10,7 @@ import android.os.Process
 import com.puneet.friday.DebugTools
 import kotlin.math.max
 
-class VoiceRecorder(private val context: Context) {
+class VoiceRecorder(private val context: Context, private val afterWake: Boolean = false) {
     @Volatile private var stopRequested = false
     @Volatile private var activeRecorder: AudioRecord? = null
 
@@ -62,7 +62,7 @@ class VoiceRecorder(private val context: Context) {
         val processor = PcmProcessor()
         val samples = ShortArray(WavEncoder.SAMPLE_RATE * MAX_SECONDS)
         val frame = ShortArray(FRAME_SAMPLES)
-        val stopDetector = SpeechEndDetector()
+        val stopDetector = AudioCapturePolicy.commandDetector(afterWake)
         var readySent = false
         var count = 0
         try {
@@ -85,7 +85,7 @@ class VoiceRecorder(private val context: Context) {
                     readySent = true
                     onReady()
                 }
-                if (shouldStop) break
+                if (shouldStop && AudioCapturePolicy.canStopAfterSilence(afterWake, count)) break
             }
         } finally {
             activeRecorder = null
@@ -117,7 +117,7 @@ class VoiceRecorder(private val context: Context) {
     }
 
     private fun reviewCapture(samples: ShortArray, count: Int, processor: PcmProcessor): SpeechEndDetector {
-        val detector = SpeechEndDetector()
+        val detector = AudioCapturePolicy.commandDetector(afterWake)
         val frame = ShortArray(FRAME_SAMPLES)
         var offset = 0
         while (offset < count) {

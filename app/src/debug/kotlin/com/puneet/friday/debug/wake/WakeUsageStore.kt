@@ -17,6 +17,15 @@ internal object WakeUsageStore {
 
     fun consent(context: Context) { preferences(context).edit().putBoolean("consented", true).apply() }
 
+    fun higherSensitivity(context: Context): Boolean =
+        preferences(context).getBoolean("higher_sensitivity", false)
+
+    fun threshold(context: Context): Float = WakeUsagePolicy.threshold(higherSensitivity(context))
+
+    fun setHigherSensitivity(context: Context, higher: Boolean) {
+        preferences(context).edit().putBoolean("higher_sensitivity", higher).apply()
+    }
+
     fun select(context: Context, mode: WakeUsagePolicy.Mode): Boolean = preferences(context).edit()
         .putString("mode", mode.value).putLong("revision", nextRevision(context)).commit()
 

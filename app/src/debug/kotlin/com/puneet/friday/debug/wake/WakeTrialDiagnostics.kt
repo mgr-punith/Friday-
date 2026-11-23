@@ -1,5 +1,6 @@
 package com.puneet.friday.debug.wake
 
+import android.content.res.AssetManager
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -11,16 +12,11 @@ internal object WakeTrialDiagnostics {
     const val INPUT = "wake-trial/replay.pcm"
     const val OUTPUT = "wake-trial/replay-result.json"
 
-    @Synchronized fun run(filesDir: File, runId: String, cancelled: () -> Boolean): String {
+    @Synchronized fun run(assets: AssetManager, filesDir: File, runId: String, cancelled: () -> Boolean): String {
         val result = JSONObject().put("runId", runId.take(64))
         try {
             check(!WakeTrialService.session.snapshot().active) { "Stop the microphone test before replay." }
-            check(MicroWakeWordNative.available) { "Detector runtime missing" }
-            check(MicroWakeWordNative.create(ByteArray(0), 0.66f) == 0L)
-            check(MicroWakeWordNative.create(ByteArray(WakeTrialModel.BYTES), 0.66f) == 0L)
-            check(MicroWakeWordNative.process(0, ShortArray(1), 1) == -1)
-            check(MicroWakeWordNative.process(1, ShortArray(1), 2) == -1)
-            MicroWakeWordNative.destroy(0)
+            val model = FridayKeywordModel.load(assets)
             val input = File(filesDir, INPUT)
             check(input.isFile && input.length() in 2..3_200_000L && input.length() % 2 == 0L) { "Test PCM missing or invalid" }
             val events = JSONArray()
@@ -28,11 +24,7 @@ internal object WakeTrialDiagnostics {
             val frame = ShortArray(160)
             var samples = 0L
             val before = System.nanoTime()
-            MicroWakeWordDetector(filesDir, 0.66f).use { detector ->
-                repeat(400) {
-                    check(!cancelled()) { "Replay cancelled" }
-                    detector.process(frame, frame.size)
-                }
+            FridayKeywordDetector(model, WakeTrialSession.DEFAULT_THRESHOLD).use { detector ->
                 input.inputStream().buffered().use { stream ->
                     while (true) {
                         check(!cancelled()) { "Replay cancelled" }
@@ -52,12 +44,10 @@ internal object WakeTrialDiagnostics {
                     }
                 }
             }
-            result.put("ok", true).put("jniChecks", 5).put("detectionsMs", events)
+            result.put("ok", true).put("detector", "friday_keyword").put("detectionsMs", events)
                 .put("audioMs", samples * 1_000 / 16_000).put("computeMs", (System.nanoTime() - before) / 1_000_000)
         } catch (error: Exception) {
             result.put("ok", false).put("error", error.message ?: "Replay failed")
-        } catch (_: LinkageError) {
-            result.put("ok", false).put("error", "Detector runtime missing")
         }
         val output = File(filesDir, OUTPUT)
         output.parentFile?.mkdirs()
