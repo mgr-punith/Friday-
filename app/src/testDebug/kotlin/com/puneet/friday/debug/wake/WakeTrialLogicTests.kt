@@ -82,8 +82,9 @@ object WakeTrialLogicTests {
             "Activity shutdown during handoff cannot escape as an unhandled checked exception")
         expect(Thread.interrupted(), "Cancellation preserves interruption and the test clears it afterward")
         val commands = WakeTrialSession()
-        expect(WakeTrialSession.DEFAULT_THRESHOLD > WakeTrialSession.HIGHER_SENSITIVITY_THRESHOLD,
-            "Standard adds a margin above the bundled calibration cutoff")
+        expect(WakeTrialSession.DEFAULT_THRESHOLD == 1f, "Standard uses the bundled model's calibrated cutoff")
+        expect(WakeTrialSession.HIGHER_SENSITIVITY_THRESHOLD < WakeTrialSession.DEFAULT_THRESHOLD,
+            "Higher sensitivity uses a lower cutoff than Standard")
         val run = checkNotNull(commands.begin(WakeTrialSession.DEFAULT_THRESHOLD, commandMode = true, nowMs = 100))
         expect(commands.snapshot().commandMode, "Command mode requires an explicit trial option")
         expect(commands.listening(run, 1_000), "An opted-in command trial starts listening")
@@ -223,7 +224,7 @@ object WakeTrialLogicTests {
         }
         expect(!WakeUsagePolicy.accepts(WakeUsagePolicy.Mode.HEY_FRIDAY, 0, 0), "An uninitialized revision cannot start a microphone")
         expect(WakeUsagePolicy.accepts(WakeUsagePolicy.Mode.HEY_FRIDAY, 12, 12), "An explicit current notification tap can act")
-        expect(WakeUsagePolicy.threshold(false) == WakeTrialSession.DEFAULT_THRESHOLD, "Standard uses the default margin")
+        expect(WakeUsagePolicy.threshold(false) == WakeTrialSession.DEFAULT_THRESHOLD, "Standard uses model calibration")
         expect(WakeUsagePolicy.threshold(true) == WakeTrialSession.HIGHER_SENSITIVITY_THRESHOLD, "Higher sensitivity is an explicit opt-in")
         expect(!WakeUsagePolicy.accepts(WakeUsagePolicy.Mode.HEY_FRIDAY, 13, 12), "Consuming an action prevents a duplicate tap from replaying it")
         for (phase in WakeTrialSession.Phase.entries) {

@@ -57,6 +57,30 @@ internal object AppNameMatcher {
 }
 
 internal object MusicApps {
+    data class Selection(val apps: List<LauncherApp>, val question: String? = null)
+
+    enum class NamedRequestRoute {
+        PLAY_FROM_SEARCH,
+        SEARCH_RESULTS,
+    }
+
+    fun namedRequestRoute(packageName: String): NamedRequestRoute =
+        if (packageName == "com.google.android.youtube") NamedRequestRoute.SEARCH_RESULTS
+        else NamedRequestRoute.PLAY_FROM_SEARCH
+
+    fun select(name: String?, available: List<LauncherApp>, playback: List<LauncherApp>, preferred: String?): Selection {
+        val candidates = playback.ifEmpty { available }
+        if (name != null) {
+            return when (val match = AppNameMatcher.match(name, available)) {
+                is MatchResult.Matched -> Selection(listOf(available[match.index]))
+                is MatchResult.Ambiguous -> Selection(match.indices.map { available[it] }, "Which music app?")
+                MatchResult.NotFound -> Selection(candidates, "Couldn't find $name. Which player should I use?")
+            }
+        }
+        candidates.find { it.packageName == preferred }?.let { return Selection(listOf(it)) }
+        return Selection(candidates, if (candidates.size > 1) "Which music app should I use by default?" else null)
+    }
+
     private val supportedServices = setOf(
         "com.spotify.music", "com.google.android.youtube", "com.google.android.apps.youtube.music",
         "org.videolan.vlc", "com.android.bbkmusic",

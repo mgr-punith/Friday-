@@ -111,10 +111,10 @@ internal class WakeTrialSession {
     }
 
     companion object {
-        // Multipliers of the bundled model's calibration cutoff.
+        // Adjustments relative to the bundled model's calibrated cutoff. 1f uses it as-is.
         const val STRICT_THRESHOLD = 2f
-        const val DEFAULT_THRESHOLD = 1.1f
-        const val HIGHER_SENSITIVITY_THRESHOLD = 1f
+        const val DEFAULT_THRESHOLD = 1f
+        const val HIGHER_SENSITIVITY_THRESHOLD = 0.9f
         val THRESHOLDS = listOf(STRICT_THRESHOLD, DEFAULT_THRESHOLD, HIGHER_SENSITIVITY_THRESHOLD)
     }
 }

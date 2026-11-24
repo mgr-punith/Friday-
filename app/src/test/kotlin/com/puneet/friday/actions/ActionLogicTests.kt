@@ -179,7 +179,26 @@ object ActionLogicTests {
         expect(PhoneAction.SetRingerMode(RingerMode.SILENT).validationError() == null, "Typed ringer modes are valid")
         val airplaneOn = PhoneAction.OpenSettings(SettingsTarget.AIRPLANE_MODE, SettingState.ON)
         expect(airplaneOn.validationError() == null, "Typed Settings handoffs are valid")
-        expect(PhoneCapabilityRegistry.ACTION_PROTOCOL_VERSION == 3, "Android requests the v3 capability contract")
+        expect(PhoneCapabilityRegistry.ACTION_PROTOCOL_VERSION == 5 &&
+            PhoneCapabilityRegistry.BASE_ACTION_PROTOCOL_VERSION == 4, "Media controls extend the v4 wire contract")
+        val pause = PhoneAction.ControlMedia(MediaOperation.PAUSE)
+        expect(PhoneCapabilityRegistry.requiresUnlock(pause) && !PhoneCapabilityRegistry.canPrecedeAnother(pause),
+            "Media controls require an unlocked phone and end the sequence")
+        val song = PhoneAction.PlayMedia("Believer")
+        expect(PhoneCapabilityRegistry.requiresUnlock(song) && !PhoneCapabilityRegistry.canPrecedeAnother(song),
+            "Playback needs an unlocked phone and ends the sequence")
+        val firstPlayer = LauncherApp("Spotify", "com.spotify.music")
+        val secondPlayer = LauncherApp("YouTube", "com.google.android.youtube")
+        val players = listOf(firstPlayer, secondPlayer)
+        expect(MusicApps.select(null, players, players, "removed").question != null, "Ask after a default disappears")
+        expect(MusicApps.select(null, players, players, firstPlayer.packageName).apps == listOf(firstPlayer), "Use the chosen player")
+        expect(MusicApps.select("YouTube", players, players, firstPlayer.packageName).apps == listOf(secondPlayer), "Honor the spoken player")
+        expect(MusicApps.select("Spotify", listOf(secondPlayer), listOf(secondPlayer), null).question != null, "Ask before substituting another player")
+        expect(MusicApps.select(null, emptyList(), emptyList(), null).apps.isEmpty(), "Handle a phone without music players")
+        expect(MusicApps.namedRequestRoute(secondPlayer.packageName) == MusicApps.NamedRequestRoute.SEARCH_RESULTS,
+            "YouTube uses a search-results route that preserves the requested title while warm")
+        expect(MusicApps.namedRequestRoute(firstPlayer.packageName) == MusicApps.NamedRequestRoute.PLAY_FROM_SEARCH,
+            "Other players retain Android's playback request")
         expect(PhoneCapabilityRegistry.capability(airplaneOn).id == "open_settings", "Settings uses a stable capability id")
         expect(!PhoneCapabilityRegistry.canPrecedeAnother(airplaneOn), "A Settings handoff is terminal")
         expect(

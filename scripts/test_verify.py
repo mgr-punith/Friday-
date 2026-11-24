@@ -16,6 +16,7 @@ class AndroidVerificationTests(unittest.TestCase):
             scripts.mkdir()
             shutil.copyfile(Path(__file__).with_name("verify.sh"), scripts / "verify.sh")
             (scripts / "check-secrets.py").write_text("", encoding="utf-8")
+            (scripts / "check-action-contract.py").write_text("", encoding="utf-8")
             (scripts / "test_wake_trial.py").write_text(
                 "import unittest\n"
                 "class AndroidRegression(unittest.TestCase):\n"

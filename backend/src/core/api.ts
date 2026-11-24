@@ -157,7 +157,7 @@ async function handleCommand(
   }
 
   try {
-    const actionVersion = actionProtocolVersion(header(event, "x-friday-actions"));
+    const actionVersion = actionProtocolVersion(header(event, "x-friday-actions"), header(event, "x-friday-media-controls"));
     const result = await dependencies.assistant.select(
       actionVersion === 1 ? input : { ...input, actionVersion },
       now,

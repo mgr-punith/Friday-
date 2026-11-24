@@ -25,6 +25,7 @@ import android.widget.TextView
 import android.window.OnBackInvokedDispatcher
 import com.puneet.friday.actions.ActionResult
 import com.puneet.friday.actions.AndroidActionExecutor
+import com.puneet.friday.actions.MediaOperation
 import com.puneet.friday.actions.PhoneAction
 import com.puneet.friday.actions.RequiredAccess
 import com.puneet.friday.actions.RingerMode
@@ -183,7 +184,17 @@ class ActionDebugActivity : Activity() {
                 val name = field(body, "app", "App name", "Name on your home screen", initial = "Clock")
                 actionButton("Open app") { PhoneAction.OpenApp(name.text.toString()) }
             }
-            Tool.MUSIC -> actionButton("Find music apps") { PhoneAction.OpenMusic }
+            Tool.MUSIC -> {
+                val query = field(body, "song", "Song or artist", "Song title", initial = "Believer")
+                val player = field(body, "player", "Music app (optional)", "Player name")
+                actionButton("Request playback") {
+                    PhoneAction.PlayMedia(query.text.toString(), player.text.toString().trim().ifEmpty { null })
+                }
+                actionButton("Find music apps") { PhoneAction.OpenMusic }
+                MediaOperation.entries.forEach { operation ->
+                    actionButton(operation.label) { PhoneAction.ControlMedia(operation) }
+                }
+            }
             Tool.HOME -> {
                 body.addView(
                     AppUi.text(this, "Return to your launcher. Other apps keep running in the background.", 14f, secondary = true),
@@ -336,6 +347,7 @@ class ActionDebugActivity : Activity() {
             ActionResult.NeedsUnlock -> "Unlock your phone, then try again."
             is ActionResult.Success -> result.confirmation
             is ActionResult.Handoff -> result.instruction
+            is ActionResult.MediaRequest -> result.confirmation
             is ActionResult.Failed -> result.reason
             is ActionResult.NeedsPermission -> when (result.which) {
                 RequiredAccess.MICROPHONE -> "Allow microphone access to use voice input."

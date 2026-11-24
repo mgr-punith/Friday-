@@ -79,7 +79,9 @@ class FridayBackendClient(
             setRequestProperty("content-type", "audio/wav")
             setRequestProperty("authorization", "Bearer $token")
             setRequestProperty("x-now", OffsetDateTime.now().toString())
-            setRequestProperty("x-friday-actions", PhoneCapabilityRegistry.ACTION_PROTOCOL_VERSION.toString())
+            // Production servers that predate media controls still understand the v4 base contract.
+            setRequestProperty("x-friday-actions", PhoneCapabilityRegistry.BASE_ACTION_PROTOCOL_VERSION.toString())
+            setRequestProperty("x-friday-media-controls", "1")
             setFixedLengthStreamingMode(wavBytes.size)
             doOutput = true
         }

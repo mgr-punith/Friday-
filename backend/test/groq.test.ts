@@ -209,6 +209,19 @@ test("exact spoken music and torch commands survive an unsupported model respons
   }
 });
 
+test("Groq keeps explicit media controls within the negotiated contract", async () => {
+  const provider = new GroqProvider(CONFIG, async () => tool("unsupported", "{}"), new Runtime());
+  const select = async (text: string, actionVersion: 4 | 5) =>
+    (await provider.select({ kind: "text", text, actionVersion }, NOW)).selection;
+  assert.deepEqual(await select("Pause music", 5), { name: "control_media", args: { operation: "pause" } });
+  assert.deepEqual(await select("Go to the previous track", 5),
+    { name: "control_media", args: { operation: "previous" } });
+  for (const text of ["Don't pause music", "Pause music and go home", "Pause YouTube"]) {
+    assert.equal((await select(text, 5)).name, "unsupported");
+  }
+  assert.equal((await select("Pause music", 4)).name, "unsupported");
+});
+
 test("repairs the reported tool_use_failed JSON error once without retranscribing", async () => {
   const runtime = new Runtime();
   const bodies: Record<string, any>[] = [];

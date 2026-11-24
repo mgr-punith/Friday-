@@ -11,6 +11,7 @@ import kotlin.math.ln
 internal class FridayKeywordDetector(
     private val model: FridayKeywordModel,
     sensitivity: Float,
+    private val observeScore: ((margin: Float, streak: Int) -> Unit)? = null,
 ) : WakeDetector {
     private val features = FridayKeywordFeatures(model.melBank)
     private val cutoff = model.cutoffFor(sensitivity)
@@ -27,7 +28,8 @@ internal class FridayKeywordDetector(
         for (index in 0 until count) {
             samplesRead++
             if (!features.append(samples[index])) continue
-            val qualifies = features.hasRecentSound && model.score(features.input) >= cutoff
+            val score = if (features.hasRecentSound) model.score(features.input) else Float.NEGATIVE_INFINITY
+            val qualifies = score >= cutoff
             if (!qualifies) {
                 above = 0
             } else if (above < 3) {
@@ -37,6 +39,7 @@ internal class FridayKeywordDetector(
                     wakeSampleCount = index + 1
                 }
             }
+            observeScore?.invoke(score - cutoff, above)
         }
         return wakeSampleCount != 0
     }

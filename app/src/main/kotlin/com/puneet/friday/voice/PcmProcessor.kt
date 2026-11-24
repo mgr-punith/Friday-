@@ -77,11 +77,13 @@ class PcmProcessor(
         return samples.copyOfRange(first, last + 1)
     }
 
-    fun hasSpeech(samples: ShortArray): Boolean {
+    fun hasSpeech(samples: ShortArray, inputGain: Float = 1f): Boolean {
         if (samples.size < sampleRate / 5) return false
         // The frame detector already checks voicing; this final check needs energy only.
         val level = analyze(samples, analyzeVoicing = false)
-        if (level.amplitude < MIN_OVERALL_AMPLITUDE || peak(samples, samples.size) < MIN_PEAK) return false
+        if (level.amplitude * inputGain < MIN_OVERALL_AMPLITUDE || peak(samples, samples.size) * inputGain < MIN_PEAK) {
+            return false
+        }
         val windowSize = max(1, sampleRate / WINDOWS_PER_SECOND)
         var activeWindows = 0
         var offset = 0
@@ -93,7 +95,7 @@ class PcmProcessor(
                 sumSquares += value * value
             }
             val rms = sqrt(sumSquares / count) / Short.MAX_VALUE
-            if (rms >= ACTIVE_WINDOW_RMS) activeWindows++
+            if (rms * inputGain >= ACTIVE_WINDOW_RMS) activeWindows++
             offset += count
         }
         return activeWindows >= MIN_ACTIVE_WINDOWS

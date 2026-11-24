@@ -2,7 +2,8 @@ package com.puneet.friday.actions
 
 /** Phone-side capability policy for validation, lock checks and ordered execution. */
 object PhoneCapabilityRegistry {
-    const val ACTION_PROTOCOL_VERSION = 3
+    const val ACTION_PROTOCOL_VERSION = 5
+    const val BASE_ACTION_PROTOCOL_VERSION = 4
 
     enum class SequencePosition { PREPARATORY, TERMINAL }
 
@@ -20,6 +21,8 @@ object PhoneCapabilityRegistry {
         is PhoneAction.SetTimer -> Capability("set_timer", 1, false, SequencePosition.TERMINAL)
         is PhoneAction.OpenApp -> Capability("open_app", 1, true, SequencePosition.TERMINAL)
         PhoneAction.OpenMusic -> Capability("open_music", 2, true, SequencePosition.TERMINAL)
+        is PhoneAction.PlayMedia -> Capability("play_media", 4, true, SequencePosition.TERMINAL)
+        is PhoneAction.ControlMedia -> Capability("control_media", 5, true, SequencePosition.TERMINAL)
         is PhoneAction.CloseApp -> Capability("close_app", 1, true, SequencePosition.TERMINAL)
         is PhoneAction.SetRingerMode -> Capability("set_ringer_mode", 1, false, SequencePosition.PREPARATORY)
         is PhoneAction.Flashlight -> Capability("flashlight", 2, true, SequencePosition.PREPARATORY)

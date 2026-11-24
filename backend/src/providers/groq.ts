@@ -89,7 +89,7 @@ export class GroqProvider implements AssistantProvider {
     const selection = readToolCall(value, functionNamesFor(actionVersion));
     if (!selection) throw this.failure(budget, "classification", "invalid_response");
     stages.classification = this.runtime.now() - started;
-    const exact = actionVersion >= 2 ? exactDeviceRequest(text) : null;
+    const exact = actionVersion >= 2 ? exactDeviceRequest(text, actionVersion >= 5) : null;
     return { selection: exact ?? selection, durationMs: this.elapsed(budget), timingMetric: "groq", stages };
   }
 
@@ -178,9 +178,14 @@ export class GroqProvider implements AssistantProvider {
 }
 
 // Pin common, explicit commands after the transcript check. Never match part of a compound or negated request.
-function exactDeviceRequest(text: string): FunctionSelection | null {
+function exactDeviceRequest(text: string, supportsMediaControls: boolean): FunctionSelection | null {
   const words = text.toLowerCase().replace(/[.!?]+$/, "").replace(/\s+/g, " ").trim()
     .replace(/^(?:(?:can|could|would) you )?(?:please )?/, "").replace(/,? please$/, "");
+  if (supportsMediaControls) {
+    const operation = /^(pause|resume) (?:(?:the|my) )?(?:music|playback|audio|song)$/.exec(words)
+      ?? /^(?:skip to |go to )?(?:the )?(next|previous) (?:song|track)$/.exec(words);
+    if (operation) return { name: "control_media", args: { operation: operation[1] } };
+  }
   const torch = /^(?:turn|switch) (on|off) (?:(?:the|my) )?(?:flashlight|flash light|torch)$/.exec(words)
     ?? /^(?:turn|switch|put) (?:(?:the|my) )?(?:flashlight|flash light|torch) (on|off)$/.exec(words);
   if (torch) return { name: "flashlight", args: { on: torch[1] === "on" } };

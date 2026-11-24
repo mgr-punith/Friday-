@@ -1,5 +1,6 @@
 package com.puneet.friday.voice
 
+import com.puneet.friday.actions.MediaOperation
 import com.puneet.friday.actions.PhoneAction
 import com.puneet.friday.actions.RingerMode
 import com.puneet.friday.actions.SettingState
@@ -117,6 +118,17 @@ object VoiceResponseParser {
                 requiredString(args, "name", MAX_NAME_LENGTH)?.let(PhoneAction::OpenApp)
             } else null
             "open_music" -> if (args.isEmpty()) PhoneAction.OpenMusic else null
+            "control_media" -> if (hasOnlyKeys(args, "operation")) {
+                MediaOperation.entries.firstOrNull { it.wireName == args["operation"] }
+                    ?.let(PhoneAction::ControlMedia)
+            } else null
+            "play_media" -> {
+                if (!hasOnlyKeys(args, "query", "appName") ||
+                    args.values.any { it !is String || it.any(Char::isISOControl) }) return badResponse()
+                val query = requiredString(args, "query", 160) ?: return badResponse()
+                val app = optionalString(args, "appName", MAX_NAME_LENGTH) ?: return badResponse()
+                PhoneAction.PlayMedia(query, app.value)
+            }
             "close_app" -> {
                 if (!hasOnlyKeys(args, "name")) return badResponse()
                 val name = optionalString(args, "name", MAX_NAME_LENGTH) ?: return badResponse()

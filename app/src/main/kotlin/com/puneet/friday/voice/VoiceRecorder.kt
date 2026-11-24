@@ -109,7 +109,7 @@ class VoiceRecorder(private val context: Context, private val afterWake: Boolean
         val start = reviewedDetector.firstSpeechFrame * FRAME_SAMPLES - PRE_ROLL_SAMPLES
         val end = (reviewedDetector.lastSpeechFrame + 1) * FRAME_SAMPLES + POST_ROLL_SAMPLES
         val cropped = processor.crop(samples, reviewedCount, start, end)
-        if (!processor.hasSpeech(cropped)) return CaptureResult.NoClearCommand
+        if (!AudioCapturePolicy.hasCommandEnergy(processor, cropped, afterWake)) return CaptureResult.NoClearCommand
         val normalized = processor.normalizeForRecognition(cropped)
         return CaptureResult.Command(
             RecordedCommand(WavEncoder.encode(normalized), normalized.size * 1_000L / WavEncoder.SAMPLE_RATE),
@@ -153,6 +153,7 @@ class SpeechEndDetector(
     private val minimumStrongFrames: Int = 10,
     private val minimumVoicedFrames: Int = minOf(6, minimumCommandFrames),
     private val minimumVoicedPercent: Int = 35,
+    private val inputGain: Float = 1f,
 ) {
     private var candidateSpeechFrames = 0
     private var candidateStrongFrames = 0
@@ -188,7 +189,7 @@ class SpeechEndDetector(
     fun add(rms: Float): Boolean = addFrame(rms, 1f)
 
     private fun addFrame(rms: Float, voicing: Float): Boolean {
-        val level = if (rms.isFinite()) rms.coerceAtLeast(0f) else 0f
+        val level = if (rms.isFinite()) rms.coerceAtLeast(0f) * inputGain else 0f
         val voiced = voicing.isFinite() && voicing >= MIN_VOICING_CORRELATION
         val currentFrame = frameIndex++
         if (currentFrame < calibrationFrames) {

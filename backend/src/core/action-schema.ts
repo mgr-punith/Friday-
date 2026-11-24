@@ -155,8 +155,19 @@ const PLAY_MEDIA = {
     required: ["query"]
   }
 } as const;
+const MEDIA_OPERATIONS = ["pause", "resume", "next", "previous"] as const;
+const CONTROL_MEDIA = {
+  name: "control_media",
+  description: "Pause, resume, skip to the next track, or request the previous track in the current player. Use only for explicit media transport requests. Use unsupported for app-specific controls or seeking.",
+  parameters: {
+    type: "object",
+    properties: { operation: { type: "string", enum: MEDIA_OPERATIONS } },
+    required: ["operation"]
+  }
+} as const;
 const baseActions = FUNCTION_DECLARATIONS.filter(tool => tool.name !== "unsupported" && tool.name !== "unclear_command");
-const actionDeclarations = [...baseActions, ...DEVICE_CONTROLS, ...SETTINGS_HANDOFFS, PLAY_MEDIA];
+const versionedActions = [...DEVICE_CONTROLS, ...SETTINGS_HANDOFFS, PLAY_MEDIA, CONTROL_MEDIA];
+const actionDeclarations = [...baseActions, ...versionedActions];
 
 function actionSequence(version: ActionProtocolVersion) {
   const supported = actionDeclarations.filter(tool =>
@@ -189,8 +200,8 @@ function actionSequence(version: ActionProtocolVersion) {
 
 export function functionDeclarationsFor(version: ActionProtocolVersion) {
   if (version === 1) return FUNCTION_DECLARATIONS;
-  const additions = version >= 3 ? [...DEVICE_CONTROLS, ...SETTINGS_HANDOFFS] : DEVICE_CONTROLS;
-  return [...FUNCTION_DECLARATIONS, ...additions, ...(version >= 4 ? [PLAY_MEDIA] : []), actionSequence(version)] as const;
+  const additions = versionedActions.filter(tool => supportsAction(tool.name, version));
+  return [...FUNCTION_DECLARATIONS, ...additions, actionSequence(version)] as const;
 }
 
 export function functionNamesFor(version: ActionProtocolVersion): readonly string[] {
@@ -203,7 +214,8 @@ export function actionInstructionsFor(version: ActionProtocolVersion): string {
     ? " Use open_settings for its allowlisted settings. It opens Android Settings; the user completes the change."
     : "";
   const music = version >= 4 ? " Use play_media for named music, including a title followed by a player name. Use open_music for generic music requests and open_app to open a named player." : "";
-  return " For several actions, use run_actions for the entire request in spoken order. If any step is unsupported or must leave Friday before a later step, return unsupported without picking a subset." + settings + music;
+  const transport = version >= 5 ? " Use control_media for pause music, resume music, next track, and previous track. A transport command can only be the final action." : "";
+  return " For several actions, use run_actions for the entire request in spoken order. If any step is unsupported or must leave Friday before a later step, return unsupported without picking a subset." + settings + music + transport;
 }
 
 export const EXPANDED_FUNCTION_DECLARATIONS = functionDeclarationsFor(2);
@@ -290,6 +302,11 @@ export function parseFunctionSelection(
       const appName = readOptionalShortString(args, "appName");
       if (!query || appName === null) return badAudio();
       return action("play_media", appName === undefined ? { query } : { query, appName });
+    }
+    case "control_media": {
+      if (!supportsAction("control_media", version)) return unsupported();
+      const operation = MEDIA_OPERATIONS.find(value => value === args.operation);
+      return operation && hasOnlyKeys(args, ["operation"]) ? action("control_media", { operation }) : badAudio();
     }
     case "set_volume": {
       if (!supportsAction("set_volume", version)) return unsupported();

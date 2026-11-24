@@ -41,6 +41,7 @@ class WakeTrialService : Service() {
     private var usageControlled = false
     private var lastControl = "none"
     private var wakeCue: ToneGenerator? = null
+    @Volatile private var scoreProbe: WakeScoreProbe? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -281,6 +282,11 @@ class WakeTrialService : Service() {
     }
 
     override fun dump(fd: FileDescriptor, writer: PrintWriter, args: Array<out String>?) {
+        val now = SystemClock.elapsedRealtime()
+        when (args?.firstOrNull()) {
+            "wake-probe-start" -> scoreProbe = WakeScoreProbe(now)
+            "wake-probe-clear" -> scoreProbe = null
+        }
         val state = session.snapshot()
         val result = WakeTrialReports.json(state).put("elapsedMs", elapsed(state))
         synchronized(captureLock) {
@@ -289,6 +295,7 @@ class WakeTrialService : Service() {
                 .put("visibleAssistants", gate.visibleCount)
                 .put("liveWakeAudioMs", capture?.liveAudioMs ?: 0L)
         }
+        scoreProbe?.snapshot(now)?.let { result.put("wakeScoreProbe", it) }
         result.put("usageControlled", usageControlled).put("usageMode", WakeUsageStore.mode(this).value).put("lastControl", lastControl)
         writer.println(result.toString())
     }
@@ -337,7 +344,9 @@ class WakeTrialService : Service() {
                 if (cancelled) return
                 check(FridayKeywordModel.available(assets)) { FridayKeywordModel.MISSING }
                 val model = FridayKeywordModel.load(assets)
-                val keyword = FridayKeywordDetector(model, threshold)
+                val keyword = FridayKeywordDetector(model, threshold) { margin, streak ->
+                    scoreProbe?.record(SystemClock.elapsedRealtime(), margin, streak)
+                }
                 detector = keyword
                 val minimum = AudioRecord.getMinBufferSize(16_000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
                 check(minimum > 0) { "Microphone unavailable" }
