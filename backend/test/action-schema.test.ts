@@ -7,6 +7,24 @@ import {
 } from "../src/core/action-schema";
 import { actionProtocolVersion } from "../src/core/capabilities";
 
+test("media controls require opt-in and accept only transport operations", () => {
+  assert.equal(actionProtocolVersion("4"), 4);
+  assert.equal(actionProtocolVersion("4", "1"), 5);
+  assert.equal(actionProtocolVersion("5"), 5);
+  assert.equal(actionProtocolVersion("3", "1"), 3);
+  assert.equal(functionNamesFor(4).includes("control_media"), false);
+  assert.equal(functionNamesFor(5).includes("control_media"), true);
+  for (const operation of ["pause", "resume", "next", "previous"]) {
+    const args = { operation };
+    const selection = { name: "control_media", args };
+    assert.deepEqual(parseFunctionSelection(selection, 4), { type: "unsupported" });
+    assert.deepEqual(parseFunctionSelection(selection, 5), { type: "action", action: "control_media", args });
+  }
+  for (const args of [{}, { operation: "stop" }, { operation: "pause", appName: "YouTube" }]) {
+    assert.deepEqual(parseFunctionSelection({ name: "control_media", args }, 5), { type: "error", reason: "bad_audio" });
+  }
+});
+
 test("named media is a validated terminal v4 handoff", () => {
   const args = { query: "Believer", appName: "Spotify" };
   const play = { name: "play_media", args };

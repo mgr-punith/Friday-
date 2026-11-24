@@ -126,6 +126,18 @@ test("command header negotiates the action protocol version", async () => {
     }));
     assert.equal(assistant.calls[0]?.input.actionVersion, expectedVersion);
   }
+  const { api, assistant } = harness();
+  await api.handle(event("POST", "/v1/command", {
+    headers: {
+      authorization: `Bearer ${token()}`,
+      "content-type": "application/json",
+      "x-now": "2026-11-17T14:00:00+05:30",
+      "x-friday-actions": "4",
+      "x-friday-media-controls": "1"
+    },
+    body: JSON.stringify({ text: "Pause music" })
+  }));
+  assert.equal(assistant.calls[0]?.input.actionVersion, 5);
 });
 
 test("v3 validates settings handoffs while v2 keeps them unsupported", async () => {

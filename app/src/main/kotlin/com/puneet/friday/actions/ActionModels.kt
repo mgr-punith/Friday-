@@ -7,12 +7,21 @@ sealed interface PhoneAction {
     data class SetTimer(val seconds: Int) : PhoneAction
     data class OpenApp(val name: String) : PhoneAction
     data object OpenMusic : PhoneAction
+    data class PlayMedia(val query: String, val appName: String? = null) : PhoneAction
+    data class ControlMedia(val operation: MediaOperation) : PhoneAction
     data class CloseApp(val name: String? = null) : PhoneAction
     data class SetRingerMode(val mode: RingerMode) : PhoneAction
     data class Flashlight(val on: Boolean) : PhoneAction
     data class SetVolume(val stream: VolumeStream, val percent: Int) : PhoneAction
     data class OpenSettings(val target: SettingsTarget, val state: SettingState? = null) : PhoneAction
     data class Sequence(val steps: List<PhoneAction>) : PhoneAction
+}
+
+enum class MediaOperation(val wireName: String, val label: String, val requested: String) {
+    PAUSE("pause", "Pause playback", "Pause requested"),
+    RESUME("resume", "Resume playback", "Resume requested"),
+    NEXT("next", "Next track", "Next track requested"),
+    PREVIOUS("previous", "Previous track", "Previous track requested"),
 }
 
 enum class SettingsTarget {
@@ -52,7 +61,8 @@ object RingerModePolicy {
 
 sealed interface ActionResult {
     data class Success(val confirmation: String) : ActionResult
-    data class Handoff(val instruction: String) : ActionResult
+    data class MediaRequest(val confirmation: String) : ActionResult
+    data class Handoff(val instruction: String, val music: Boolean = false) : ActionResult
     data class NeedsPermission(val which: RequiredAccess) : ActionResult
     data object NeedsUnlock : ActionResult
     data class Failed(val reason: String) : ActionResult
@@ -69,6 +79,11 @@ fun PhoneAction.validationError(): String? = when (this) {
     }
     is PhoneAction.SetTimer -> if (seconds > 0) null else "Enter a timer longer than zero"
     is PhoneAction.OpenApp -> if (validName(name)) null else "Enter an app name"
+    is PhoneAction.PlayMedia -> when {
+        query.isBlank() || query.length > 160 || query.any(Char::isISOControl) -> "Enter a song or artist"
+        appName != null && (appName.isBlank() || appName.length > 100 || appName.any(Char::isISOControl)) -> "Enter a music app name"
+        else -> null
+    }
     is PhoneAction.SetVolume -> if (percent in 0..100) null else "Use a volume from 0 to 100 percent"
     is PhoneAction.Sequence -> when {
         steps.size !in 2..3 || steps.any { it is PhoneAction.Sequence } -> "Use two or three commands"
@@ -77,7 +92,7 @@ fun PhoneAction.validationError(): String? = when (this) {
         else -> steps.firstNotNullOfOrNull { it.validationError() }
     }
     is PhoneAction.CloseApp, is PhoneAction.SetRingerMode, is PhoneAction.Flashlight,
-    is PhoneAction.OpenSettings, PhoneAction.OpenMusic -> null
+    is PhoneAction.OpenSettings, is PhoneAction.ControlMedia, PhoneAction.OpenMusic -> null
 }
 
 /** Allows formatted phone numbers, while rejecting USSD and post-dial instructions. */

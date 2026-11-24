@@ -476,8 +476,16 @@ open class MainActivity : Activity() {
             runIfCurrent(request) {
                 clearRecorder(commandRecorder)
                 when (capture) {
-                    is CaptureResult.Command -> sendRecording(request, capture.recording)
-                    CaptureResult.NoClearCommand -> showError("I couldn't hear a clear command")
+                    is CaptureResult.Command -> {
+                        if (BuildConfig.DEBUG) Log.i(
+                            VOICE_LOG_TAG, "event=command_captured wake=$fromWake audioMs=${capture.recording.durationMs}",
+                        )
+                        sendRecording(request, capture.recording)
+                    }
+                    CaptureResult.NoClearCommand -> {
+                        if (BuildConfig.DEBUG) Log.i(VOICE_LOG_TAG, "event=command_no_speech wake=$fromWake")
+                        showError("I couldn't hear a clear command")
+                    }
                 }
             }
         }
@@ -610,6 +618,7 @@ open class MainActivity : Activity() {
             sequence.actionMs += actionMs
             val stepConfirmation = when (result) {
                 is ActionResult.Success -> result.confirmation
+                is ActionResult.MediaRequest -> result.confirmation
                 is ActionResult.Handoff -> result.instruction
                 else -> null
             }
@@ -634,7 +643,11 @@ open class MainActivity : Activity() {
             ActionResult.NeedsUnlock -> if (completed.isEmpty()) showUnlockRequired()
                 else showError("$completed. Unlock your phone for the remaining commands.")
             is ActionResult.Success -> showResult(completed.ifEmpty { result.confirmation })
-            is ActionResult.Handoff -> showHandoff(completed.ifEmpty { result.instruction })
+            is ActionResult.MediaRequest -> showCompletion(completed.ifEmpty { result.confirmation }, "Media request sent", null)
+            is ActionResult.Handoff -> {
+                val message = completed.ifEmpty { result.instruction }
+                if (result.music) showCompletion(message, "Music app opened", null) else showHandoff(message)
+            }
             is ActionResult.Failed -> showError(if (completed.isEmpty()) result.reason else "$completed. ${result.reason}")
             is ActionResult.NeedsPermission -> showPermission(result.which, completed)
         }
@@ -646,7 +659,7 @@ open class MainActivity : Activity() {
     private fun showHandoff(message: String) =
         showCompletion(message, "Settings opened", CompletionPolicy.spokenHandoff(message))
 
-    private fun showCompletion(message: String, status: String, spoken: String) {
+    private fun showCompletion(message: String, status: String, spoken: String?) {
         DebugTools.cancelErrorRecovery(this)
         unlockRequired = false
         state = VoiceState.IDLE
@@ -668,9 +681,9 @@ open class MainActivity : Activity() {
         }
         orb.setState(AssistantOrbView.State.SUCCESS)
         resultInteracted = false
-        confirmationSpeaker.speak(spoken)
+        if (spoken != null) confirmationSpeaker.speak(spoken)
         releaseLauncherWakeBlock()
-        scheduleResultDismissal(speaking = false, waitingForSpeech = speechAvailable)
+        scheduleResultDismissal(speaking = false, waitingForSpeech = spoken != null && speechAvailable)
     }
 
     private fun showError(message: String) {

@@ -1,5 +1,6 @@
 package com.puneet.friday.voice
 
+import com.puneet.friday.actions.MediaOperation
 import com.puneet.friday.actions.PhoneAction
 import com.puneet.friday.actions.RingerMode
 import com.puneet.friday.actions.SettingState
@@ -46,6 +47,18 @@ object VoiceLogicTests {
         val launch = parsedAction("open_app", mapOf("name" to "Clock"))
         expect(parsedAction("open_music", emptyMap()).action == PhoneAction.OpenMusic, "Find installed music apps locally")
         rejects("open_music", mapOf("package" to "com.spotify.music"))
+        for (operation in MediaOperation.entries) {
+            expect(parsedAction("control_media", mapOf("operation" to operation.wireName)).action ==
+                PhoneAction.ControlMedia(operation), "Parse the media operation")
+        }
+        rejects("control_media", mapOf("operation" to "stop"))
+        rejects("control_media", mapOf("operation" to "pause", "appName" to "YouTube"))
+        expect(parsedAction("play_media", mapOf("query" to "Believer", "appName" to "Spotify")).action ==
+            PhoneAction.PlayMedia("Believer", "Spotify"), "Parse a named song and player")
+        rejects("play_media", mapOf("query" to "Believer", "intent" to "custom"))
+        rejects("play_media", mapOf("query" to "\nBeliever"))
+        rejects("play_media", mapOf("query" to "x".repeat(161)))
+        rejects("play_media", mapOf("query" to "Believer", "appName" to null))
         val airplaneOn = parsedAction(
             "open_settings",
             mapOf("setting" to "airplane_mode", "state" to "on"),
@@ -327,6 +340,32 @@ object VoiceLogicTests {
         expect(afterWake.isCalibrated && !afterTap.isCalibrated, "Wake entry is ready after four microphone frames")
         repeat(8) { afterTap.add(0.004f) }
         expect(afterTap.isCalibrated, "Tap entry keeps its twelve-frame calibration")
+        val commandProcessor = PcmProcessor()
+        val quietCommand = ShortArray(320 * 28) { index ->
+            val peak = if ((index / 320) % 2 == 0) 330 else 475
+            (sin(2.0 * PI * index / 100.0) * peak).toInt().toShort()
+        }
+        val wakeQuiet = AudioCapturePolicy.commandDetector(afterWake = true)
+        val tapQuiet = AudioCapturePolicy.commandDetector(afterWake = false)
+        val wakeNoise = AudioCapturePolicy.commandDetector(afterWake = true)
+        repeat(12) {
+            wakeQuiet.add(0.002f)
+            tapQuiet.add(0.002f)
+            wakeNoise.add(0.002f)
+        }
+        for (offset in quietCommand.indices step 320) {
+            val level = commandProcessor.analyze(quietCommand.copyOfRange(offset, offset + 320))
+            wakeQuiet.add(level)
+            tapQuiet.add(level)
+            wakeNoise.add(level.copy(voicing = 0f))
+        }
+        expect(wakeQuiet.hasClearCommand && !tapQuiet.hasClearCommand,
+            "Wake listening accepts quieter voiced commands")
+        expect(!wakeNoise.hasClearCommand, "Wake listening still rejects unvoiced sound at the same level")
+        expect(AudioCapturePolicy.hasCommandEnergy(commandProcessor, quietCommand, afterWake = true),
+            "The final energy check accepts quiet speech after a wake")
+        expect(!AudioCapturePolicy.hasCommandEnergy(commandProcessor, quietCommand, afterWake = false),
+            "The tap-to-speak energy check keeps its existing threshold")
         val adaptive = SpeechEndDetector(
             minimumSpeechFrames = 3,
             silenceFramesToStop = 3,

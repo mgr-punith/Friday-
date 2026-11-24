@@ -14,9 +14,11 @@ import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.AlarmClock
 import android.provider.ContactsContract.CommonDataKinds.Phone
 import android.provider.MediaStore
+import android.view.KeyEvent
 import android.view.View
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -46,6 +48,7 @@ class AndroidActionExecutor(private val activity: Activity) {
                 is PhoneAction.CallContact -> prepareContact(action)
                 is PhoneAction.OpenApp -> prepareApp(action)
                 PhoneAction.OpenMusic -> prepareMusic()
+                is PhoneAction.PlayMedia -> prepareNamedMusic(action)
                 is PhoneAction.OpenSettings -> Preparation.Ready(action) { runAction(action) }
                 is PhoneAction.CallNumber -> Preparation.Ready(action, confirmationTarget = action.number) { runAction(action) }
                 else -> Preparation.Ready(action) { runAction(action) }
@@ -151,6 +154,15 @@ class AndroidActionExecutor(private val activity: Activity) {
     }
 
     private fun prepareMusic(): Preparation {
+        val available = musicApps()
+        return when (available.size) {
+            0 -> Preparation.Finished(ActionResult.Failed("I couldn't find a music app"))
+            1 -> readyApp(PhoneAction.OpenMusic, available.single())
+            else -> chooseApp(PhoneAction.OpenMusic, available, "Which music app?")
+        }
+    }
+
+    private fun musicApps(): List<LauncherApp> {
         val manager = activity.packageManager
         val launchers = launcherActivities()
         val musicPackages = launchers.filter { it.activityInfo.applicationInfo.category == ApplicationInfo.CATEGORY_AUDIO }
@@ -166,12 +178,65 @@ class AndroidActionExecutor(private val activity: Activity) {
         val audio = Intent(Intent.ACTION_VIEW).setDataAndType(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, "audio/mpeg")
         val audioHandlers = manager.queryIntentActivities(audio, PackageManager.MATCH_DEFAULT_ONLY)
             .mapTo(mutableSetOf()) { it.activityInfo.packageName }
-        val available = MusicApps.find(launchers.map(::launcherApp), musicPackages, audioHandlers)
-        return when (available.size) {
-            0 -> Preparation.Finished(ActionResult.Failed("I couldn't find a music app"))
-            1 -> readyApp(PhoneAction.OpenMusic, available.single())
-            else -> chooseApp(PhoneAction.OpenMusic, available, "Which music app?")
+        return MusicApps.find(launchers.map(::launcherApp), musicPackages, audioHandlers)
+    }
+
+    private fun prepareNamedMusic(action: PhoneAction.PlayMedia): Preparation {
+        val intent = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
+            .putExtra(android.app.SearchManager.QUERY, action.query)
+            .putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
+        val manager = activity.packageManager
+        val players = manager.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY)
+            .filter { it.activityInfo.exported && (it.activityInfo.permission == null || hasPermission(it.activityInfo.permission)) }
+            .map { LauncherApp(it.activityInfo.applicationInfo.loadLabel(manager).toString(), it.activityInfo.packageName) }
+            .distinctBy { it.packageName }.sortedBy { it.label.lowercase(Locale.ROOT) }
+        val prefs = activity.getSharedPreferences("music_player", Activity.MODE_PRIVATE)
+        val available = if (action.appName != null || players.isEmpty()) {
+            (players + musicApps()).distinctBy { it.packageName }
+        } else players
+        val choice = MusicApps.select(action.appName, available, players, prefs.getString("preferred", null))
+        if (choice.apps.isEmpty()) return Preparation.Finished(ActionResult.Failed("I couldn't find a music app"))
+        fun ready(app: LauncherApp): Preparation.Ready = Preparation.Ready(action) {
+            guarded(action) {
+                val playback = Intent(intent).setPackage(app.packageName)
+                val results = if (MusicApps.namedRequestRoute(app.packageName) == MusicApps.NamedRequestRoute.SEARCH_RESULTS) {
+                    Intent(
+                        Intent.ACTION_VIEW,
+                        Uri.Builder()
+                            .scheme("https")
+                            .authority("www.youtube.com")
+                            .appendPath("results")
+                            .appendQueryParameter("search_query", action.query)
+                            .build(),
+                    ).setPackage(app.packageName)
+                } else null
+                val search = Intent(Intent.ACTION_SEARCH).setPackage(app.packageName)
+                    .putExtra(android.app.SearchManager.QUERY, action.query)
+                val result = when {
+                    results != null -> {
+                        activity.startActivity(results)
+                        ActionResult.Handoff("Opened search in ${app.label}", music = true)
+                    }
+                    playback.resolveActivity(manager) != null -> {
+                        activity.startActivity(playback)
+                        ActionResult.Handoff("Playback requested in ${app.label}", music = true)
+                    }
+                    search.resolveActivity(manager) != null -> {
+                        activity.startActivity(search)
+                        ActionResult.Handoff("Opened search in ${app.label}", music = true)
+                    }
+                    else -> {
+                        val launch = manager.getLaunchIntentForPackage(app.packageName)
+                            ?: return@guarded ActionResult.Failed("That player is unavailable")
+                        activity.startActivity(launch)
+                        ActionResult.Handoff("Opened ${app.label}. Search for ${action.query} there.", music = true)
+                    }
+                }
+                if (choice.question != null && action.appName == null) prefs.edit().putString("preferred", app.packageName).apply()
+                result
+            }
         }
+        return choice.question?.let { chooseApp(action, choice.apps, it, ::ready) } ?: ready(choice.apps.single())
     }
 
     private fun launcherActivities() = activity.packageManager
@@ -181,13 +246,14 @@ class AndroidActionExecutor(private val activity: Activity) {
     private fun launcherApp(info: android.content.pm.ResolveInfo): LauncherApp =
         LauncherApp(info.loadLabel(activity.packageManager).toString(), info.activityInfo.packageName)
 
-    private fun chooseApp(action: PhoneAction, apps: List<LauncherApp>, question: String): Preparation.Choice {
+    private fun chooseApp(action: PhoneAction, apps: List<LauncherApp>, question: String,
+        prepare: (LauncherApp) -> Preparation.Ready = { readyApp(action, it) }): Preparation.Choice {
         val duplicateNames = apps.groupingBy { NameMatcher.normalize(it.label) }.eachCount()
         return Preparation.Choice(action, question, apps.map { app ->
             val label = if (duplicateNames[NameMatcher.normalize(app.label)] != 1) {
                 "${app.label} · ${app.packageName}"
             } else app.label
-            ChoiceOption(label, readyApp(action, app))
+            ChoiceOption(label, prepare(app))
         })
     }
 
@@ -213,10 +279,26 @@ class AndroidActionExecutor(private val activity: Activity) {
             is PhoneAction.SetRingerMode -> setRingerMode(action.mode)
             is PhoneAction.Flashlight -> setFlashlight(action.on)
             is PhoneAction.SetVolume -> setVolume(action)
+            is PhoneAction.ControlMedia -> controlMedia(action.operation)
             is PhoneAction.OpenSettings -> openSettings(action)
-            is PhoneAction.CallContact, is PhoneAction.OpenApp, is PhoneAction.Sequence, PhoneAction.OpenMusic ->
+            is PhoneAction.CallContact, is PhoneAction.OpenApp, is PhoneAction.Sequence, PhoneAction.OpenMusic, is PhoneAction.PlayMedia ->
                 ActionResult.Failed("Try again")
         }
+    }
+
+    private fun controlMedia(operation: MediaOperation): ActionResult {
+        val audio = activity.getSystemService(AudioManager::class.java)
+            ?: return ActionResult.Failed("Media controls unavailable")
+        val key = when (operation) {
+            MediaOperation.PAUSE -> KeyEvent.KEYCODE_MEDIA_PAUSE
+            MediaOperation.RESUME -> KeyEvent.KEYCODE_MEDIA_PLAY
+            MediaOperation.NEXT -> KeyEvent.KEYCODE_MEDIA_NEXT
+            MediaOperation.PREVIOUS -> KeyEvent.KEYCODE_MEDIA_PREVIOUS
+        }
+        val now = SystemClock.uptimeMillis()
+        audio.dispatchMediaKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, key, 0))
+        audio.dispatchMediaKeyEvent(KeyEvent(now, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, key, 0))
+        return ActionResult.MediaRequest(operation.requested)
     }
 
     private fun guarded(action: PhoneAction, effect: () -> ActionResult): ActionResult {

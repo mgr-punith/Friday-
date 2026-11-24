@@ -13,6 +13,8 @@ object ActionPresentation {
         is PhoneAction.SetTimer -> "Set timer · ${duration(action.seconds)}"
         is PhoneAction.OpenApp -> "Open ${action.name}"
         PhoneAction.OpenMusic -> "Open a music app"
+        is PhoneAction.PlayMedia -> "Play ${action.query}"
+        is PhoneAction.ControlMedia -> action.operation.label
         is PhoneAction.CloseApp -> "Go to home screen"
         is PhoneAction.Flashlight -> if (action.on) "Turn on flashlight" else "Turn off flashlight"
         is PhoneAction.SetVolume -> "Set ${action.stream.label.lowercase(Locale.ENGLISH)} volume to ${action.percent}%"

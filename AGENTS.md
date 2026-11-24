@@ -97,9 +97,11 @@ Not allowed in the app without asking: Retrofit, Hilt/Dagger, Room, Glide/Coil, 
 
 ## Repo layout
 
+Build and maintain Friday's main backend in the repository root's `backend/` directory. Use that directory as the Vercel project root.
+
 ```
 /app          Android app
-/backend      AWS SAM project (template.yaml, src/, test/)
+/backend      Friday backend (Vercel entry point, shared source, tests, AWS SAM fallback)
 /docs         actions.md (action schema), test-phrases.md, model-notes.md
 AGENTS.md
 README.md
@@ -308,12 +310,12 @@ Plan for these from the start. They are easy now and painful to retrofit.
 
 - **Target API:** `targetSdk` must be 36 or higher.
 - **Upload format:** Play takes an Android App Bundle. Use `./gradlew bundleRelease`. Keep the universal APK under 15 MB. Use Play App Signing. The upload keystore stays out of git.
-- **Prominent disclosure:** Before each sensitive permission request (microphone, contacts, phone), show our own screen saying what is collected, why, and that voice audio is sent to our backend and processed by Google's Gemini. The user must tap an explicit agree button. Back or home does not count as consent. Only then show the system permission prompt.
+- **Prominent disclosure:** Before each sensitive permission request (microphone, contacts, phone), explain what Friday accesses, why it needs access, and how it uses or shares that data. For cloud commands, disclose that Friday sends command audio to its Vercel backend and Groq. Show the system prompt after the user taps **Agree and allow**.
 - **Contacts stay on the device.** Match names locally. Never upload the contact list or contact details. Only the spoken audio goes to the backend.
-- **Privacy policy:** A public web page (not a PDF), linked from the store listing and inside the app. It must cover voice audio sent to the backend (hosted on AWS in Mumbai) and to Gemini, the anonymous install ID, how long anything is kept (audio is not stored), and how to delete data. Keep logging minimal so the policy stays true.
-- **Data safety form:** Answers must match what the app really does, including voice audio and the install ID. Draft them from the actual data flow in `docs/play-data-safety.md`.
+- **Privacy policy and Data safety:** Publish a public web policy and link it in Friday and Play Console. Document command audio and transcripts processed through Vercel and Groq, the install ID, Google account and session data stored in Upstash, and the actual provider retention settings. Use the same data flow for the Data safety answers in `docs/play-data-safety.md`. Verify the disclosures when changing providers.
+- **Account deletion:** Let users request deletion from Settings and from a public web page. Revoke all Friday sessions and delete the associated account data, subject to any disclosed retention requirements. Add the deletion page URL to Play Console.
 - **Later, if we add free-text answers or web search:** add an in-app "Report this answer" option. Google requires in-app reporting for generative AI content.
-- **Foreground service (wake phrase):** Declare the `microphone` service type and its permission, and complete the Play Console declaration. With targetSdk 34 or higher it cannot be started from a boot receiver, so the user must open the app to start listening after a restart.
+- **Foreground service (wake phrase):** If a Play build ships Hey Friday, declare the `microphone` service type and permission, and submit the Play Console declaration and demo video. The user must restart listening from the app after reboot.
 
 ## Owner tasks (not for Codex)
 
@@ -337,7 +339,11 @@ Plan for these from the start. They are easy now and painful to retrofit.
 3. **Voice loop.** Register in the background, warm up, record, upload, run the action, show the confirmation. Debug timing logs for every stage.
 4. **Entry points.** Default assistant role, Quick Settings tile, widget, TextToSpeech with fallback.
 5. **Speed pass.** Measure median and slow-case timings. Compare two Gemini models and one two-step alternative (Groq Whisper Large v3 Turbo for speech, then a small Llama model for the action), and record the results in `docs/model-notes.md`. Groq bills a 10-second minimum per request and the two calls run one after the other, so measure from Mumbai before deciding. Try AAC upload. Tune memory and concurrency.
-6. **Release prep.** App Bundle build, draft privacy policy text, draft `docs/play-data-safety.md`, final size and permission audit.
+6. **Release prep.** Complete these steps before production submission.
+   - **Security and crash fixes.** Keep the exported launcher idle when another app opens it. Route auto-listen through the private assistant entry point. Bound backend response sizes, handle empty or invalid JSON without crashing, and test both paths.
+   - **Privacy and deletion.** Publish the privacy policy, link it in Friday and Play Console, and complete Data safety. Verify the deployed providers' retention settings. Implement and test account deletion from Settings and the public web page, including revocation across multiple sessions.
+   - **Signing and sign-in.** The owner signs the App Bundle with the upload key, registers the Play app-signing certificate for Google Sign-In, and provides reviewer instructions in **App access**. Move browser sign-in to a verified HTTPS Android App Link. Test sign-in with the Play-distributed build. Use a signed release APK to test browser sign-in on a phone without Play Services.
+   - **Device and release checks.** Test Permissions and Phone actions with gesture and button navigation on Android 15 and 16. Verify the release permission list, APK size, and App Bundle contents. Keep the store listing aligned with the shipped build. The current release offers tap-to-speak and the system assistant shortcut. List Hey Friday only after it ships and passes the foreground-service and device checks.
 
 ## Definition of done (every task)
 
@@ -353,6 +359,7 @@ Plan for these from the start. They are easy now and painful to retrofit.
 - Kotlin official code style for the app. Strict TypeScript for the backend. Small files, clear names, no cleverness.
 - Keep the backend logic pure and testable.
 - Make the smallest change that solves the task. Do not refactor unrelated code.
+- Keep shared voice, confirmation and lifecycle behavior in reusable components. Entry points should call the same implementation. Measure speed and battery changes; code reuse alone is not a performance result.
 
 ## Open decisions (ask the owner, do not assume)
 

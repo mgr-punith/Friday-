@@ -8,6 +8,8 @@ Friday is a native Android voice assistant for quick phone tasks. It sends one s
 - Set an alarm or timer using the phone's clock app.
 - Open an installed app or go to the Home screen.
 - Say “Play some music” to choose an installed music app. Say “Open Spotify” to open Spotify when it’s installed.
+- Say “Play Believer” or “Play Believer in Spotify” to request a song. With a v4 backend, Friday sends the title to a compatible player. The player controls playback.
+- Say “Pause music,” “Resume music,” “Next track,” or “Previous track.” With a v5 backend, Friday sends the request to the player Android selects for media buttons.
 - Switch the ringer between silent, vibrate, and normal.
 - Turn the flashlight on or off and set media, ring, or alarm volume.
 - Open Airplane mode settings and tell you which switch to change. Android requires this final tap.
@@ -112,9 +114,9 @@ Set a timer for two minutes
 
 Friday should send the timer request to your clock app and speak a short confirmation. On Home, Friday shows command feedback in a brief toast at the top center. Speech can finish after Clock takes focus from either Home or the compact assistant. The compact assistant closes after one completed command; Home retains the result, and an enabled Hey Friday listener resumes when speech ends. Exact results depend on the installed clock app and Android permissions.
 
-In a wake-enabled debug build, select **Settings → Start Friday → Hey Friday** and tap **Use Hey Friday**. The model is already in the APK. Allow the requested permissions and choose Friday as Android’s default assistant. After a wake, a short tone tells you when to speak. If a wake doesn’t open the assistant, Friday resumes detection after eight seconds.
+In a wake-enabled debug build, select **Settings → Start Friday → Hey Friday** and tap **Use Hey Friday**. The model is already in the APK. Allow the requested permissions and choose Friday as Android’s default assistant. Say your command after the short tone. Friday accepts quieter speech for the command that follows a wake. If a wake doesn’t open the assistant, Friday resumes detection after eight seconds.
 
-Pause Hey Friday before changing **Settings → Start Friday → Wake sensitivity**. Higher sensitivity can catch quiet phrases and can also wake Friday during other speech.
+Pause Hey Friday before changing **Settings → Start Friday → Wake sensitivity**. Standard uses the model’s calibrated cutoff. Higher sensitivity lowers it and can wake Friday during other speech.
 
 To investigate false wakes in a debug build, open **Settings → Start Friday → Wake audio tracker**. Start tracking for up to 15 minutes. Friday keeps the latest 16 clips, each with up to two seconds from before a wake, in private storage. Use Android debugging to retrieve those clips or delete them from the tracker menu.
 
