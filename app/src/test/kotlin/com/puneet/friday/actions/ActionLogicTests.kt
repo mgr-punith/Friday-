@@ -181,9 +181,18 @@ object ActionLogicTests {
         expect(airplaneOn.validationError() == null, "Typed Settings handoffs are valid")
         expect(PhoneCapabilityRegistry.ACTION_PROTOCOL_VERSION == 5 &&
             PhoneCapabilityRegistry.BASE_ACTION_PROTOCOL_VERSION == 4, "Media controls extend the v4 wire contract")
-        val pause = PhoneAction.ControlMedia(MediaOperation.PAUSE)
-        expect(PhoneCapabilityRegistry.requiresUnlock(pause) && !PhoneCapabilityRegistry.canPrecedeAnother(pause),
-            "Media controls require an unlocked phone and end the sequence")
+        for (operation in MediaOperation.entries) {
+            val control = PhoneAction.ControlMedia(operation)
+            expect(!PhoneCapabilityRegistry.requiresUnlock(control) && !PhoneCapabilityRegistry.canPrecedeAnother(control),
+                "Media control $operation works while locked and ends the sequence")
+        }
+        val previousCommands = mutableListOf<String>()
+        PreviousTrackCommand.send(
+            seekToStart = { previousCommands += "seek:0" },
+            skipToPrevious = { previousCommands += "previous" },
+        )
+        expect(previousCommands == listOf("seek:0", "previous"),
+            "Previous track resets the current position before skipping back")
         val song = PhoneAction.PlayMedia("Believer")
         expect(PhoneCapabilityRegistry.requiresUnlock(song) && !PhoneCapabilityRegistry.canPrecedeAnother(song),
             "Playback needs an unlocked phone and ends the sequence")
@@ -266,12 +275,27 @@ object ActionLogicTests {
             PhoneAction.SetAlarm(6, 30) to true,
             PhoneAction.SetTimer(60) to false,
             PhoneAction.OpenApp("Clock") to true,
+            PhoneAction.OpenMusic to true,
+            song to true,
+            PhoneAction.PlayMedia("Believer", "Spotify") to true,
             PhoneAction.CloseApp() to true,
             PhoneAction.SetRingerMode(RingerMode.SILENT) to false,
             PhoneAction.SetRingerMode(RingerMode.VIBRATE) to false,
             PhoneAction.SetRingerMode(RingerMode.NORMAL) to false,
             airplaneOn to true,
-        )
+            PhoneAction.Sequence(listOf(
+                PhoneAction.SetRingerMode(RingerMode.VIBRATE),
+                PhoneAction.ControlMedia(MediaOperation.PAUSE),
+            )) to false,
+            PhoneAction.Sequence(listOf(
+                PhoneAction.Flashlight(true),
+                PhoneAction.ControlMedia(MediaOperation.RESUME),
+            )) to true,
+            PhoneAction.Sequence(listOf(
+                PhoneAction.SetRingerMode(RingerMode.NORMAL),
+                PhoneAction.OpenMusic,
+            )) to true,
+        ) + MediaOperation.entries.map { PhoneAction.ControlMedia(it) to false }
         lockPolicyCases.forEach { (action, requiresUnlock) ->
             expect(
                 LockedActionPolicy.requiresUnlock(action, locked = true) == requiresUnlock,

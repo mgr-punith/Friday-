@@ -1,0 +1,15 @@
+package android.media;
+
+public final class AudioAttributes {
+    public static final int USAGE_ASSISTANT = 16;
+    public static final int CONTENT_TYPE_SPEECH = 1;
+    public int usage;
+    public int contentType;
+
+    public static final class Builder {
+        private final AudioAttributes attributes = new AudioAttributes();
+        public Builder setUsage(int usage) { attributes.usage = usage; return this; }
+        public Builder setContentType(int type) { attributes.contentType = type; return this; }
+        public AudioAttributes build() { return attributes; }
+    }
+}

@@ -11,6 +11,7 @@ import android.hardware.camera2.CameraAccessException
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.media.AudioManager
+import android.media.session.MediaController
 import android.net.Uri
 import android.os.Build
 import android.os.Looper
@@ -51,6 +52,14 @@ class AndroidActionExecutor(private val activity: Activity) {
                 is PhoneAction.PlayMedia -> prepareNamedMusic(action)
                 is PhoneAction.OpenSettings -> Preparation.Ready(action) { runAction(action) }
                 is PhoneAction.CallNumber -> Preparation.Ready(action, confirmationTarget = action.number) { runAction(action) }
+                is PhoneAction.ControlMedia -> {
+                    val previousController = if (action.operation == MediaOperation.PREVIOUS) {
+                        PreviousTrackMediaSessionResolver(activity).findController()
+                    } else {
+                        null
+                    }
+                    Preparation.Ready(action) { guarded(action) { controlMedia(action.operation, previousController) } }
+                }
                 else -> Preparation.Ready(action) { runAction(action) }
             }
         } catch (_: SecurityException) {
@@ -279,14 +288,25 @@ class AndroidActionExecutor(private val activity: Activity) {
             is PhoneAction.SetRingerMode -> setRingerMode(action.mode)
             is PhoneAction.Flashlight -> setFlashlight(action.on)
             is PhoneAction.SetVolume -> setVolume(action)
-            is PhoneAction.ControlMedia -> controlMedia(action.operation)
+            is PhoneAction.ControlMedia -> controlMedia(action.operation, null)
             is PhoneAction.OpenSettings -> openSettings(action)
             is PhoneAction.CallContact, is PhoneAction.OpenApp, is PhoneAction.Sequence, PhoneAction.OpenMusic, is PhoneAction.PlayMedia ->
                 ActionResult.Failed("Try again")
         }
     }
 
-    private fun controlMedia(operation: MediaOperation): ActionResult {
+    private fun controlMedia(operation: MediaOperation, previousController: MediaController?): ActionResult {
+        if (operation == MediaOperation.PREVIOUS && previousController != null) {
+            val state = previousController.playbackState
+            if (state?.state in setOf(android.media.session.PlaybackState.STATE_PLAYING, android.media.session.PlaybackState.STATE_PAUSED)) {
+                val controls = previousController.transportControls
+                PreviousTrackCommand.send(
+                    seekToStart = { controls.seekTo(0L) },
+                    skipToPrevious = { controls.skipToPrevious() },
+                )
+                return ActionResult.MediaRequest(operation.requested)
+            }
+        }
         val audio = activity.getSystemService(AudioManager::class.java)
             ?: return ActionResult.Failed("Media controls unavailable")
         val key = when (operation) {

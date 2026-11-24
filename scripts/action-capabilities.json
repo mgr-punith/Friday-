@@ -10,7 +10,7 @@
     { "id": "set_ringer_mode", "minimumVersion": 1, "sequence": "preparatory", "requiresUnlock": false },
     { "id": "open_music", "minimumVersion": 2, "sequence": "terminal", "requiresUnlock": true },
     { "id": "play_media", "minimumVersion": 4, "sequence": "terminal", "requiresUnlock": true },
-    { "id": "control_media", "minimumVersion": 5, "sequence": "terminal", "requiresUnlock": true },
+    { "id": "control_media", "minimumVersion": 5, "sequence": "terminal", "requiresUnlock": false },
     { "id": "flashlight", "minimumVersion": 2, "sequence": "preparatory", "requiresUnlock": true },
     { "id": "set_volume", "minimumVersion": 2, "sequence": "preparatory", "requiresUnlock": true },
     { "id": "open_settings", "minimumVersion": 3, "sequence": "terminal", "requiresUnlock": true }

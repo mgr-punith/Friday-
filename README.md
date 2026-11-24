@@ -9,7 +9,7 @@ Friday is a native Android voice assistant for quick phone tasks. It sends one s
 - Open an installed app or go to the Home screen.
 - Say “Play some music” to choose an installed music app. Say “Open Spotify” to open Spotify when it’s installed.
 - Say “Play Believer” or “Play Believer in Spotify” to request a song. With a v4 backend, Friday sends the title to a compatible player. The player controls playback.
-- Say “Pause music,” “Resume music,” “Next track,” or “Previous track.” With a v5 backend, Friday sends the request to the player Android selects for media buttons.
+- Say “Pause music,” “Resume music,” “Next track,” or “Previous track,” including while the phone is locked. Friday sends media controls without opening the player. For Previous, Friday uses the active player's session when it can identify one, so a player that restarts the current song on one Previous press can move to the preceding track. Opening a music app or requesting a named song still needs unlock.
 - Switch the ringer between silent, vibrate, and normal.
 - Turn the flashlight on or off and set media, ring, or alarm volume.
 - Open Airplane mode settings and tell you which switch to change. Android requires this final tap.
@@ -105,6 +105,8 @@ Vercel production setup and backend variables are documented in [the backend dep
 ## Try a command
 
 Invoke Friday from the assistant shortcut, tile, widget or notification to open a floating card above the current app. The orb moves with your voice. If Friday cannot hear a command, tap the microphone to retry. Tap ×, tap outside the card or press Back to dismiss it.
+
+Friday requests exclusive audio focus while recording a command. Music players that honor Android audio focus pause for the recording and resume when it ends. The background Hey Friday detector does not pause playback. Friday releases audio focus before running a command, so a requested music pause stays in effect.
 
 After building and installing the app, sign in and grant the permissions for the action you want to test. Tap the orb or **Speak**, wait for **Listening**, then say:
 
