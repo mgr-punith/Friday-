@@ -1,4 +1,5 @@
 import type { FunctionSelection } from "./contracts";
+import { turnsOffQuietMode } from "./ringer-command";
 import {
   LATEST_ACTION_PROTOCOL_VERSION,
   canPrecedeAnotherAction,
@@ -13,7 +14,7 @@ const COMMAND_CONTEXT =
   "Interpret double and triple digit words in phone numbers. ";
 const COMMAND_RULES =
   "Use unsupported only for a clear request outside the supported actions. Never answer questions. " +
-  "For set_ringer_mode, copy the exact command words into utterance. Use set_timer for durations. " +
+  "For set_ringer_mode, copy the exact command words into utterance. Turning vibrate or silent mode off restores normal mode. Use set_timer for durations. " +
   "Use the supplied current phone time for clock times such as tomorrow.";
 
 export const SYSTEM_PROMPT = COMMAND_CONTEXT +
@@ -381,6 +382,7 @@ function badAudio(): CommandResponse {
 }
 
 function matchesRingerCommand(mode: "silent" | "vibrate" | "normal", utterance: string): boolean {
+  if (turnsOffQuietMode(utterance)) return mode === "normal";
   const words: string[] = utterance.toLowerCase().match(/[a-z]+/g) ?? [];
   if (mode === "silent") return words.includes("silent") || words.includes("mute") || words.includes("muted");
   if (mode === "vibrate") return words.some((word) => word.startsWith("vibrat"));

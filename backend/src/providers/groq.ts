@@ -10,6 +10,7 @@ import type { FetchLike } from "./gemini";
 import { ANSWER_PROMPT, ANSWER_SETUP_TOOL, ANSWER_TOOL, needsCurrentInformation, readBrowserAnswer, readKnowledgeAnswer } from "../core/answers";
 import { ParakeetTranscriber, type ParakeetConfig } from "./parakeet";
 import { TranscriptionError, type AudioInput, type AudioTranscriber } from "./transcription";
+import { turnsOffQuietMode } from "../core/ringer-command";
 
 export interface GroqProviderConfig {
   readonly apiKey: string;
@@ -116,7 +117,9 @@ export class GroqProvider implements AssistantProvider {
             (supportsAnswers ? " The answer modes are argument values, never function names." : "") +
             (answerSetup ? " For an English factual question choose short_answers_required with no arguments. " +
               "Use unsupported for unsupported phone controls, chat, essays or non-English speech." : "") +
-            " Return one tool call with a valid JSON object. Omit optional fields that were not spoken. Do not output prose." },
+            " Return one tool call with a valid JSON object. Omit optional fields that were not spoken. Do not output prose." +
+            (repair ? ` The previous tool call was invalid. Choose one declared function name: ${tools.map(tool => tool.name).join(", ")}. ` +
+              "Never call json or invent a function. Put the JSON object in the function arguments." : "") },
           { role: "user", content: `Current phone time: ${now}\n${following ? "Question context" : "Command"}: ${question}` }
         ],
         tools: tools.map((declaration) => ({ type: "function", function: {
@@ -312,6 +315,7 @@ export function compactGroqTools(version: NonNullable<CommandInput["actionVersio
 // Pin common, explicit commands after the transcript check. Never match part of a compound or negated request.
 function exactDeviceRequest(text: string, version: NonNullable<CommandInput["actionVersion"]>): FunctionSelection | null {
   if (/[\u0000-\u001f\u007f-\u009f]/.test(text)) return null;
+  if (turnsOffQuietMode(text)) return { name: "set_ringer_mode", args: { mode: "normal", utterance: text } };
   const command = text.replace(/[.!?]+$/, "").replace(/\s+/g, " ").trim()
     .replace(/^(?:(?:can|could|would) you )?(?:please )?/i, "").replace(/,? please$/i, "");
   const words = command.toLowerCase();

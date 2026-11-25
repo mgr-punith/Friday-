@@ -94,6 +94,7 @@ class FridayBackendClient(
             if (AnswerConsent.isAllowed(appContext)) {
                 setRequestProperty("x-friday-answers", "2")
                 setRequestProperty("x-friday-speech", "elevenlabs-v1")
+                setRequestProperty("x-friday-confirmations", "1")
             }
             if (answerContext != null) setRequestProperty("x-friday-answer-context", answerContext)
             setFixedLengthStreamingMode(wavBytes.size)
@@ -149,16 +150,24 @@ class FridayBackendClient(
 
     fun fetchSpeech(answer: InformationAnswer, cancelled: () -> Boolean): ByteArray? {
         val speechToken = answer.speechToken ?: return null
+        return fetchSpeech(JSONObject().put("answer", signedAnswer(answer)).put("speechToken", speechToken), cancelled)
+    }
+
+    fun fetchConfirmationSpeech(speech: ConfirmationSpeech, cancelled: () -> Boolean): ByteArray? =
+        fetchSpeech(JSONObject().put("confirmation", JSONObject()
+            .put("text", speech.text).put("speechId", speech.speechId).put("issuedAt", speech.issuedAt).put("token", speech.token)), cancelled)
+
+    private fun fetchSpeech(body: JSONObject, cancelled: () -> Boolean): ByteArray? {
         if (!AnswerConsent.isAllowed(appContext) || !hasNetwork()) return null
         checkCancellation(cancelled)
-        val bytes = JSONObject().put("answer", signedAnswer(answer)).put("speechToken", speechToken)
-            .toString().toByteArray(Charsets.UTF_8)
+        val bytes = body.toString().toByteArray(Charsets.UTF_8)
         val token = ensureToken(force = false)
         checkCancellation(cancelled)
         return connection("/v1/speech", "POST", 2_000, 4_000).useResponse {
             it.setRequestProperty("authorization", "Bearer $token")
             it.setRequestProperty("content-type", "application/json")
             it.setRequestProperty("x-friday-speech", "elevenlabs-v1")
+            it.setRequestProperty("x-friday-confirmations", "1")
             it.setFixedLengthStreamingMode(bytes.size)
             it.doOutput = true
             it.outputStream.use { out -> out.write(bytes) }

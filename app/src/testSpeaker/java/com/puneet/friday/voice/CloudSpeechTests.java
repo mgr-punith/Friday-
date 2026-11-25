@@ -40,7 +40,8 @@ public final class CloudSpeechTests {
         if (args.length == 0) {
             for (String scenario : List.of("playback", "missing-device", "failure", "invalid", "timeout", "stalled-track",
                 "cancel", "replacement", "focus", "focus-denied", "track-failure", "partial-error", "clarification", "no-engines",
-                "fallback-interrupted", "fallback-error", "fallback-error-legacy", "late-device-failure", "play-stop-race", "play-focus-race")) {
+                "fallback-interrupted", "fallback-error", "fallback-error-legacy", "late-device-failure", "play-stop-race", "play-focus-race",
+                "detached-confirmation", "detached-cancel")) {
                 Process child = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
                     "-cp", System.getProperty("java.class.path"), CloudSpeechTests.class.getName(), scenario).inheritIO().start();
                 expect(child.waitFor() == 0, "Cloud speech scenario failed: " + scenario);
@@ -68,6 +69,8 @@ public final class CloudSpeechTests {
             case "late-device-failure" -> lateDeviceFailure();
             case "play-stop-race" -> playInterruptionRace(false);
             case "play-focus-race" -> playInterruptionRace(true);
+            case "detached-confirmation" -> detachedConfirmation(false);
+            case "detached-cancel" -> detachedConfirmation(true);
             default -> throw new AssertionError("Unknown scenario");
         }
         settleSpeechWorkers();
@@ -83,7 +86,7 @@ public final class CloudSpeechTests {
         ConfirmationSpeaker speaker = screen.speaker();
         if (missingDevice) { speaker.warmUp(); Handler.idle(); }
         String text = clarification ? "Which Gandhi do you mean?" : ANSWER;
-        speaker.speakAnswer(text, cancelled -> wav());
+        speaker.speakCloud(text, cancelled -> wav());
         waitFor(() -> !AudioTrack.tracks.isEmpty() && AudioTrack.tracks.get(0).written == 1_600);
         AudioTrack track = AudioTrack.tracks.get(0);
         expect(screen.starts == 0 && screen.completions == 0 && screen.levels == 0,
@@ -107,7 +110,7 @@ public final class CloudSpeechTests {
         if (missing) TextToSpeech.initializationStatus = TextToSpeech.ERROR;
         Screen screen = new Screen();
         ConfirmationSpeaker speaker = screen.speaker();
-        speaker.speakAnswer(ANSWER, cancelled -> {
+        speaker.speakCloud(ANSWER, cancelled -> {
             if (invalid) return new byte[]{1, 2, 3};
             throw new IllegalStateException("speech_unavailable");
         });
@@ -122,7 +125,7 @@ public final class CloudSpeechTests {
         ConfirmationSpeaker speaker = screen.speaker();
         CountDownLatch release = new CountDownLatch(1);
         CountDownLatch returned = new CountDownLatch(1);
-        speaker.speakAnswer(ANSWER, cancelled -> { await(release); byte[] bytes = wav(); returned.countDown(); return bytes; });
+        speaker.speakCloud(ANSWER, cancelled -> { await(release); byte[] bytes = wav(); returned.countDown(); return bytes; });
         Handler.advance(5_000);
         waitFor(() -> TextToSpeech.current != null && TextToSpeech.current.utterances.size() == 1);
         release.countDown();
@@ -136,7 +139,7 @@ public final class CloudSpeechTests {
         AudioTrack.acceptWrites = false;
         Screen screen = new Screen();
         ConfirmationSpeaker speaker = screen.speaker();
-        speaker.speakAnswer(ANSWER, cancelled -> wav());
+        speaker.speakCloud(ANSWER, cancelled -> wav());
         waitFor(() -> !AudioTrack.tracks.isEmpty() && AudioTrack.tracks.get(0).writes > 0);
         Handler.advance(5_000);
         waitFor(() -> TextToSpeech.current != null && TextToSpeech.current.utterances.size() == 1);
@@ -150,7 +153,7 @@ public final class CloudSpeechTests {
         CountDownLatch release = new CountDownLatch(1);
         CountDownLatch returned = new CountDownLatch(1);
         boolean[] cancellation = new boolean[1];
-        old.speakAnswer(ANSWER, cancelled -> {
+        old.speakCloud(ANSWER, cancelled -> {
             await(release); cancellation[0] = cancelled.invoke(); returned.countDown(); return wav();
         });
         Screen nextScreen = new Screen();
@@ -165,11 +168,41 @@ public final class CloudSpeechTests {
         if (replace) finishDevice(nextScreen);
         old.shutdown(); next.shutdown();
     }
+    private static void detachedConfirmation(boolean cancel) throws Exception {
+        Screen screen = new Screen();
+        ConfirmationSpeaker speaker = screen.speaker();
+        CountDownLatch release = new CountDownLatch(1);
+        speaker.speakCloud("Vibrate on", cancelled -> { await(release); return wav(); });
+        expect(speaker.finishAfterScreenCloses(), "Home-screen wake keeps pending confirmation audio after closing the panel");
+        speaker.shutdown();
+        Screen replacement = new Screen();
+        ConfirmationSpeaker next = replacement.speaker();
+        if (cancel) { next.speak("Calling Mom"); Handler.idle(); }
+        release.countDown();
+        if (cancel) {
+            settleSpeechWorkers();
+            expect(AudioTrack.tracks.isEmpty(), "A new command cancels detached cloud confirmation before late audio can play");
+            finishDevice(replacement);
+        } else {
+            waitFor(() -> !AudioTrack.tracks.isEmpty() && AudioTrack.tracks.get(0).written == 1_600);
+            AudioTrack track = AudioTrack.tracks.get(0);
+            track.head = 640;
+            waitFor(() -> track.playing);
+            Handler.advance(40);
+            expect(DebugTools.INSTANCE.activeSpeakers() == 1, "Wake capture waits until detached confirmation finishes");
+            track.head = 1_600;
+            waitFor(() -> track.released);
+            expect(TextToSpeech.current == null, "Successful detached confirmation uses the configured cloud voice");
+        }
+        expect(screen.starts == 0 && screen.levels == 0 && screen.completions == 0 && screen.interruptions == 0,
+            "Detached cloud speech never calls the closed panel");
+        speaker.shutdown(); next.shutdown();
+    }
     private static void interruption(boolean deny, boolean partialError) throws Exception {
         Screen screen = new Screen();
         if (deny) screen.context.audioManager.result = AudioManager.AUDIOFOCUS_REQUEST_FAILED;
         ConfirmationSpeaker speaker = screen.speaker();
-        speaker.speakAnswer("Which Gandhi do you mean?", cancelled -> wav());
+        speaker.speakCloud("Which Gandhi do you mean?", cancelled -> wav());
         if (!deny) {
             waitFor(() -> !AudioTrack.tracks.isEmpty() && AudioTrack.tracks.get(0).written == 1_600);
             AudioTrack track = AudioTrack.tracks.get(0);
@@ -188,7 +221,7 @@ public final class CloudSpeechTests {
         AudioTrack.failBuild = true;
         Screen screen = new Screen();
         ConfirmationSpeaker speaker = screen.speaker();
-        speaker.speakAnswer(ANSWER, cancelled -> wav());
+        speaker.speakCloud(ANSWER, cancelled -> wav());
         waitFor(() -> TextToSpeech.current != null && TextToSpeech.current.utterances.size() == 1);
         expect(screen.context.audioManager.abandons == 1, "Failed track startup releases cloud audio focus");
         finishDevice(screen);
@@ -197,7 +230,7 @@ public final class CloudSpeechTests {
     private static void fallbackInterrupted(int failure) throws Exception {
         Screen screen = new Screen();
         ConfirmationSpeaker speaker = screen.speaker();
-        speaker.speakAnswer("Which Gandhi do you mean?", cancelled -> null);
+        speaker.speakCloud("Which Gandhi do you mean?", cancelled -> null);
         waitFor(() -> TextToSpeech.current != null && TextToSpeech.current.utterances.size() == 1 && screen.starts == 1);
         TextToSpeech.Utterance utterance = TextToSpeech.current.utterances.get(0);
         if (failure == 0) utterance.listener().onStop(utterance.id(), true);
@@ -219,7 +252,7 @@ public final class CloudSpeechTests {
         ConfirmationSpeaker speaker = screen.speaker();
         speaker.speak("Opening Calculator"); Handler.idle();
         TextToSpeech engine = TextToSpeech.current;
-        speaker.speakAnswer("Which Gandhi do you mean?", cancelled -> wav());
+        speaker.speakCloud("Which Gandhi do you mean?", cancelled -> wav());
         waitFor(() -> !AudioTrack.tracks.isEmpty() && AudioTrack.tracks.get(0).written == 1_600);
         AudioTrack track = AudioTrack.tracks.get(0);
         track.head = 640;

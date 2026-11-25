@@ -174,6 +174,18 @@ test("ringer actions require matching command words", () => {
   }
 });
 
+test("turning vibrate or silent mode off restores normal sound and rejects the opposite mode", () => {
+  for (const utterance of ["Turn off vibrate mode", "Turn off vibrate mode off", "Switch vibration off",
+    "Turn my phone's vibrate mode off", "Turn off silent mode", "Disable silent mode", "Unmute my phone"]) {
+    assert.deepEqual(parseFunctionSelection({ name: "set_ringer_mode", args: { mode: "normal", utterance } }), {
+      type: "action", action: "set_ringer_mode", args: { mode: "normal" }
+    }, utterance);
+    for (const mode of ["silent", "vibrate"]) assert.deepEqual(
+      parseFunctionSelection({ name: "set_ringer_mode", args: { mode, utterance } }),
+      { type: "error", reason: "bad_audio" }, `Must not enable ${mode}: ${utterance}`);
+  }
+});
+
 test("evaluation expectations keep the private ringer utterance out of the public contract", () => {
   assert.deepEqual(parseExpectedAction("set_ringer_mode", { mode: "silent" }), {
     type: "action",

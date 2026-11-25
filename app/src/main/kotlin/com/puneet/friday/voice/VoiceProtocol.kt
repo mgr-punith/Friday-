@@ -33,7 +33,8 @@ object VoiceProtocol {
                 VoiceResponseParser.parseFields(step.optString("type"), step.optString("action"),
                     step.optJSONObject("args")?.let(::toMap))
             }
-            return VoiceResponseParser.parseSequence(steps, serverTimingHeader)
+            return VoiceResponseParser.parseSequence(steps, serverTimingHeader,
+                value.optJSONObject("confirmationSpeech")?.let(::toMap))
         }
         val args = value.optJSONObject("args")?.let(::toMap)
         return VoiceResponseParser.parseFields(
@@ -42,6 +43,7 @@ object VoiceProtocol {
             args = args,
             reason = value.optString("reason"),
             serverTimingHeader = serverTimingHeader,
+            confirmationSpeech = value.optJSONObject("confirmationSpeech")?.let(::toMap),
         )
     }
 
@@ -66,12 +68,14 @@ object VoiceProtocol {
 }
 
 object VoiceResponseParser {
-    fun parseSequence(steps: List<VoiceCommandResponse>, timingHeader: String?): VoiceCommandResponse {
+    fun parseSequence(steps: List<VoiceCommandResponse>, timingHeader: String?,
+        confirmationSpeech: Map<String, Any?>? = null): VoiceCommandResponse {
         if (steps.size !in 2..3) return badResponse()
         val actions = steps.map { (it as? VoiceCommandResponse.Action)?.action ?: return badResponse() }
         val sequence = PhoneAction.Sequence(actions)
         if (sequence.validationError() != null) return badResponse()
-        return VoiceCommandResponse.Action(sequence, parseServerDuration(timingHeader))
+        return VoiceCommandResponse.Action(sequence, parseServerDuration(timingHeader),
+            ConfirmationSpeechPayload.parse(confirmationSpeech, sequence))
     }
 
     fun parseServerDuration(header: String?): Double? {
@@ -94,8 +98,13 @@ object VoiceResponseParser {
         args: Map<String, Any?>? = null,
         reason: String = "",
         serverTimingHeader: String? = null,
+        confirmationSpeech: Map<String, Any?>? = null,
     ): VoiceCommandResponse = when (type) {
-        "action" -> parseAction(actionName, args, parseServerDuration(serverTimingHeader))
+        "action" -> parseAction(actionName, args, parseServerDuration(serverTimingHeader)).let { response ->
+            if (response is VoiceCommandResponse.Action) response.copy(
+                confirmationSpeech = ConfirmationSpeechPayload.parse(confirmationSpeech, response.action),
+            ) else response
+        }
         "unsupported" -> when (reason) {
             "answers_disabled" -> VoiceCommandResponse.AnswerSetup(VoiceCommandResponse.AnswerSetupReason.DISABLED)
             "answers_unavailable" -> VoiceCommandResponse.AnswerSetup(VoiceCommandResponse.AnswerSetupReason.UNAVAILABLE)

@@ -16,19 +16,22 @@ function request(answer = signAnswer(CONTENT, TEST_SECRETS.jwtSigningKey, TEST_N
     "content-type": "application/json", "x-friday-speech": "wavenet-v1"
   }, body: JSON.stringify({ answer, speechToken: capability }) };
 }
-function harness(speechEnabled = true, accounts?: AccountGateway, clientVersion: "wavenet-v1" | "elevenlabs-v1" = "wavenet-v1") {
+function harness(speechEnabled = true, accounts?: AccountGateway, clientVersion: "wavenet-v1" | "elevenlabs-v1" = "wavenet-v1", at = TEST_NOW) {
   const assistant = new MockAssistant();
   assistant.result = { selection: { name: "answer_question", args: {} }, answer: CONTENT, durationMs: 12 };
   const usage = new MockUsage(); const logger = new RecordingLogger();
   let allowed = true; let failReserve = false; let failSpeech = false;
   const reservations: { identity: string; answerId: string; characters: number }[] = [];
+  const used = new Set<string>();
   const syntheses: string[] = []; const audio = createPcmWav();
-  const api = createApi({ assistant, usage, logger, secrets: new StaticSecrets(), clock: new StaticClock(),
+  const api = createApi({ assistant, usage, logger, secrets: new StaticSecrets(), clock: new StaticClock(at),
     answers: { usage: new MockUsage(), reports: { async save() {} } }, ...(accounts ? { accounts } : {}),
     ...(speechEnabled ? { speech: {
       usage: { async reserve(identity, answerId, characters) {
         if (failReserve) throw new Error("private store detail");
-        reservations.push({ identity, answerId, characters }); return allowed;
+        reservations.push({ identity, answerId, characters });
+        if (!allowed || used.has(answerId)) return false;
+        used.add(answerId); return true;
       } }, provider: { clientVersion, async synthesize(text) {
         syntheses.push(text); if (failSpeech) throw new Error("private provider text and key"); return audio;
       } }
@@ -161,6 +164,138 @@ test("disabled speech, quota denial and store/provider failures return a device-
     assert.equal(h.syntheses.length, failure === "store" ? 0 : 1);
     assert.equal(JSON.stringify(h.logger.entries).includes("private"), false);
   }
+});
+
+test("opted-in phone actions issue short confirmation speech without synthesizing before execution", async () => {
+  const h = harness(true, undefined, "elevenlabs-v1");
+  h.assistant.result = { selection: { name: "set_ringer_mode", args: { mode: "vibrate", utterance: "Turn on vibrate" } }, durationMs: 12 };
+  const base = request();
+  const response = await h.api.handle({ ...base, rawPath: "/v1/command", body: JSON.stringify({ text: "Turn on vibrate" }),
+    headers: { ...base.headers, "x-now": "2026-11-17T14:00:00+05:30", "x-friday-speech": "elevenlabs-v1", "x-friday-confirmations": "1" } });
+  assert.equal(response.statusCode, 200);
+  const action = JSON.parse(response.body!);
+  assert.equal(action.confirmationSpeech?.text, "Vibrate on");
+  assert.deepEqual(h.syntheses, []);
+  const speech = await h.api.handle({ ...base, headers: { ...base.headers, "x-friday-speech": "elevenlabs-v1", "x-friday-confirmations": "1" },
+    body: JSON.stringify({ confirmation: action.confirmationSpeech }) });
+  assert.equal(speech.statusCode, 200);
+  assert.deepEqual(h.syntheses, ["Vibrate on"]);
+  assert.equal(h.reservations[0]?.characters, 10);
+  assert.equal((await h.api.handle({ ...base, headers: { ...base.headers,
+    "x-friday-speech": "elevenlabs-v1", "x-friday-confirmations": "1" },
+    body: JSON.stringify({ confirmation: action.confirmationSpeech }) })).statusCode, 429);
+  assert.deepEqual(h.syntheses, ["Vibrate on"], "Replaying a capability cannot bill a second synthesis");
+});
+
+function confirmationCommand(): FunctionUrlEvent {
+  const base = request();
+  return { ...base, rawPath: "/v1/command", body: JSON.stringify({ text: "Turn on vibrate" }), headers: {
+    ...base.headers, "x-now": "2026-11-17T14:00:00+05:30", "x-friday-actions": "5",
+    "x-friday-speech": "elevenlabs-v1", "x-friday-confirmations": "1"
+  } };
+}
+
+test("confirmation speech needs new consent and the ElevenLabs configuration", async () => {
+  for (const configured of ["wavenet-v1", "elevenlabs-v1"] as const) for (const consent of [undefined, "0", "1"]) {
+    const h = harness(true, undefined, configured);
+    h.assistant.result = { selection: { name: "close_app", args: {} }, durationMs: 12 };
+    const base = confirmationCommand();
+    const response = await h.api.handle({ ...base, headers: { ...base.headers,
+      "x-friday-speech": configured, "x-friday-confirmations": consent } });
+    assert.equal(response.statusCode, 200);
+    assert.equal(Boolean(JSON.parse(response.body!).confirmationSpeech), configured === "elevenlabs-v1" && consent === "1");
+    assert.deepEqual(h.syntheses, []); assert.deepEqual(h.reservations, []);
+  }
+});
+
+test("confirmation phrases omit private names and labels and describe handoffs as requests", async () => {
+  const examples = [
+    ["call_contact", { name: "Private contact" }, undefined],
+    ["call_number", { number: "+919876543210" }, undefined],
+    ["set_alarm", { hour: 6, minute: 30, label: "Private alarm" }, "Alarm requested"],
+    ["set_timer", { seconds: 600 }, "Timer requested"],
+    ["close_app", { name: "Private app" }, "Went to home screen"],
+    ["open_app", { name: "Private app" }, "Opening app"],
+    ["set_volume", { stream: "media", percent: 50 }, "Media volume set"],
+    ["flashlight", { on: false }, "Flashlight off"],
+    ["open_settings", { setting: "airplane_mode", state: "on" }, "Check settings"],
+    ["play_media", { query: "Private song" }, "Music requested"],
+    ["open_music", {}, "Music app opened"],
+    ["control_media", { operation: "pause" }, "Pause requested"],
+    ["run_actions", { actions: [{ action: "flashlight", args: { on: true } },
+      { action: "set_timer", args: { seconds: 60 } }] }, "Flashlight on. Timer requested"],
+    ["run_actions", { actions: [{ action: "flashlight", args: { on: true } },
+      { action: "call_contact", args: { name: "Private contact" } }] }, undefined],
+    ["unsupported", {}, undefined],
+  ] as const;
+  for (const [name, args, text] of examples) {
+    const h = harness(true, undefined, "elevenlabs-v1");
+    h.assistant.result = { selection: { name, args }, durationMs: 12 };
+    const response = await h.api.handle(confirmationCommand());
+    assert.equal(response.statusCode, 200, name);
+    assert.equal(JSON.parse(response.body!).confirmationSpeech?.text, text, name);
+    assert.deepEqual(h.syntheses, []);
+  }
+});
+
+test("confirmation capabilities reject tampering, other identities, missing consent and expiry before billing", async () => {
+  const at = new Date(TEST_NOW);
+  const h = harness(true, undefined, "elevenlabs-v1", at);
+  h.assistant.result = { selection: { name: "close_app", args: {} }, durationMs: 12 };
+  const base = confirmationCommand();
+  const issued = JSON.parse((await h.api.handle(base)).body!).confirmationSpeech;
+  const speech = { ...base, rawPath: "/v1/speech", body: JSON.stringify({ confirmation: issued }) };
+  const otherId = "123e4567-e89b-42d3-a456-426614174001";
+  for (const [patch, status] of [
+    [{ headers: { ...base.headers, authorization: "Bearer invalid" } }, 401],
+    [{ headers: { ...base.headers, authorization: "Bearer " + signInstallToken(otherId, TEST_SECRETS.jwtSigningKey, TEST_NOW) } }, 400],
+    [{ headers: { ...base.headers, "x-friday-confirmations": undefined } }, 400],
+    [{ headers: { ...base.headers, "x-friday-speech": "wavenet-v1" } }, 400],
+    ...[{ ...issued, text: "Calling private contact" }, { ...issued, issuedAt: issued.issuedAt + 1 },
+      { ...issued, token: "a".repeat(43) }, { ...issued, speechId: otherId }, { ...issued, extra: true }]
+      .map(confirmation => [{ body: JSON.stringify({ confirmation }) }, 400] as const),
+    [{ body: JSON.stringify({ confirmation: issued, text: "Extra" }) }, 400],
+  ] as const) assert.equal((await h.api.handle({ ...speech, ...patch })).statusCode, status);
+  at.setTime(TEST_NOW.getTime() - 1_000);
+  assert.equal((await h.api.handle(speech)).statusCode, 400, "Future issuance is invalid");
+  at.setTime(TEST_NOW.getTime() + 121_000);
+  assert.equal((await h.api.handle(speech)).statusCode, 400, "Capability expires after two minutes");
+  assert.deepEqual(h.reservations, []); assert.deepEqual(h.syntheses, []);
+  at.setTime(TEST_NOW.getTime() + 120_000);
+  assert.equal((await h.api.handle(speech)).statusCode, 200);
+});
+
+test("confirmation speech uses the same fail-closed quotas and single provider attempt as answers", async () => {
+  for (const failure of ["quota", "store", "provider"] as const) {
+    const h = harness(true, undefined, "elevenlabs-v1");
+    h.assistant.result = { selection: { name: "close_app", args: {} }, durationMs: 12 };
+    const command = confirmationCommand();
+    const issued = JSON.parse((await h.api.handle(command)).body!).confirmationSpeech;
+    if (failure === "quota") h.deny(); else if (failure === "store") h.failReserve(); else h.failSpeech();
+    const response = await h.api.handle({ ...command, rawPath: "/v1/speech", body: JSON.stringify({ confirmation: issued }) });
+    assert.equal(response.statusCode, failure === "quota" ? 429 : 503);
+    assert.equal(h.syntheses.length, failure === "provider" ? 1 : 0);
+    assert.equal(JSON.stringify(h.logger.entries).includes("private"), false);
+  }
+});
+
+test("confirmation speech honors account revocation and cannot move to another account", async () => {
+  let accountId: string | null = "a".repeat(43);
+  const accounts: AccountGateway = { async handle() { return { statusCode: 404 }; }, async authorize(token) {
+    return token === "account-access-token" && accountId ? { accountId, installId: TEST_INSTALL_ID, sessionId: "b".repeat(43) } : null;
+  } };
+  const h = harness(true, accounts, "elevenlabs-v1");
+  h.assistant.result = { selection: { name: "close_app", args: {} }, durationMs: 12 };
+  const base = confirmationCommand();
+  const signedIn = { ...base, headers: { ...base.headers, authorization: "Bearer account-access-token" } };
+  const confirmation = JSON.parse((await h.api.handle(signedIn)).body!).confirmationSpeech;
+  const speech = { ...signedIn, rawPath: "/v1/speech", body: JSON.stringify({ confirmation }) };
+  accountId = "c".repeat(43);
+  assert.equal((await h.api.handle(speech)).statusCode, 400);
+  accountId = null;
+  assert.equal((await h.api.handle(speech)).statusCode, 401);
+  assert.equal((await h.api.handle({ ...speech, headers: { ...base.headers } })).statusCode, 401);
+  assert.deepEqual(h.syntheses, []); assert.deepEqual(h.reservations, []);
 });
 
 test("speech quota sends account, replay, burst, day and calendar-month counters in one atomic call", async () => {

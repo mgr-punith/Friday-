@@ -119,7 +119,7 @@ class ConfirmationSpeaker(
 
     fun speakOffline(message: String) = speak(message, offlineOnly = true)
 
-    fun speakAnswer(message: String, loadAudio: (cancelled: () -> Boolean) -> ByteArray?) {
+    fun speakCloud(message: String, loadAudio: (cancelled: () -> Boolean) -> ByteArray?) {
         if (closed) return
         val text = message.trim().takeIf { it.isNotEmpty() } ?: return
         stop()
