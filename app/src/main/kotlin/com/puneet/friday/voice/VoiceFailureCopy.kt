@@ -8,7 +8,8 @@ object VoiceFailureCopy {
         VoiceUiOutcome.UNAUTHORIZED -> "Friday couldn't start. Try again."
         VoiceUiOutcome.ANSWERS_DISABLED -> "Turn on Short answers to ask questions."
         VoiceUiOutcome.ANSWERS_UNAVAILABLE -> "Short answers aren't available right now. Try again later."
-        VoiceUiOutcome.ACTION, VoiceUiOutcome.ANSWER, VoiceUiOutcome.UNSUPPORTED -> "Friday couldn't finish that. Try again."
+        VoiceUiOutcome.UNSUPPORTED -> "Try a phone command, like “Set a timer for two minutes”."
+        VoiceUiOutcome.ACTION, VoiceUiOutcome.ANSWER -> "Friday couldn't finish that. Try again."
     }
 
     fun forConnectionFailure(reason: String?, offline: Boolean): String = when {

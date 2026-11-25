@@ -37,7 +37,7 @@ object VoiceLogicTests {
         fun rejects(name: String, fields: Map<String, Any?>?) {
             expect(
                 VoiceResponseParser.parseFields("action", name, fields) ==
-                    VoiceCommandResponse.Error(VoiceCommandResponse.Reason.BAD_AUDIO),
+                    VoiceCommandResponse.Error(VoiceCommandResponse.Reason.BUSY),
                 "$name rejects malformed arguments",
             )
         }
@@ -55,10 +55,13 @@ object VoiceLogicTests {
         rejects("control_media", mapOf("operation" to "pause", "appName" to "YouTube"))
         expect(parsedAction("play_media", mapOf("query" to "Believer", "appName" to "Spotify")).action ==
             PhoneAction.PlayMedia("Believer", "Spotify"), "Parse a named song and player")
+        expect(parsedAction("play_media", mapOf("query" to "Honey Singh")).action ==
+            PhoneAction.PlayMedia("Honey Singh"), "An artist request parses without a preferred player")
         rejects("play_media", mapOf("query" to "Believer", "intent" to "custom"))
         rejects("play_media", mapOf("query" to "\nBeliever"))
         rejects("play_media", mapOf("query" to "x".repeat(161)))
         rejects("play_media", mapOf("query" to "Believer", "appName" to null))
+        rejects("play_media", mapOf("query" to "Honey Singh", "appName" to 123))
         val airplaneOn = parsedAction(
             "open_settings",
             mapOf("setting" to "airplane_mode", "state" to "on"),
@@ -82,6 +85,9 @@ object VoiceLogicTests {
             "An app launch cannot run ahead of a remaining action")
         expect(VoiceResponseParser.parseSequence(listOf(flashlight, VoiceCommandResponse.Unsupported), null) is VoiceCommandResponse.Error,
             "An unsupported step blocks the whole sequence")
+        expect(VoiceResponseParser.parseSequence(listOf(flashlight), null) ==
+            VoiceCommandResponse.Error(VoiceCommandResponse.Reason.BUSY),
+            "A malformed sequence reports a server failure rather than unclear speech")
         rejects("flashlight", mapOf("on" to "false"))
         rejects("set_volume", mapOf("stream" to "media", "percent" to 101))
 
@@ -92,6 +98,12 @@ object VoiceLogicTests {
         )
         val answer = AnswerPayload.parse(answerFields)
         expect(answer != null && answer.sources.isEmpty(), "A short knowledge answer parses independently of phone actions")
+        expect(AnswerPayload.parse(answerFields + ("speechToken" to "b".repeat(43)))?.speechToken == "b".repeat(43),
+            "Answers can carry a bounded cloud speech capability")
+        for (invalidToken in listOf(null, "short", "b".repeat(44), "b".repeat(42) + " ", 123)) {
+            expect(AnswerPayload.parse(answerFields + ("speechToken" to invalidToken)) == null,
+                "Malformed speech tokens never reach synthesis")
+        }
         expect(VoiceCommandResponse.Answer(answer!!).uiOutcome() == VoiceUiOutcome.ANSWER, "An answer has its own UI outcome")
         expect(VoiceResponseParser.parseFields("action", "answer_question", answerFields) is VoiceCommandResponse.Error,
             "A question answer cannot execute as a phone action")
@@ -251,6 +263,26 @@ object VoiceLogicTests {
         val wrongLength = wav.copyOf().also { ByteBuffer.wrap(it).order(ByteOrder.LITTLE_ENDIAN).putInt(40, 2) }
         expect(!WavEncoder.isFridayWav(wrongLength), "Friday rejects a mismatched data length")
         expect(!WavEncoder.isFridayWav(ByteArray(43)), "Friday rejects a short WAV")
+        expect(SpeechAudio.parse(wav)?.samples?.contentEquals(samples) == true, "Cloud WAV preserves signed PCM samples")
+        expect(SpeechAudio.parse(wav)?.durationMs == samples.size * 1_000L / 16_000, "Cloud playback duration uses its sample count")
+        val metadataWav = ByteArray(wav.size + 10).also {
+            wav.copyInto(it, 0, 0, 12)
+            "JUNK".toByteArray(Charsets.US_ASCII).copyInto(it, 12)
+            ByteBuffer.wrap(it).order(ByteOrder.LITTLE_ENDIAN).putInt(16, 1).put(20, 7).putInt(4, it.size - 8)
+            wav.copyInto(it, 22, 12)
+        }
+        expect(SpeechAudio.parse(metadataWav)?.samples?.contentEquals(samples) == true,
+            "Cloud WAV accepts padded metadata without shifting speech samples")
+        val malformedSpeech = listOf(wrongRate, wrongChannels, wrongLength, ByteArray(43), WavEncoder.encode(shortArrayOf()),
+            wav.copyOf().also { ByteBuffer.wrap(it).order(ByteOrder.LITTLE_ENDIAN).putInt(28, 1) },
+            wav.copyOf().also { ByteBuffer.wrap(it).order(ByteOrder.LITTLE_ENDIAN).putShort(32, 1) },
+            wav.copyOf().also { ByteBuffer.wrap(it).order(ByteOrder.LITTLE_ENDIAN).putShort(20, 3) },
+            wav.copyOf().also { ByteBuffer.wrap(it).order(ByteOrder.LITTLE_ENDIAN).putInt(40, -1) },
+            metadataWav.copyOf().also { ByteBuffer.wrap(it).order(ByteOrder.LITTLE_ENDIAN).putInt(16, Int.MAX_VALUE) },
+            (wav + byteArrayOf(1)).also { ByteBuffer.wrap(it).order(ByteOrder.LITTLE_ENDIAN).putInt(4, it.size - 8) })
+        for (invalid in malformedSpeech) expect(SpeechAudio.parse(invalid) == null, "Invalid cloud audio fails before AudioTrack starts")
+        expect(SpeechAudio.parse(WavEncoder.encode(ShortArray(16_000 * 60))) != null, "Cloud speech has a sixty-second playback ceiling")
+        expect(SpeechAudio.parse(WavEncoder.encode(ShortArray(16_000 * 60 + 1))) == null, "Cloud speech rejects audio above the playback ceiling")
         expect(VoicePayload.isValid(wav), "A canonical small WAV is uploadable")
         expect(!VoicePayload.isValid(ByteArray(VoicePayload.MAX_WAV_BYTES + 1)), "The app rejects oversized uploads")
         expect(!AudioCapturePolicy.acceptsManualStop(16_000), "A one-second manual stop stays local")
@@ -268,13 +300,41 @@ object VoiceLogicTests {
         expect(!AudioCapturePolicy.canStopAfterSilence(afterWake = true, sampleCount = 32_000, answerReply = true),
             "A clarification after a wake still uses the reply listening window")
         expect(
-            AudioCapturePolicy.reviewedSampleCount(24_000, manualStop = true) == 18_240,
-            "Manual stop review removes the final tap window",
+            AudioCapturePolicy.reviewedSampleCount(24_000, manualStop = true) == 24_000,
+            "Manual stop cannot delete an unexamined spoken ending",
         )
         expect(
             AudioCapturePolicy.reviewedSampleCount(24_000, manualStop = false) == 24_000,
             "Natural silence keeps the complete capture",
         )
+        val tailProcessor = PcmProcessor()
+        val spokenTail = ShortArray(24_000) { index ->
+            (sin(2.0 * PI * index / 100.0) * if (index / 320 % 2 == 0) 3_000 else 6_000).toInt().toShort()
+        }
+        expect(AudioCapturePolicy.reviewedSampleCount(spokenTail.size, true, spokenTail, tailProcessor, true) == spokenTail.size,
+            "A manual stop preserves voiced ending samples rather than discarding 360 ms")
+        val unvoicedTail = spokenTail.copyOf().also { samples ->
+            val random = Random(794)
+            for (index in samples.size - 3_200 until samples.size) samples[index] = random.nextInt(-4_000, 4_001).toShort()
+        }
+        expect(AudioCapturePolicy.reviewedSampleCount(unvoicedTail.size, true, unvoicedTail, tailProcessor, true) == unvoicedTail.size,
+            "An unvoiced consonant without a gap remains part of the ending")
+        val stopTap = ShortArray(24_000).also { samples ->
+            spokenTail.copyInto(samples, 0, 0, 20_800)
+            samples[23_200] = 25_000
+            samples[23_201] = -12_000
+        }
+        expect(AudioCapturePolicy.reviewedSampleCount(stopTap.size, true, stopTap, tailProcessor, true) == 23_040,
+            "A brief unvoiced impulse after silence can trim the stop tap alone")
+        expect(AudioCapturePolicy.reviewedSampleCount(stopTap.size, true, stopTap, tailProcessor, false) == stopTap.size,
+            "A tap without an already clear command cannot make uncertain audio uploadable")
+        val resumedTail = stopTap.copyOf().also { samples ->
+            spokenTail.copyInto(samples, 23_360, 23_360)
+        }
+        expect(AudioCapturePolicy.reviewedSampleCount(resumedTail.size, true, resumedTail, tailProcessor, true) == resumedTail.size,
+            "Voice after an impulse cancels stop-tap trimming")
+        expect(AudioCapturePolicy.reviewedSampleCount(stopTap.size + 100, false, stopTap, tailProcessor, true) == stopTap.size,
+            "Capture review bounds its sample count to the in-memory audio")
 
         val pcm = PcmProcessor(sampleRate = 100)
         val padded = ShortArray(100).also {
@@ -472,6 +532,69 @@ object VoiceLogicTests {
         repeat(20) { index -> tapWithLowNoise.add(if (index % 2 == 0) 0.010f else 0.012f) }
         expect(!tapWithLowNoise.hasClearCommand, "A tap plus changing low noise lacks enough strong voice energy")
 
+        val immediateProcessor = PcmProcessor()
+        val immediateVoice = ShortArray(320 * 50) { index ->
+            val frameIndex = index / 320
+            val peak = when (frameIndex % 5) { 0 -> 800; 1 -> 1_900; 2 -> 4_200; 3 -> 2_300; else -> 1_000 }
+            (sin(2.0 * PI * index / 100.0) * peak).toInt().toShort()
+        }
+        val immediateDetector = AudioCapturePolicy.commandDetector(afterWake = false)
+        for (offset in immediateVoice.indices step 320) {
+            immediateDetector.add(immediateProcessor.analyze(immediateVoice.copyOfRange(offset, offset + 320)))
+        }
+        repeat(42) { immediateDetector.add(immediateProcessor.analyze(ShortArray(320))) }
+        expect(immediateDetector.hasClearCommand && immediateDetector.endedBySilence,
+            "Speech beginning with recording survives calibration and reaches a natural end")
+        expect(immediateDetector.firstSpeechFrame == 0 && immediateDetector.lastSpeechFrame == 49,
+            "Calibration preserves actual first and last speech frames for cropping")
+        val immediateCrop = immediateProcessor.crop(immediateVoice, immediateVoice.size,
+            immediateDetector.firstSpeechFrame * 320 - 4_800, (immediateDetector.lastSpeechFrame + 1) * 320 + 5_120)
+        expect(immediateCrop.contentEquals(immediateVoice), "Immediate capture crop retains spoken boundary samples")
+        val delayedDetector = AudioCapturePolicy.commandDetector(afterWake = false)
+        repeat(12) { delayedDetector.add(0.001f) }
+        repeat(16) { frame -> delayedDetector.add(PcmProcessor.Level(0f, 0f, 0f, 0f,
+            if (frame % 2 == 0) 0.010f else 0.013f, 0.9f)) }
+        repeat(30) { frame -> delayedDetector.add(PcmProcessor.Level(0f, 0f, 0f, 0f,
+            if (frame % 2 == 0) 0.025f else 0.05f, 0.9f)) }
+        expect(delayedDetector.hasClearCommand && delayedDetector.firstSpeechFrame == 12,
+            "Quiet voiced starts after readiness do not raise the noise floor and lose the first syllable")
+        val quietOpening = ShortArray(16_000).also { samples ->
+            for (index in 3_200 until samples.size) {
+                samples[index] = (sin(2.0 * PI * index / 100.0) * 260).toInt().toShort()
+            }
+        }
+        expect(AudioCapturePolicy.reviewedStartSample(quietOpening, quietOpening.size, 12_800, immediateProcessor) == 1_920,
+            "Crop recovery preserves a quiet voiced opening without changing the speech detector")
+        expect(AudioCapturePolicy.reviewedStartSample(ShortArray(16_000), 16_000, 12_800, immediateProcessor) == 12_800,
+            "Crop recovery does not extend into silence")
+        val separatedOpening = quietOpening.copyOf().also { it.fill(0, 9_600, 12_800) }
+        expect(AudioCapturePolicy.reviewedStartSample(separatedOpening, separatedOpening.size, 12_800, immediateProcessor) == 12_800,
+            "A gap before the crop keeps earlier sound outside the upload")
+        val longOpening = ShortArray(32_000) { index -> (sin(2.0 * PI * index / 100.0) * 260).toInt().toShort() }
+        expect(AudioCapturePolicy.reviewedStartSample(longOpening, longOpening.size, 32_000, immediateProcessor) == 16_000,
+            "Crop recovery has a one-second lookback ceiling")
+        for ((noiseIndex, startupSamples) in listOf(ShortArray(320 * 50) { index ->
+            (sin(2.0 * PI * index / 100.0) * 4_000).toInt().toShort()
+        }, ShortArray(320 * 50).also { samples ->
+            val random = Random(516)
+            for (index in samples.indices) samples[index] = random.nextInt(-5_000, 5_001).toShort()
+        }).withIndex()) {
+            val startupNoise = AudioCapturePolicy.commandDetector(afterWake = false)
+            for (offset in startupSamples.indices step 320) {
+                startupNoise.add(immediateProcessor.analyze(startupSamples.copyOfRange(offset, offset + 320)))
+            }
+            repeat(42) { startupNoise.add(0f) }
+            expect(!startupNoise.hasClearCommand, "Startup noise case $noiseIndex cannot bypass calibration")
+        }
+        val startupTap = AudioCapturePolicy.commandDetector(afterWake = false)
+        repeat(12) { index ->
+            val frame = ShortArray(320)
+            if (index == 0) { frame[10] = 30_000; frame[11] = -18_000 }
+            startupTap.add(immediateProcessor.analyze(frame))
+        }
+        repeat(50) { startupTap.add(0.003f) }
+        expect(!startupTap.hasClearCommand, "A startup screen tap remains an empty capture")
+
         expect(parsedAction("call_contact", mapOf("name" to " Mom ")).action == PhoneAction.CallContact("Mom"), "Contact names are trimmed")
         expect(parsedAction("call_number", mapOf("number" to "+91 98765 43210")).action is PhoneAction.CallNumber, "Phone number action parses")
         expect(
@@ -624,7 +747,7 @@ object VoiceLogicTests {
         )
         expect(
             VoiceResponseParser.parseFields("other") ==
-                VoiceCommandResponse.Error(VoiceCommandResponse.Reason.BAD_AUDIO),
+                VoiceCommandResponse.Error(VoiceCommandResponse.Reason.BUSY),
             "Unknown response type is rejected",
         )
 
@@ -637,6 +760,18 @@ object VoiceLogicTests {
         expect(VoiceResponseParser.parseServerDuration("groq;dur=-1") == null, "Negative Groq timing is rejected")
         expect(VoiceResponseParser.parseServerDuration("gemini;dur=-1") == null, "Negative server timing is rejected")
         expect(VoiceResponseParser.parseServerDuration(null) == null, "Missing server timing stays absent")
+        expect(VoiceResponseParser.parseStageDurations("groq;dur=896.0, transcription;dur=577.0, classification;dur=319.0") ==
+            mapOf("transcription" to 577.0, "classification" to 319.0), "Stage timing permits only recognition and selection durations")
+        expect(VoiceResponseParser.parseStageDurations(" TRANSCRIPTION ; dur=0, CLASSIFICATION;dur=8.5;desc=ignored") ==
+            mapOf("transcription" to 0.0, "classification" to 8.5), "Stage timing handles spacing, case and zero duration")
+        expect(VoiceResponseParser.parseStageDurations("transcription;dur=1, transcription;dur=2") ==
+            mapOf("transcription" to 1.0), "Duplicate stage metrics keep the first numeric duration")
+        for (invalidTiming in listOf(null, "transcription;dur=-1", "classification;dur=NaN", "classification;dur=Infinity",
+            "classification;dur=12secret", "classification;dur=1e5", "transcription;dur=" + "9".repeat(400),
+            "private;dur=123", "xtranscription;dur=12", "transcription_private;dur=12")) {
+            expect(VoiceResponseParser.parseStageDurations(invalidTiming).isEmpty(),
+                "Stage diagnostics omit unrecognized and malformed metrics")
+        }
 
         val now = 1_000_000L
         expect(TokenPolicy.expiresAt(now, 1) == now + 60, "Token lifetime has a safe minimum")

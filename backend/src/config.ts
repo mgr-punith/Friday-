@@ -1,5 +1,6 @@
 import { createPrivateKey } from "node:crypto";
 import type { WaveNetConfig } from "./providers/wavenet";
+import type { ElevenLabsConfig } from "./providers/elevenlabs";
 import type { SpeechLimits } from "./core/speech";
 import { PARAKEET_V2_FUNCTION_ID, type ParakeetConfig } from "./providers/parakeet";
 
@@ -32,7 +33,10 @@ export interface VercelBackendConfig extends UsageLimits {
   readonly redisRestUrl: string;
   readonly redisRestToken: string;
   readonly answerLimits?: { readonly perAccountMinute: number; readonly perAccountDaily: number; readonly globalDaily: number };
-  readonly speech?: { readonly provider: WaveNetConfig; readonly limits: SpeechLimits };
+  readonly speech?: {
+    readonly provider: (WaveNetConfig & { readonly kind: "wavenet" }) | (ElevenLabsConfig & { readonly kind: "elevenlabs" });
+    readonly limits: SpeechLimits;
+  };
 }
 
 export type VercelAssistantConfig =
@@ -93,8 +97,19 @@ export function loadVercelConfig(environment: NodeJS.ProcessEnv = process.env): 
 function loadSpeechConfig(environment: NodeJS.ProcessEnv): Pick<VercelBackendConfig, "speech"> {
   const provider = environment.SPEECH_PROVIDER?.trim() || "device";
   if (provider === "device") return {};
-  if (provider !== "wavenet") throw new Error("invalid_speech_provider");
+  if (provider !== "wavenet" && provider !== "elevenlabs") throw new Error("invalid_speech_provider");
   if (environment.ANSWERS_ENABLED !== "true") throw new Error("speech_requires_answers");
+  const timeoutMs = integer(environment, "SPEECH_TIMEOUT_MS", 3_000, 500, 5_000);
+  if (provider === "elevenlabs") {
+    const apiKey = secret(environment, "ELEVENLABS_API_KEY", 16);
+    if (apiKey.length > 4_096 || /[^\x21-\x7e]/.test(apiKey)) throw new Error("invalid_elevenlabs_api_key");
+    const voiceId = required(environment, "ELEVENLABS_VOICE_ID");
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(voiceId)) throw new Error("invalid_elevenlabs_voice_id");
+    const model = environment.ELEVENLABS_MODEL?.trim() || "eleven_flash_v2_5";
+    if (!/^[A-Za-z0-9_-]{1,100}$/.test(model)) throw new Error("invalid_elevenlabs_model");
+    return { speech: { provider: { kind: "elevenlabs", apiKey, voiceId, model, timeoutMs },
+      limits: loadSpeechLimits(environment, 10_000) } };
+  }
   const voice = environment.GOOGLE_TTS_VOICE?.trim() || "en-IN-Wavenet-A";
   if (!/^en-(?:IN|US|GB|AU)-Wavenet-[A-J]$/.test(voice)) throw new Error("invalid_speech_voice");
   const serviceAccountEmail = required(environment, "GOOGLE_TTS_SERVICE_ACCOUNT_EMAIL");
@@ -106,12 +121,16 @@ function loadSpeechConfig(environment: NodeJS.ProcessEnv): Pick<VercelBackendCon
     const key = createPrivateKey(privateKey);
     if (key.asymmetricKeyType !== "rsa" || (key.asymmetricKeyDetails?.modulusLength ?? 0) < 2_048) throw new Error();
   } catch { throw new Error("invalid_speech_private_key"); }
-  return { speech: { provider: { serviceAccountEmail, privateKey, projectId, voice,
-    timeoutMs: integer(environment, "SPEECH_TIMEOUT_MS", 3_000, 500, 5_000) }, limits: {
+  return { speech: { provider: { kind: "wavenet", serviceAccountEmail, privateKey, projectId, voice, timeoutMs },
+    limits: loadSpeechLimits(environment, 3_500_000) } };
+}
+
+function loadSpeechLimits(environment: NodeJS.ProcessEnv, monthlyDefault: number): SpeechLimits {
+  return {
     accountMinute: integer(environment, "SPEECH_PER_ACCOUNT_MINUTE", 12, 1, 60),
     accountDailyCharacters: integer(environment, "SPEECH_PER_ACCOUNT_DAILY_CHARACTERS", 10_000, 600, 100_000),
-    globalMonthlyCharacters: integer(environment, "SPEECH_GLOBAL_MONTHLY_CHARACTERS", 3_500_000, 600, 4_000_000)
-  } } };
+    globalMonthlyCharacters: integer(environment, "SPEECH_GLOBAL_MONTHLY_CHARACTERS", monthlyDefault, 600, 4_000_000)
+  };
 }
 
 function loadRuntimeConfig(environment: NodeJS.ProcessEnv): RuntimeConfig {

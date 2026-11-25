@@ -1,5 +1,5 @@
 import {
-  SYSTEM_PROMPT,
+  TRANSCRIPT_SYSTEM_PROMPT,
   actionInstructionsFor,
   functionDeclarationsFor,
   functionNamesFor
@@ -83,7 +83,7 @@ export class GroqProvider implements AssistantProvider {
     const following = input.answerContext;
     if (following && !supportsAnswers) throw this.failure(budget, "classification", "invalid_context");
     // Clarification replies are answer-only, including replies that look like exact phone commands.
-    const exact = !following && actionVersion >= 2 ? exactDeviceRequest(text, input.actionVersion === 5) : null;
+    const exact = !following && actionVersion >= 2 ? exactDeviceRequest(text, actionVersion) : null;
     if (exact) return { selection: exact, durationMs: this.elapsed(budget), timingMetric: "groq", stages, usage: budget.usage };
     const started = this.runtime.now();
     const answerTool = following?.remaining === 0 ? { ...ANSWER_TOOL, parameters: { ...ANSWER_TOOL.parameters,
@@ -99,12 +99,12 @@ export class GroqProvider implements AssistantProvider {
         "Do not ask again for details already provided. Only answer questions; phone commands, chat or non-English replies use unavailable. " +
         (following.remaining === 0 ? "No clarification questions remain. If essential detail is still missing, use unavailable and ask the user to start a new question with more detail. "
           : "If essential detail is still missing, ask one short clarification before searching. ")
-      : (supportsAnswers ? SYSTEM_PROMPT.replace("Never answer questions.", "Use answer_question for factual questions. " +
+      : (supportsAnswers ? TRANSCRIPT_SYSTEM_PROMPT.replace("Never answer questions.", "Use answer_question for factual questions. " +
           "Answer clear questions directly. You cannot see the screen or earlier conversations. " +
           "If the person, match, place or other essential subject is missing, use clarification with one short question. " +
           "Do not guess the missing subject or answer with a request for detail in knowledge mode.") : answerSetup
-          ? SYSTEM_PROMPT.replace("Never answer questions.", "For factual questions use short_answers_required. Do not answer or search.")
-          : SYSTEM_PROMPT) + actionInstructions;
+          ? TRANSCRIPT_SYSTEM_PROMPT.replace("Never answer questions.", "For factual questions use short_answers_required. Do not answer or search.")
+          : TRANSCRIPT_SYSTEM_PROMPT) + actionInstructions;
     const value = await this.request("classification", (repair) => ({
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -298,7 +298,9 @@ export class GroqProvider implements AssistantProvider {
 export function compactGroqTools(version: NonNullable<CommandInput["actionVersion"]>) {
   const declarations = functionDeclarationsFor(version);
   const actions = declarations.filter(tool => !["run_actions", "unsupported", "unclear_command"].includes(tool.name)).map(tool => tool.name);
-  return declarations.map(tool => tool.name !== "run_actions" ? tool : {
+  return declarations.map(tool => tool.name === "unclear_command"
+    ? { ...tool, description: "Use only when the transcript has no intelligible request. Unfamiliar song and artist names can be valid music requests." }
+    : tool.name !== "run_actions" ? tool : {
     name: tool.name, description: "Run 2-3 requested actions in order. Use each action tool's arguments. Only flashlight, volume and ringer may precede another action.",
     parameters: { type: "object", properties: { actions: { type: "array", minItems: 2, maxItems: 3,
       items: { type: "object", properties: { action: { type: "string", enum: actions },
@@ -308,10 +310,12 @@ export function compactGroqTools(version: NonNullable<CommandInput["actionVersio
 }
 
 // Pin common, explicit commands after the transcript check. Never match part of a compound or negated request.
-function exactDeviceRequest(text: string, supportsMediaControls: boolean): FunctionSelection | null {
-  const words = text.toLowerCase().replace(/[.!?]+$/, "").replace(/\s+/g, " ").trim()
-    .replace(/^(?:(?:can|could|would) you )?(?:please )?/, "").replace(/,? please$/, "");
-  if (supportsMediaControls) {
+function exactDeviceRequest(text: string, version: NonNullable<CommandInput["actionVersion"]>): FunctionSelection | null {
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(text)) return null;
+  const command = text.replace(/[.!?]+$/, "").replace(/\s+/g, " ").trim()
+    .replace(/^(?:(?:can|could|would) you )?(?:please )?/i, "").replace(/,? please$/i, "");
+  const words = command.toLowerCase();
+  if (version >= 5) {
     const operation = /^(pause|resume) (?:(?:the|my) )?(?:music|playback|audio|song)$/.exec(words)
       ?? /^(?:skip to |go to )?(?:the )?(next|previous) (?:song|track)$/.exec(words);
     if (operation) return { name: "control_media", args: { operation: operation[1] } };
@@ -324,6 +328,17 @@ function exactDeviceRequest(text: string, supportsMediaControls: boolean): Funct
   }
   const musicApp = /^(?:play (?:music|a music|some music|a song) (?:in|on|using)|open) (spotify|youtube(?: music)?)$/.exec(words);
   if (musicApp) return { name: "open_app", args: { name: musicApp[1] } };
+  if (version >= 4) {
+    const named = /^play (?:the song )?(.+?) (?:on|in|using) (spotify|you ?tube(?: music)?)$/i.exec(command);
+    if (named) {
+      const query = named[1]!.trim();
+      if (query.length <= 160 && !/[.!?;,&]|\b(?:and|or|then|but|if|unless|before|after|also|instead|plus|not|except|without|never)\b/i.test(query)) {
+        const appName = /^spotify$/i.test(named[2]!) ? "Spotify"
+          : /music$/i.test(named[2]!) ? "YouTube Music" : "YouTube";
+        return { name: "play_media", args: { query, appName } };
+      }
+    }
+  }
   return null;
 }
 

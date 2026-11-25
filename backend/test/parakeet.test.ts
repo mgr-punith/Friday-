@@ -15,6 +15,7 @@ import { createPcmWav, MockAssistant, MockUsage, RecordingLogger, StaticClock, S
 const CONFIG = { apiKey: "nvidia-development-test-key", functionId: PARAKEET_V2_FUNCTION_ID, minConfidence: -0.4 };
 const NOW = "2026-11-17T14:00:00+05:30";
 const text = "Play Yo Yo Honey Singh on YouTube";
+const selectorText = "Play music by Yo Yo Honey Singh in the YouTube app";
 const varint = (value: number) => {
   const values = []; do { const n = value % 128; value = Math.floor(value / 128); values.push(n | (value > 0 ? 128 : 0)); } while (value > 0);
   return Buffer.from(values);
@@ -144,12 +145,12 @@ function tool() { return Response.json({ choices: [{ finish_reason: "tool_calls"
 test("Parakeet audio keeps one phone request, uses one NVIDIA call then the Groq selector", async () => {
   const runtime = new Runtime(); const calls: { url: string; body: unknown }[] = [];
   let recognitions = 0;
-  const transcriber: AudioTranscriber = { async transcribe(_input, opts) { recognitions++; assert.equal(opts.timeoutMs, 1_000); runtime.at += 100; return text; } };
+  const transcriber: AudioTranscriber = { async transcribe(_input, opts) { recognitions++; assert.equal(opts.timeoutMs, 1_000); runtime.at += 100; return selectorText; } };
   const provider = new GroqProvider(GROQ, async (url, init) => { calls.push({ url: String(url), body: init?.body }); runtime.at += 50; return tool(); }, runtime, transcriber);
   const result = await provider.select({ kind: "audio", bytes: wav(), mimeType: "audio/wav", actionVersion: 5 }, NOW);
   assert.equal(recognitions, 1); assert.equal(calls.length, 1);
   assert.equal(calls[0]?.url, "https://api.groq.com/openai/v1/chat/completions");
-  assert.equal(JSON.parse(String(calls[0]?.body)).messages[1].content.includes(text), true);
+  assert.equal(JSON.parse(String(calls[0]?.body)).messages[1].content.includes(selectorText), true);
   assert.deepEqual(result.selection, { name: "play_media", args: { query: "Yo Yo Honey Singh", appName: "YouTube" } });
   assert.deepEqual(result.stages, { transcription: 100, classification: 50 });
   assert.equal(result.durationMs, 150);
@@ -157,7 +158,7 @@ test("Parakeet audio keeps one phone request, uses one NVIDIA call then the Groq
 
 test("NVIDIA and Groq share one recovery allowance and one total provider deadline", async () => {
   const runtime = new Runtime(); let asrCalls = 0; let selectors = 0;
-  const transcriber: AudioTranscriber = { async transcribe() { asrCalls++; runtime.at += 50; if (asrCalls === 1) throw new TranscriptionError("unavailable", true); return text; } };
+  const transcriber: AudioTranscriber = { async transcribe() { asrCalls++; runtime.at += 50; if (asrCalls === 1) throw new TranscriptionError("unavailable", true); return selectorText; } };
   const provider = new GroqProvider(GROQ, async () => { selectors++; return new Response("", { status: 500 }); }, runtime, transcriber);
   await assert.rejects(provider.select({ kind: "audio", bytes: wav(), mimeType: "audio/wav", actionVersion: 5 }, NOW),
     error => error instanceof Error && error.message === "busy");

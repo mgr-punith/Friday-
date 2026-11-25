@@ -123,6 +123,40 @@ test("answers require explicit enablement, a browser-capable model and bounded s
   }
 });
 
+test("ElevenLabs enables answer speech with server-only credentials and a small default character budget", () => {
+  const config = loadVercelConfig({
+    GOOGLE_WEB_CLIENT_ID: "123456789-test.apps.googleusercontent.com", AI_PROVIDER: "groq",
+    GROQ_API_KEY: "example-development-groq-key", JWT_SIGNING_KEY: "example-long-test-signing-key-with-thirty-two-bytes",
+    UPSTASH_REDIS_REST_URL: "https://example.upstash.io", UPSTASH_REDIS_REST_TOKEN: "development-redis-token",
+    ANSWERS_ENABLED: "true", SPEECH_PROVIDER: "elevenlabs", ELEVENLABS_API_KEY: "example-elevenlabs-api-key",
+    ELEVENLABS_VOICE_ID: "JBFqnCBsd6RMkjVDRZzb"
+  }).speech;
+  assert.ok(config);
+  assert.deepEqual(config.provider, { kind: "elevenlabs", apiKey: "example-elevenlabs-api-key",
+    voiceId: "JBFqnCBsd6RMkjVDRZzb", model: "eleven_flash_v2_5", timeoutMs: 3_000 });
+  assert.deepEqual(config.limits, { accountMinute: 12, accountDailyCharacters: 10_000, globalMonthlyCharacters: 10_000 });
+});
+
+test("ElevenLabs rejects missing credentials, unsafe identifiers and invalid speech budgets", () => {
+  const base = { GOOGLE_WEB_CLIENT_ID: "123456789-test.apps.googleusercontent.com", AI_PROVIDER: "groq",
+    GROQ_API_KEY: "example-development-groq-key", JWT_SIGNING_KEY: "example-long-test-signing-key-with-thirty-two-bytes",
+    UPSTASH_REDIS_REST_URL: "https://example.upstash.io", UPSTASH_REDIS_REST_TOKEN: "development-redis-token",
+    ANSWERS_ENABLED: "true", SPEECH_PROVIDER: "elevenlabs", ELEVENLABS_API_KEY: "example-elevenlabs-api-key",
+    ELEVENLABS_VOICE_ID: "JBFqnCBsd6RMkjVDRZzb" };
+  for (const patch of [
+    { ANSWERS_ENABLED: "false" }, { ELEVENLABS_API_KEY: "" }, { ELEVENLABS_API_KEY: "short" },
+    { ELEVENLABS_API_KEY: "example-key-with\r\ninjected-header" }, { ELEVENLABS_API_KEY: "a".repeat(4_097) },
+    { ELEVENLABS_VOICE_ID: "" }, { ELEVENLABS_VOICE_ID: "../another/path?query=true" },
+    { ELEVENLABS_VOICE_ID: "a".repeat(129) }, { ELEVENLABS_MODEL: "https://example.com/model" },
+    { ELEVENLABS_MODEL: "a".repeat(101) }, { SPEECH_GLOBAL_MONTHLY_CHARACTERS: "4000001" },
+    { SPEECH_PER_ACCOUNT_MINUTE: "0" }, { SPEECH_PER_ACCOUNT_DAILY_CHARACTERS: "599" }, { SPEECH_TIMEOUT_MS: "5001" }
+  ]) assert.throws(() => loadVercelConfig({ ...base, ...patch }), /(?:invalid|missing|speech_requires)_/);
+  const configured = loadVercelConfig({ ...base, ELEVENLABS_MODEL: "eleven_turbo_v2_5", SPEECH_GLOBAL_MONTHLY_CHARACTERS: "25000" }).speech!;
+  assert.ok(configured.provider.kind === "elevenlabs");
+  assert.equal(configured.provider.model, "eleven_turbo_v2_5");
+  assert.equal(configured.limits.globalMonthlyCharacters, 25_000);
+});
+
 test("WaveNet requires explicit enablement, answer consent support and valid server-only credentials", () => {
   const base = { GOOGLE_WEB_CLIENT_ID: "123456789-test.apps.googleusercontent.com", AI_PROVIDER: "groq",
     GROQ_API_KEY: "example-development-groq-key", JWT_SIGNING_KEY: "example-long-test-signing-key-with-thirty-two-bytes",
@@ -136,11 +170,14 @@ test("WaveNet requires explicit enablement, answer consent support and valid ser
     GOOGLE_TTS_PROJECT_ID: "friday-example", GOOGLE_TTS_SERVICE_ACCOUNT_EMAIL: "friday-voice@friday-example.iam.gserviceaccount.com",
     GOOGLE_TTS_PRIVATE_KEY: key };
   const config = loadVercelConfig(enabled).speech!;
+  assert.ok(config.provider.kind === "wavenet");
   assert.equal(config.provider.voice, "en-IN-Wavenet-A");
   assert.equal(config.provider.privateKey, key.trim());
   assert.equal(config.provider.timeoutMs, 3_000);
   assert.deepEqual(config.limits, { accountMinute: 12, accountDailyCharacters: 10_000, globalMonthlyCharacters: 3_500_000 });
-  assert.equal(loadVercelConfig({ ...enabled, GOOGLE_TTS_PRIVATE_KEY: key.replace(/\n/g, "\\n") }).speech!.provider.privateKey.trim(), key.trim());
+  const escaped = loadVercelConfig({ ...enabled, GOOGLE_TTS_PRIVATE_KEY: key.replace(/\n/g, "\\n") }).speech!.provider;
+  assert.ok(escaped.kind === "wavenet");
+  assert.equal(escaped.privateKey.trim(), key.trim());
   const weakKey = generateKeyPairSync("rsa", { modulusLength: 1_024 }).privateKey.export({ type: "pkcs8", format: "pem" }).toString();
   const otherKey = generateKeyPairSync("ec", { namedCurve: "prime256v1" }).privateKey.export({ type: "pkcs8", format: "pem" }).toString();
   for (const patch of [

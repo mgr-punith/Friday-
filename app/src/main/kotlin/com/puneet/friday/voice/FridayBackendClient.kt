@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.SystemClock
+import android.util.Log
 import com.puneet.friday.BuildConfig
 import com.puneet.friday.actions.PhoneCapabilityRegistry
 import com.puneet.friday.auth.AccountClient
@@ -62,6 +63,7 @@ class FridayBackendClient(
     @Throws(IOException::class)
     fun sendCommand(wavBytes: ByteArray, answerContext: String? = null, cancelled: () -> Boolean = { false }): CommandResult {
         require(VoicePayload.isValid(wavBytes)) { "invalid_wav" }
+        if (!AnswerConsent.hasChoice(appContext)) throw IOException("audio_disclosure_required")
         if (answerContext != null && !AnswerConsent.isAllowed(appContext)) throw IOException("answers_disabled")
         checkCancellation(cancelled)
         if (!hasNetwork()) throw IOException("offline")
@@ -88,7 +90,11 @@ class FridayBackendClient(
             setRequestProperty("x-friday-media-controls", "1")
             // Capability only: it allows a setup hint, never an answer or search without consent.
             setRequestProperty("x-friday-answer-setup", "1")
-            if (AnswerConsent.isAllowed(appContext)) setRequestProperty("x-friday-answers", "2")
+            setRequestProperty("x-friday-transcription", "nvidia-v1")
+            if (AnswerConsent.isAllowed(appContext)) {
+                setRequestProperty("x-friday-answers", "2")
+                setRequestProperty("x-friday-speech", "elevenlabs-v1")
+            }
             if (answerContext != null) setRequestProperty("x-friday-answer-context", answerContext)
             setFixedLengthStreamingMode(wavBytes.size)
             doOutput = true
@@ -102,6 +108,12 @@ class FridayBackendClient(
                 val body = value.responseBody(code)
                 val serverTiming = value.getHeaderField("Server-Timing")
                 val response = VoiceProtocol.parseCommand(body, serverTiming)
+                if (BuildConfig.DEBUG) {
+                    val stages = VoiceResponseParser.parseStageDurations(serverTiming).entries.joinToString("") {
+                        " ${it.key}Ms=${it.value}"
+                    }
+                    Log.i("FridayTiming", "event=command_response status=$code uiOutcome=${response.uiOutcome()}$stages")
+                }
                 CommandResult(
                     response,
                     CommandTimings(SystemClock.elapsedRealtime() - started, VoiceProtocol.parseServerDuration(serverTiming)),
@@ -119,9 +131,7 @@ class FridayBackendClient(
     fun reportAnswer(answer: InformationAnswer, reason: String): Boolean {
         require(reason in setOf("incorrect", "outdated", "offensive", "other"))
         if (!hasNetwork()) throw IOException("offline")
-        val content = JSONObject().put("type", "answer").put("kind", answer.kind).put("text", answer.text)
-            .put("answerId", answer.answerId).put("issuedAt", answer.issuedAt).put("reportToken", answer.reportToken)
-            .put("sources", JSONArray().apply { answer.sources.forEach { put(JSONObject().put("title", it.title).put("url", it.url)) } })
+        val content = signedAnswer(answer)
         val bytes = JSONObject().put("answer", content).put("reason", reason).toString().toByteArray(Charsets.UTF_8)
         fun send(token: String): Int = connection("/v1/answers/report", "POST", CONNECT_TIMEOUT_MS, 8_000).useResponse {
             it.setRequestProperty("authorization", "Bearer $token")
@@ -136,6 +146,42 @@ class FridayBackendClient(
         val code = send(ensureToken(force = false))
         return (if (code == 401) send(ensureToken(force = true)) else code) == 204
     }
+
+    fun fetchSpeech(answer: InformationAnswer, cancelled: () -> Boolean): ByteArray? {
+        val speechToken = answer.speechToken ?: return null
+        if (!AnswerConsent.isAllowed(appContext) || !hasNetwork()) return null
+        checkCancellation(cancelled)
+        val bytes = JSONObject().put("answer", signedAnswer(answer)).put("speechToken", speechToken)
+            .toString().toByteArray(Charsets.UTF_8)
+        val token = ensureToken(force = false)
+        checkCancellation(cancelled)
+        return connection("/v1/speech", "POST", 2_000, 4_000).useResponse {
+            it.setRequestProperty("authorization", "Bearer $token")
+            it.setRequestProperty("content-type", "application/json")
+            it.setRequestProperty("x-friday-speech", "elevenlabs-v1")
+            it.setFixedLengthStreamingMode(bytes.size)
+            it.doOutput = true
+            it.outputStream.use { out -> out.write(bytes) }
+            if (it.responseCode != 200 || it.contentType?.substringBefore(';') != "audio/wav") return@useResponse null
+            it.inputStream.use { input ->
+                val audio = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(8_192)
+                while (true) {
+                    checkCancellation(cancelled)
+                    val size = input.read(buffer)
+                    if (size < 0) break
+                    if (audio.size() + size > 1_920_044) throw IOException("speech_too_large")
+                    audio.write(buffer, 0, size)
+                }
+                audio.toByteArray()
+            }
+        }
+    }
+
+    private fun signedAnswer(answer: InformationAnswer): JSONObject =
+        JSONObject().put("type", "answer").put("kind", answer.kind).put("text", answer.text)
+            .put("answerId", answer.answerId).put("issuedAt", answer.issuedAt).put("reportToken", answer.reportToken)
+            .put("sources", JSONArray().apply { answer.sources.forEach { put(JSONObject().put("title", it.title).put("url", it.url)) } })
 
     private fun ensureToken(force: Boolean): String = accounts.accessToken(forceRefresh = force)
 

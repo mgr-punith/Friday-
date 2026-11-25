@@ -11,6 +11,7 @@ import { RedisAuthStore } from "../auth/store";
 import { RedisAnswerReportStore } from "../core/answers";
 import { RedisSpeechUsage } from "../core/speech";
 import { WaveNetProvider } from "../providers/wavenet";
+import { ElevenLabsProvider } from "../providers/elevenlabs";
 
 const config = loadVercelConfig();
 const secrets = new EnvironmentSecretProvider(config.assistant.provider === "gemini" ? config.assistant.apiKey : undefined, config.jwtSigningKey);
@@ -39,7 +40,8 @@ const answers = config.assistant.provider === "groq" && config.assistant.answers
     commandGlobalDaily: config.answerLimits.globalDaily }, "friday:answers:v1"),
   reports: new RedisAnswerReportStore(redis)
 } : undefined;
-const speech = config.speech ? { provider: new WaveNetProvider(config.speech.provider),
+const speech = config.speech ? { provider: config.speech.provider.kind === "elevenlabs"
+  ? new ElevenLabsProvider(config.speech.provider) : new WaveNetProvider(config.speech.provider),
   usage: new RedisSpeechUsage(redis, config.speech.limits) } : undefined;
 const api = createApi({ assistant, secrets, usage, clock, logger, accounts, ...(answers ? { answers } : {}),
   ...(config.assistant.provider === "groq" && config.assistant.transcription ? { transcriptionClient: "nvidia-v1" as const } : {}),

@@ -8,21 +8,22 @@ export interface SpeechLimits {
   readonly globalMonthlyCharacters: number;
 }
 export interface SpeechServices {
-  readonly provider: { synthesize(text: string): Promise<Uint8Array> };
+  readonly provider: { readonly clientVersion: SpeechClientVersion; synthesize(text: string): Promise<Uint8Array> };
   readonly usage: { reserve(identity: string, answerId: string, characters: number, at: Date): Promise<boolean> };
 }
+export type SpeechClientVersion = "wavenet-v1" | "elevenlabs-v1";
 
 /** Bind synthesis to one signed answer and the authenticated account; no arbitrary text endpoint. */
-export function speechToken(answer: AnswerResponse, identity: string, key: string): string {
-  return createHmac("sha256", key).update(JSON.stringify(["friday-speech:v1", identity,
+export function speechToken(answer: AnswerResponse, identity: string, key: string, clientVersion: SpeechClientVersion): string {
+  return createHmac("sha256", key).update(JSON.stringify(["friday-speech:v2", clientVersion, identity,
     answer.answerId, answer.issuedAt, answer.text])).digest("base64url");
 }
-export function readSpeechRequest(value: unknown, identity: string, key: string, at: Date): AnswerResponse | null {
+export function readSpeechRequest(value: unknown, identity: string, key: string, at: Date, clientVersion: SpeechClientVersion): AnswerResponse | null {
   if (!record(value) || Object.keys(value).length !== 2 || !record(value.answer) || typeof value.speechToken !== "string" ||
     !/^[A-Za-z0-9_-]{43}$/.test(value.speechToken)) return null;
   const report = parseReport({ answer: value.answer, reason: "other" }, key, at);
   if (!report || Math.floor(at.getTime() / 1_000) - report.answer.issuedAt > 120) return null;
-  const expected = speechToken(report.answer, identity, key);
+  const expected = speechToken(report.answer, identity, key, clientVersion);
   return timingSafeEqual(Buffer.from(expected), Buffer.from(value.speechToken)) ? report.answer : null;
 }
 

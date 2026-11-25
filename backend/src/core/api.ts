@@ -204,8 +204,8 @@ async function handleCommand(
         answer = { kind: "unavailable", text: "I couldn't narrow that down. Please ask the full question with more detail.", sources: [] };
       }
       const signed = signAnswer(answer, secrets.jwtSigningKey, dependencies.clock.now());
-      const spoken = dependencies.speech && header(event, "x-friday-speech") === "wavenet-v1"
-        ? { ...signed, speechToken: speechToken(signed, installId, secrets.jwtSigningKey) } : signed;
+      const spoken = dependencies.speech && header(event, "x-friday-speech") === dependencies.speech.provider.clientVersion
+        ? { ...signed, speechToken: speechToken(signed, installId, secrets.jwtSigningKey, dependencies.speech.provider.clientVersion) } : signed;
       const next = answer.kind === "clarification" && answersVersion === "2" && result.question !== undefined
         ? createAnswerContinuation(result.question, answer.text, installId, secrets.jwtSigningKey, dependencies.clock.now(), answerContext ?? undefined) : null;
       return commandSuccess(next ? { ...spoken, continuation: next } : spoken,
@@ -240,9 +240,9 @@ async function handleSpeech(event: FunctionUrlEvent, dependencies: ApiDependenci
     const identity = dependencies.accounts ? account?.accountId
       : token ? verifyInstallToken(token, secrets.jwtSigningKey, dependencies.clock.now()) : null;
     if (!identity) return json(401, { error: "unauthorized" });
-    if (contentType(event) !== "application/json" || header(event, "x-friday-speech") !== "wavenet-v1") return json(400, { error: "bad_request" });
+    if (contentType(event) !== "application/json" || header(event, "x-friday-speech") !== dependencies.speech.provider.clientVersion) return json(400, { error: "bad_request" });
     const at = dependencies.clock.now();
-    const answer = readSpeechRequest(parseJsonBody(event), identity, secrets.jwtSigningKey, at);
+    const answer = readSpeechRequest(parseJsonBody(event), identity, secrets.jwtSigningKey, at, dependencies.speech.provider.clientVersion);
     if (!answer) return json(400, { error: "bad_request" });
     if (!await dependencies.speech.usage.reserve(identity, answer.answerId, [...answer.text].length, at)) return json(429, { error: "busy" });
     const audio = await dependencies.speech.provider.synthesize(answer.text);

@@ -108,7 +108,7 @@ class VoiceRecorder(
         }
         val manualStop = stopRequested && !stopDetector.endedBySilence
         if (manualStop && !AudioCapturePolicy.acceptsManualStop(count)) return CaptureResult.NoClearCommand
-        val reviewedCount = AudioCapturePolicy.reviewedSampleCount(count, manualStop)
+        val reviewedCount = AudioCapturePolicy.reviewedSampleCount(count, manualStop, samples, processor, stopDetector.hasClearCommand)
         val reviewedDetector = if (manualStop) {
             reviewCapture(samples, reviewedCount, processor)
         } else {
@@ -116,7 +116,9 @@ class VoiceRecorder(
         }
         if (!reviewedDetector.hasClearCommand) return CaptureResult.NoClearCommand
         if (count >= samples.size && !reviewedDetector.endedBySilence) return CaptureResult.NoClearCommand
-        val start = reviewedDetector.firstSpeechFrame * FRAME_SAMPLES - PRE_ROLL_SAMPLES
+        val start = AudioCapturePolicy.reviewedStartSample(
+            samples, reviewedCount, reviewedDetector.firstSpeechFrame * FRAME_SAMPLES - PRE_ROLL_SAMPLES, processor,
+        )
         val end = (reviewedDetector.lastSpeechFrame + 1) * FRAME_SAMPLES + POST_ROLL_SAMPLES
         val cropped = processor.crop(samples, reviewedCount, start, end)
         if (!AudioCapturePolicy.hasCommandEnergy(processor, cropped, afterWake)) return CaptureResult.NoClearCommand
@@ -178,6 +180,8 @@ class SpeechEndDetector(
     private var voicedFrames = 0
     private var previousSpeechLevel = 0f
     private var noiseFloor = initialNoiseFloor.coerceIn(MIN_NOISE_FLOOR, MAX_NOISE_FLOOR)
+    private val calibrationLevels = FloatArray(calibrationFrames.coerceAtLeast(0))
+    private val calibrationVoicing = FloatArray(calibrationFrames.coerceAtLeast(0))
     var hasSpeech: Boolean = false
         private set
     var firstSpeechFrame: Int = 0
@@ -204,9 +208,45 @@ class SpeechEndDetector(
         val voiced = voicing.isFinite() && voicing >= MIN_VOICING_CORRELATION
         val currentFrame = frameIndex++
         if (currentFrame < calibrationFrames) {
-            updateNoiseFloor(level, CALIBRATION_ADAPT_RATE)
-            return false
+            calibrationLevels[currentFrame] = level
+            calibrationVoicing[currentFrame] = voicing
+            if (currentFrame + 1 == calibrationFrames) {
+                val start = calibrationSpeechStart()
+                if (start >= 0) {
+                    for (index in start until calibrationFrames) {
+                        detectFrame(calibrationLevels[index], calibrationVoicing[index] >= MIN_VOICING_CORRELATION, index)
+                    }
+                }
+            }
+            return endedBySilence
         }
+        return detectFrame(level, voiced, currentFrame)
+    }
+
+    private fun calibrationSpeechStart(): Int {
+        for (start in calibrationLevels.indices) {
+            if (start + minimumSpeechFrames <= calibrationFrames) {
+                val threshold = max(ABSOLUTE_START_RMS, noiseFloor * START_NOISE_MULTIPLIER + START_OFFSET_RMS)
+                val strongThreshold = max(ABSOLUTE_STRONG_RMS, threshold)
+                var accepted = 0
+                var confident = 0
+                var strong = false
+                var changing = false
+                for (index in start until start + minimumSpeechFrames) {
+                    val level = calibrationLevels[index]
+                    if (level >= threshold || level >= LOUD_SPEECH_RMS) accepted++
+                    if (calibrationVoicing[index] >= STARTUP_VOICING_CORRELATION) confident++
+                    if (level >= strongThreshold) strong = true
+                    if (index > start && changesSpeechLevel(level, calibrationLevels[index - 1])) changing = true
+                }
+                if (accepted == minimumSpeechFrames && confident * 4 >= minimumSpeechFrames * 3 && strong && changing) return start
+            }
+            updateNoiseFloor(calibrationLevels[start], CALIBRATION_ADAPT_RATE)
+        }
+        return -1
+    }
+
+    private fun detectFrame(level: Float, voiced: Boolean, currentFrame: Int): Boolean {
         if (!hasSpeech) {
             val startThreshold = max(ABSOLUTE_START_RMS, noiseFloor * START_NOISE_MULTIPLIER + START_OFFSET_RMS)
             val strongThreshold = max(ABSOLUTE_STRONG_RMS, startThreshold)
@@ -234,7 +274,7 @@ class SpeechEndDetector(
                 candidateSpeechFrames = 0
                 candidateStrongFrames = 0
                 candidateVoicedFrames = 0
-                updateNoiseFloor(level, NOISE_ADAPT_RATE)
+                if (!voiced || level < ABSOLUTE_CONTINUE_RMS) updateNoiseFloor(level, NOISE_ADAPT_RATE)
             }
         } else {
             val strongThreshold = max(
@@ -250,7 +290,7 @@ class SpeechEndDetector(
                 speechFrames++
                 if (level >= strongThreshold) strongFrames++
                 if (voiced) voicedFrames++
-                if (previousSpeechLevel > 0f && kotlin.math.abs(level - previousSpeechLevel) >= DYNAMIC_RMS_DELTA) {
+                if (previousSpeechLevel > 0f && changesSpeechLevel(level, previousSpeechLevel)) {
                     dynamicFrames++
                 }
                 previousSpeechLevel = level
@@ -268,6 +308,9 @@ class SpeechEndDetector(
         noiseFloor += (bounded - noiseFloor) * rate
     }
 
+    private fun changesSpeechLevel(level: Float, previous: Float): Boolean =
+        kotlin.math.abs(level - previous) >= max(DYNAMIC_RMS_DELTA, max(level, previous) * MIN_DYNAMIC_CHANGE)
+
     private companion object {
         const val MIN_NOISE_FLOOR = 0.001f
         const val MAX_NOISE_FLOOR = 0.025f
@@ -282,6 +325,8 @@ class SpeechEndDetector(
         const val START_OFFSET_RMS = 0.003f
         const val CONTINUE_OFFSET_RMS = 0.003f
         const val DYNAMIC_RMS_DELTA = 0.0015f
+        const val MIN_DYNAMIC_CHANGE = 0.05f
         const val MIN_VOICING_CORRELATION = 0.20f
+        const val STARTUP_VOICING_CORRELATION = 0.45f
     }
 }

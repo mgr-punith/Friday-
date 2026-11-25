@@ -89,6 +89,7 @@ class ConfirmationSpeaker(
     private var onAudio: (PcmProcessor.Level) -> Unit = {},
     private var onAvailable: (Boolean) -> Unit = {},
     private var onFinished: () -> Unit = {},
+    private var onInterrupted: () -> Unit = onFinished,
 ) {
     private val appContext = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
@@ -98,6 +99,8 @@ class ConfirmationSpeaker(
     private var starting = false
     private var ready = false
     private var pending: PendingSpeech? = null
+    private var cloudTimeout: Runnable? = null
+    private var audioPlayer: SpeechAudioPlayer? = null
     private var restoreVoice: (() -> Unit)? = null
     private var speaking = false
     private var closed = false
@@ -116,7 +119,43 @@ class ConfirmationSpeaker(
 
     fun speakOffline(message: String) = speak(message, offlineOnly = true)
 
+    fun speakAnswer(message: String, loadAudio: (cancelled: () -> Boolean) -> ByteArray?) {
+        if (closed) return
+        val text = message.trim().takeIf { it.isNotEmpty() } ?: return
+        stop()
+        val id = session.begin()
+        SharedTextToSpeech.claimPlayback(this, listener)
+        DebugTools.beginSpeechPlayback(this)
+        // A slow backend cannot delay device speech indefinitely.
+        cloudTimeout = Runnable { if (session.accepts(id)) speak(text) }.also { main.postDelayed(it, 5_000) }
+        Thread {
+            val bytes = try { loadAudio { !session.accepts(id) } } catch (_: Exception) { null }
+            val audio = bytes?.let(SpeechAudio::parse)
+            main.post {
+                if (!session.accepts(id)) return@post
+                if (audio == null) { speak(text); return@post }
+                onAvailable(true)
+                audioPlayer = SpeechAudioPlayer(appContext, audio,
+                    onStart = {
+                        if (session.accepts(id)) {
+                            cloudTimeout?.let(main::removeCallbacks)
+                            cloudTimeout = null
+                            speaking = true
+                            if (BuildConfig.DEBUG) Log.i("FridayVoice", "event=cloud_speech_started")
+                            onSpeaking(true)
+                        }
+                    },
+                    onAudio = { level -> if (session.accepts(id) && !detached) onAudio(level) },
+                    onFinish = { complete(id) },
+                    onFailure = { started -> if (session.accepts(id)) { if (started) complete(id, interrupted = true) else speak(text) } },
+                    onInterrupted = { complete(id, interrupted = true) },
+                ).also { it.start() }
+            }
+        }.apply { name = "Friday-speech-fetch"; isDaemon = true; start() }
+    }
+
     private fun speak(message: String, offlineOnly: Boolean) {
+        if (closed) return
         val text = message.trim().takeIf { it.isNotEmpty() } ?: return
         stop()
         val id = session.begin()
@@ -129,6 +168,10 @@ class ConfirmationSpeaker(
 
     fun stop() {
         session.cancel()
+        cloudTimeout?.let(main::removeCallbacks)
+        cloudTimeout = null
+        audioPlayer?.stop()
+        audioPlayer = null
         pending = null
         frames.clear()
         main.removeCallbacksAndMessages(audioCallbacks)
@@ -152,6 +195,7 @@ class ConfirmationSpeaker(
         onAudio = {}
         onAvailable = {}
         onFinished = { shutdown() }
+        onInterrupted = { shutdown() }
         frames.clear()
         main.removeCallbacksAndMessages(audioCallbacks)
         detachedTimeout = Runnable { cancelPlayback() }.also { main.postDelayed(it, 12_000) }
@@ -178,15 +222,15 @@ class ConfirmationSpeaker(
         SharedTextToSpeech.acquire(appContext) { current ->
             starting = false
             if (closed) return@acquire
+            engine = current
+            ready = current != null
+            val waiting = pending?.takeIf { session.accepts(it.id) } ?: return@acquire
             if (current == null) {
-                val id = pending?.id
                 pending = null
                 onAvailable(false)
-                complete(id)
+                complete(waiting.id)
                 return@acquire
             }
-            engine = current
-            ready = true
             onAvailable(true)
             speakPending()
         }
@@ -205,8 +249,12 @@ class ConfirmationSpeaker(
         if (current?.speak(text, TextToSpeech.QUEUE_FLUSH, null, id) != TextToSpeech.SUCCESS) complete(id)
     }
 
-    private fun complete(id: String?) {
+    private fun complete(id: String?, interrupted: Boolean = false) {
         if (!session.finish(id)) return
+        cloudTimeout?.let(main::removeCallbacks)
+        cloudTimeout = null
+        audioPlayer?.stop()
+        audioPlayer = null
         if (BuildConfig.DEBUG) Log.i("FridayVoice", "event=confirmation_finished detached=$detached")
         SharedTextToSpeech.releasePlayback(this, stop = false)
         restoreSpeechVoice()
@@ -216,7 +264,7 @@ class ConfirmationSpeaker(
         frames.clear()
         main.removeCallbacksAndMessages(audioCallbacks)
         if (speaking) { speaking = false; onSpeaking(false) }
-        onFinished()
+        if (interrupted) onInterrupted() else onFinished()
     }
 
     private fun selectOfflineVoice(current: TextToSpeech): Boolean = runCatching {
@@ -253,9 +301,9 @@ class ConfirmationSpeaker(
 
         override fun onDone(id: String?) { main.post { complete(id) } }
         @Deprecated("Required legacy TTS callback")
-        override fun onError(id: String?) { main.post { complete(id) } }
-        override fun onError(id: String?, errorCode: Int) { main.post { complete(id) } }
-        override fun onStop(id: String?, interrupted: Boolean) { main.post { complete(id) } }
+        override fun onError(id: String?) { main.post { complete(id, interrupted = true) } }
+        override fun onError(id: String?, errorCode: Int) { main.post { complete(id, interrupted = true) } }
+        override fun onStop(id: String?, interrupted: Boolean) { main.post { complete(id, interrupted) } }
 
         override fun onBeginSynthesis(id: String?, rate: Int, audioFormat: Int, channelCount: Int) {
             main.post {
