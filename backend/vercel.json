@@ -13,6 +13,10 @@
   },
   "rewrites": [
     {
+      "source": "/v1/speech",
+      "destination": "/api/index?fridayRoute=speech"
+    },
+    {
       "source": "/v1/answers/report",
       "destination": "/api/index?fridayRoute=answers/report"
     },

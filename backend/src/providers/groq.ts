@@ -8,6 +8,8 @@ import { AssistantProviderError, type AssistantProvider, type AssistantProviderR
   type CommandInput, type FunctionSelection } from "../core/contracts";
 import type { FetchLike } from "./gemini";
 import { ANSWER_PROMPT, ANSWER_SETUP_TOOL, ANSWER_TOOL, needsCurrentInformation, readBrowserAnswer, readKnowledgeAnswer } from "../core/answers";
+import { ParakeetTranscriber, type ParakeetConfig } from "./parakeet";
+import { TranscriptionError, type AudioInput, type AudioTranscriber } from "./transcription";
 
 export interface GroqProviderConfig {
   readonly apiKey: string;
@@ -17,6 +19,7 @@ export interface GroqProviderConfig {
   readonly maxCompletionTokens: number;
   readonly answersEnabled?: boolean;
   readonly answerTimeoutMs?: number;
+  readonly transcription?: ParakeetConfig & { readonly provider: "nvidia-parakeet" };
 }
 
 export interface GroqRequestRuntime {
@@ -39,11 +42,15 @@ interface RequestBudget { readonly startedAt: number; deadline: number; retries:
 
 /** Skip selection for exact safe commands; otherwise share one retry across recognition and answering. */
 export class GroqProvider implements AssistantProvider {
+  private readonly transcriber: AudioTranscriber | undefined;
   constructor(
     private readonly config: GroqProviderConfig,
     private readonly fetcher: FetchLike = fetch,
-    private readonly runtime: GroqRequestRuntime = DEFAULT_RUNTIME
-  ) {}
+    private readonly runtime: GroqRequestRuntime = DEFAULT_RUNTIME,
+    transcriber?: AudioTranscriber
+  ) {
+    this.transcriber = transcriber ?? (config.transcription ? new ParakeetTranscriber(config.transcription) : undefined);
+  }
 
   async select(input: CommandInput, now: string, context?: { authorizeAnswer(): Promise<boolean> }): Promise<AssistantProviderResult> {
     const startedAt = this.runtime.now();
@@ -52,16 +59,19 @@ export class GroqProvider implements AssistantProvider {
     let text = input.kind === "text" ? input.text.trim() : "";
     if (input.kind === "audio") {
       const started = this.runtime.now();
-      const form = new FormData();
-      form.append("file", new Blob([Buffer.from(input.bytes)], { type: input.mimeType }),
-        input.mimeType === "audio/mp4" ? "command.m4a" : "command.wav");
-      form.append("model", this.config.transcriptionModel);
-      form.append("language", "en");
-      form.append("temperature", "0");
-      form.append("response_format", "verbose_json");
-      const value = await this.request("transcription", () => ({ body: form }), budget);
+      if (this.transcriber) text = await this.transcribe(input, budget);
+      else {
+        const form = new FormData();
+        form.append("file", new Blob([Buffer.from(input.bytes)], { type: input.mimeType }),
+          input.mimeType === "audio/mp4" ? "command.m4a" : "command.wav");
+        form.append("model", this.config.transcriptionModel);
+        form.append("language", "en");
+        form.append("temperature", "0");
+        form.append("response_format", "verbose_json");
+        const value = await this.request("transcription", () => ({ body: form }), budget);
+        text = this.readTranscript(value, budget);
+      }
       stages.transcription = this.runtime.now() - started;
-      text = this.readTranscript(value, budget);
       if (!text) return { selection: { name: "unclear_command", args: {} }, durationMs: this.elapsed(budget), timingMetric: "groq", stages, usage: budget.usage };
     }
     if (!text || text.length > MAX_TRANSCRIPT_LENGTH) {
@@ -171,6 +181,39 @@ export class GroqProvider implements AssistantProvider {
       if (segment.compression_ratio !== undefined && (!finite(segment.compression_ratio) || segment.compression_ratio > 2.4)) return "";
     }
     return text;
+  }
+
+  private async transcribe(input: AudioInput, budget: RequestBudget): Promise<string> {
+    while (true) {
+      const remaining = budget.deadline - this.runtime.now();
+      if (remaining < 100) throw this.transcriptionFailure(budget, "timeout");
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), remaining);
+      let delay: number | undefined;
+      try {
+        const text = await this.transcriber!.transcribe(input, { signal: controller.signal, timeoutMs: remaining });
+        if (controller.signal.aborted || this.runtime.now() >= budget.deadline) throw this.transcriptionFailure(budget, "timeout");
+        return text.trim();
+      } catch (error) {
+        if (error instanceof AssistantProviderError) throw error;
+        if (controller.signal.aborted || error instanceof TranscriptionError && error.reason === "timeout") {
+          throw this.transcriptionFailure(budget, "timeout");
+        }
+        const failure = error instanceof TranscriptionError ? error : new TranscriptionError("network_error", true);
+        const wait = Math.max(failure.retryAfterMs ?? 0, 200 + Math.floor(this.runtime.random() * 100));
+        if (failure.retryable && budget.retries > 0 && this.runtime.now() + wait + MIN_RETRY_BUDGET_MS < budget.deadline) delay = wait;
+        else throw this.transcriptionFailure(budget, failure.reason);
+      } finally { clearTimeout(timer); }
+      budget.retries--;
+      await this.runtime.wait(delay!);
+    }
+  }
+
+  private transcriptionFailure(budget: RequestBudget, reason: TranscriptionError["reason"]): AssistantProviderError {
+    return new AssistantProviderError(reason === "timeout" ? "timeout" : "busy", this.elapsed(budget), {
+      diagnosticCode: `nvidia_transcription_${reason}`, timingMetric: "groq", usage: budget.usage,
+      ...(reason === "rate_limited" ? { httpStatus: 429, retryAfterSeconds: 60 } : {})
+    });
   }
 
   private async request(stage: Stage, build: (repair: boolean) => Pick<RequestInit, "headers" | "body">,
@@ -298,7 +341,7 @@ function readToolCall(value: unknown, allowed: readonly string[]): FunctionSelec
     const parsed: unknown = JSON.parse(args);
     if (!isRecord(parsed)) return null;
     // A blank optional name/label conveys no target; required args remain strict in the action validator.
-    const optional = name === "close_app" ? "name" : name === "set_alarm" ? "label" : null;
+    const optional = name === "close_app" ? "name" : name === "set_alarm" ? "label" : name === "play_media" ? "appName" : null;
     if (optional && typeof parsed[optional] === "string" && parsed[optional].trim() === "") delete parsed[optional];
     return { name, args: parsed };
   } catch { return null; }

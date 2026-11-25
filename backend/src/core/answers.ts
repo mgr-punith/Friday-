@@ -13,6 +13,7 @@ export interface AnswerResponse extends AnswerContent {
   readonly issuedAt: number;
   readonly reportToken: string;
   readonly continuation?: string;
+  readonly speechToken?: string;
 }
 export interface AnswerReportStore {
   save(answer: AnswerResponse, reason: string): Promise<void>;

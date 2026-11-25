@@ -7,6 +7,7 @@ const FUNCTION_ENTRY = "api/index.mjs";
 const TYPESCRIPT_FUNCTION_ENTRY = "api/index.ts";
 const OUTPUT_DIRECTORY = "public";
 const EXPECTED_REWRITES = new Map([
+  ["/v1/speech", "/api/index?fridayRoute=speech"],
   ["/v1/answers/report", "/api/index?fridayRoute=answers/report"],
   ["/v1/auth/:path*", "/api/index?fridayRoute=auth/:path*"],
   ["/v1/register", "/api/index?fridayRoute=register"],
