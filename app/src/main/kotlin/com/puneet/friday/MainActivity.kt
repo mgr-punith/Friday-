@@ -486,6 +486,10 @@ open class MainActivity : Activity() {
                         if (BuildConfig.DEBUG) Log.i(VOICE_LOG_TAG, "event=command_no_speech wake=$fromWake")
                         showError("I couldn't hear a clear command")
                     }
+                    CaptureResult.AudioInUse -> {
+                        if (BuildConfig.DEBUG) Log.i(VOICE_LOG_TAG, "event=command_audio_in_use wake=$fromWake")
+                        showError("Audio is in use. Try again.")
+                    }
                 }
             }
         }

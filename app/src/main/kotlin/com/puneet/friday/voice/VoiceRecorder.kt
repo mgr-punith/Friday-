@@ -30,7 +30,13 @@ class VoiceRecorder(private val context: Context, private val afterWake: Boolean
     ): CaptureResult {
         DebugTools.beginCommandCapture()
         try {
-            return recordCommand(onReady, onLevel)
+            val focus = CommandAudioFocus(context, ::stop)
+            val capture = focus.use {
+                if (!it.acquire()) return CaptureResult.AudioInUse
+                recordCommand(onReady, onLevel)
+            }
+            // A call or another focus owner can interrupt a partial command. Do not send it.
+            return if (focus.interrupted) CaptureResult.AudioInUse else capture
         } finally {
             DebugTools.endCommandCapture()
         }
@@ -141,6 +147,7 @@ class VoiceRecorder(private val context: Context, private val afterWake: Boolean
 sealed interface CaptureResult {
     data class Command(val recording: RecordedCommand) : CaptureResult
     data object NoClearCommand : CaptureResult
+    data object AudioInUse : CaptureResult
 }
 
 class SpeechEndDetector(

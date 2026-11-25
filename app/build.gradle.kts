@@ -88,7 +88,7 @@ val wakeTrialLogicTest by tasks.registering(JavaExec::class) {
     configurations.named("debugUnitTestRuntimeClasspath"),
   )
 }
-// Exercise the real Android speaker with test-only platform doubles in a separate JVM.
+// Exercise real Android voice lifecycles with test-only platform doubles in a separate JVM.
 // These classes do not enter an Android source set or an APK.
 val compileSpeakerTests by tasks.registering(JavaCompile::class) {
   dependsOn("compileDebugKotlin")
@@ -112,11 +112,22 @@ val confirmationSpeakerTest by tasks.registering(JavaExec::class) {
     configurations.named("debugUnitTestRuntimeClasspath"),
   )
 }
+val commandAudioFocusTest by tasks.registering(JavaExec::class) {
+  group = "verification"
+  description = "Runs command-recording audio focus and interruption checks."
+  dependsOn(compileSpeakerTests)
+  mainClass.set("com.puneet.friday.voice.CommandAudioFocusTests")
+  classpath(
+    compileSpeakerTests.flatMap { it.destinationDirectory },
+    layout.buildDirectory.dir("intermediates/built_in_kotlinc/debug/compileDebugKotlin/classes"),
+    configurations.named("debugUnitTestRuntimeClasspath"),
+  )
+}
 tasks.matching { it.name == "test" || it.name == "check" }.configureEach {
-  dependsOn(actionLogicTest, voiceLogicTest, wakeTrialLogicTest, confirmationSpeakerTest)
+  dependsOn(actionLogicTest, voiceLogicTest, wakeTrialLogicTest, confirmationSpeakerTest, commandAudioFocusTest)
 }
 // There is no JUnit dependency; the JavaExec task above runs our JVM checks.
 tasks.withType<Test>().configureEach {
   enabled = false
-  dependsOn(actionLogicTest, voiceLogicTest, wakeTrialLogicTest, confirmationSpeakerTest)
+  dependsOn(actionLogicTest, voiceLogicTest, wakeTrialLogicTest, confirmationSpeakerTest, commandAudioFocusTest)
 }
