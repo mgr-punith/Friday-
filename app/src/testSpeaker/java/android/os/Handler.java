@@ -16,20 +16,31 @@ public final class Handler {
         return postAtTime(callback, null, SystemClock.now + delay);
     }
     public boolean postAtTime(Runnable callback, Object token, long at) {
-        TASKS.add(new Task(this, callback, token, at, sequence++));
+        synchronized (TASKS) {
+            TASKS.add(new Task(this, callback, token, at, sequence++));
+        }
         return true;
     }
     public void removeCallbacks(Runnable callback) {
-        TASKS.removeIf(task -> task.owner == this && task.callback == callback);
+        synchronized (TASKS) {
+            TASKS.removeIf(task -> task.owner == this && task.callback == callback);
+        }
     }
     public void removeCallbacksAndMessages(Object token) {
-        TASKS.removeIf(task -> task.owner == this && (token == null || task.token == token));
+        synchronized (TASKS) {
+            TASKS.removeIf(task -> task.owner == this && (token == null || task.token == token));
+        }
     }
     public static void idle() {
         int executed = 0;
-        while (!TASKS.isEmpty() && TASKS.peek().at <= SystemClock.now) {
+        while (true) {
+            Task task;
+            synchronized (TASKS) {
+                if (TASKS.isEmpty() || TASKS.peek().at > SystemClock.now) return;
+                task = TASKS.remove();
+            }
             if (++executed > 10_000) throw new AssertionError("Main queue did not settle");
-            TASKS.remove().callback.run();
+            task.callback.run();
         }
     }
     public static void advance(long milliseconds) {
@@ -42,5 +53,5 @@ public final class Handler {
         SystemClock.now = target;
         idle();
     }
-    public static int pendingTasks() { return TASKS.size(); }
+    public static int pendingTasks() { synchronized (TASKS) { return TASKS.size(); } }
 }
