@@ -8,7 +8,11 @@ data class RecordedCommand(
 )
 
 sealed interface VoiceCommandResponse {
-    data class Action(val action: PhoneAction, val serverDurationMs: Double?) : VoiceCommandResponse
+    data class Action(
+        val action: PhoneAction,
+        val serverDurationMs: Double?,
+        val confirmationSpeech: ConfirmationSpeech? = null,
+    ) : VoiceCommandResponse
     data class Answer(val answer: InformationAnswer) : VoiceCommandResponse
     data class AnswerSetup(val reason: AnswerSetupReason) : VoiceCommandResponse
     data object Unsupported : VoiceCommandResponse

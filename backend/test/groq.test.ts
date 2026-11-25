@@ -209,6 +209,24 @@ test("exact spoken music and torch commands skip classification while compound a
   }
 });
 
+test("clear vibrate-off speech restores normal mode after recognition without another model call", async () => {
+  for (const phrase of ["Turn off vibrate mode off", "Turn vibrate mode off", "Turn off silent mode", "Unmute my phone"]) {
+    let count = 0;
+    const provider = new GroqProvider(CONFIG, async url => {
+      count++;
+      return String(url).endsWith("/transcriptions") ? Response.json({ ...TRANSCRIPT, text: phrase }) : tool("unclear_command", "{}");
+    }, new Runtime());
+    const result = await provider.select({ kind: "audio", bytes: createPcmWav(), mimeType: "audio/wav", actionVersion: 5 }, NOW);
+    assert.deepEqual(parseFunctionSelection(result.selection, 5), { type: "action", action: "set_ringer_mode", args: { mode: "normal" } });
+    assert.equal(count, 1);
+  }
+  const provider = new GroqProvider(CONFIG, async () => tool("unsupported", "{}"), new Runtime());
+  for (const text of ["Don't turn off vibrate mode", "Turn off vibrate mode and call Mom", "If I ask turn off vibrate mode",
+    "Turn off vibrate mode on", "What happens if I turn off vibrate mode?"]) {
+    assert.equal((await provider.select({ kind: "text", text, actionVersion: 5 }, NOW)).selection.name, "unsupported", text);
+  }
+});
+
 test("Groq keeps explicit media controls within the negotiated contract", async () => {
   const provider = new GroqProvider(CONFIG, async () => tool("unsupported", "{}"), new Runtime());
   const select = async (text: string, actionVersion: 4 | 5) =>
@@ -238,9 +256,30 @@ test("repairs the reported tool_use_failed JSON error once without retranscribin
   assert.equal(bodies.length, 2);
   assert.equal(bodies[0]?.max_completion_tokens, 512);
   assert.equal(bodies[1]?.max_completion_tokens, 1_024);
-  assert.deepEqual(bodies[1]?.messages, bodies[0]?.messages);
+  assert.deepEqual(bodies[1]?.messages[1], bodies[0]?.messages[1], "Repair keeps the original command");
   assert.deepEqual(runtime.delays, [200]);
   assert.deepEqual(result.selection, { name: "set_timer", args: { seconds: 120 } });
+});
+
+test("an undeclared json tool failure retries with explicit allowed names and no untrusted error text", async () => {
+  const bodies: Record<string, any>[] = [];
+  let transcriptions = 0;
+  const provider = new GroqProvider(CONFIG, async (url, init) => {
+    if (String(url).endsWith("/transcriptions")) { transcriptions++; return Response.json(TRANSCRIPT); }
+    const body = JSON.parse(String(init?.body)); bodies.push(body);
+    if (bodies.length === 1) return Response.json({ error: {
+      message: "Tool call validation failed: attempted to call tool 'json' which was not in request.tools. private error detail",
+      type: "invalid_request_error", code: "tool_use_failed", failed_generation: "private model output"
+    } }, { status: 400 });
+    return tool();
+  }, new Runtime());
+  const result = await provider.select({ kind: "audio", bytes: createPcmWav(), mimeType: "audio/wav" }, NOW);
+  const instructions = bodies[1]?.messages[0].content;
+  assert.match(instructions, /Never call json/);
+  assert.match(instructions, /declared function name:.*set_timer/);
+  assert.equal(instructions.includes("private"), false);
+  assert.deepEqual(result.selection, { name: "set_timer", args: { seconds: 120 } });
+  assert.equal(transcriptions, 1); assert.equal(bodies.length, 2);
 });
 
 test("repeated tool_use_failed returns one safe error instead of using failed_generation", async () => {

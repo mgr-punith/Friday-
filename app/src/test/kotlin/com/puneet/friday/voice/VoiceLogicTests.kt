@@ -43,6 +43,30 @@ object VoiceLogicTests {
         }
 
         val flashlight = parsedAction("flashlight", mapOf("on" to false))
+        val confirmationFields = mapOf(
+            "text" to "Vibrate on", "speechId" to "123e4567-e89b-42d3-a456-426614174000",
+            "issuedAt" to 1_795_000_000L, "token" to "b".repeat(43),
+        )
+        val vibrate = PhoneAction.SetRingerMode(RingerMode.VIBRATE)
+        expect(ConfirmationSpeechPayload.parse(confirmationFields, vibrate)?.text == "Vibrate on",
+            "Vibrate success can use the signed short cloud confirmation")
+        expect(ConfirmationSpeechPayload.parse(confirmationFields, PhoneAction.SetRingerMode(RingerMode.NORMAL)) == null,
+            "A confirmation for another action cannot speak")
+        expect(ConfirmationSpeechPayload.parse(confirmationFields, PhoneAction.CallContact("Mom")) == null,
+            "Contact names and choices stay on the phone")
+        expect(ConfirmationSpeechPayload.parse(confirmationFields + ("text" to "Went to home screen"),
+            PhoneAction.CloseApp())?.text == "Went to home screen", "Home confirmations describe the Android action that happened")
+        for (invalid in listOf(
+            confirmationFields + ("text" to "Calling Mom"), confirmationFields + ("token" to "short"),
+            confirmationFields + ("issuedAt" to 1.5), confirmationFields + ("issuedAt" to -1),
+            confirmationFields + ("speechId" to "invalid"), confirmationFields + ("extra" to true),
+        )) expect(ConfirmationSpeechPayload.parse(invalid, vibrate) == null, "Malformed cloud confirmations use device fallback")
+        val spokenAction = VoiceResponseParser.parseFields("action", "set_ringer_mode", mapOf("mode" to "vibrate"),
+            confirmationSpeech = confirmationFields) as VoiceCommandResponse.Action
+        expect(spokenAction.confirmationSpeech?.text == "Vibrate on", "Command parsing keeps the optional speech capability")
+        expect((VoiceResponseParser.parseFields("action", "flashlight", mapOf("on" to true),
+            confirmationSpeech = confirmationFields) as VoiceCommandResponse.Action).confirmationSpeech == null,
+            "Wrong speech metadata cannot change or block a valid phone action")
         val volume = parsedAction("set_volume", mapOf("stream" to "media", "percent" to 50))
         val launch = parsedAction("open_app", mapOf("name" to "Clock"))
         expect(parsedAction("open_music", emptyMap()).action == PhoneAction.OpenMusic, "Find installed music apps locally")
@@ -80,6 +104,9 @@ object VoiceLogicTests {
         rejects("open_settings", mapOf("setting" to "airplane_mode", "intent" to "android.settings.SETTINGS"))
         val steps = listOf(flashlight, volume, launch)
         val batch = VoiceResponseParser.parseSequence(steps, null) as VoiceCommandResponse.Action
+        val batchSpeech = confirmationFields + ("text" to "Flashlight off. Media volume set. Opening app")
+        expect((VoiceResponseParser.parseSequence(steps, null, batchSpeech) as VoiceCommandResponse.Action)
+            .confirmationSpeech?.text == "Flashlight off. Media volume set. Opening app", "Sequence speech keeps each short phrase in order")
         expect(batch.action == PhoneAction.Sequence(steps.map { it.action }), "A sequence keeps the requested order")
         expect(VoiceResponseParser.parseSequence(listOf(launch, flashlight), null) is VoiceCommandResponse.Error,
             "An app launch cannot run ahead of a remaining action")

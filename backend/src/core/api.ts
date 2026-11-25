@@ -23,6 +23,7 @@ import { ANSWER_SETUP_TOOL, parseReport, signAnswer, validateAnswer, type Answer
 import { safeAiUsage } from "./ai-usage";
 import { createAnswerContinuation, readAnswerContinuation } from "./answer-continuation";
 import { readSpeechRequest, speechToken, type SpeechServices } from "./speech";
+import { readConfirmationSpeech, signConfirmation } from "./confirmation-speech";
 
 const MAX_AUDIO_BYTES = 1_000_000;
 const MAX_TEXT_LENGTH = 500;
@@ -213,9 +214,13 @@ async function handleCommand(
     }
     if (answerContext) return commandError(503, "busy");
     const response = parseFunctionSelection(result.selection, actionVersion);
+    const confirmationSpeech = dependencies.speech?.provider.clientVersion === "elevenlabs-v1" &&
+      header(event, "x-friday-speech") === "elevenlabs-v1" && header(event, "x-friday-confirmations") === "1"
+      ? signConfirmation(response, installId, secrets.jwtSigningKey, dependencies.clock.now()) : null;
+    const spokenResponse = confirmationSpeech ? { ...response, confirmationSpeech } : response;
     return response.type === "error"
       ? commandError(400, response.reason, result.durationMs, result.timingMetric, result.stages)
-      : commandSuccess(response, result.durationMs, result.timingMetric, result.stages);
+      : commandSuccess(spokenResponse, result.durationMs, result.timingMetric, result.stages);
   } catch (error) {
     if (error instanceof AssistantProviderError) {
       if (error.failure?.usage) dependencies.logger.usage?.(safeAiUsage(error.failure.usage));
@@ -232,7 +237,7 @@ async function handleCommand(
 }
 
 async function handleSpeech(event: FunctionUrlEvent, dependencies: ApiDependencies): Promise<FunctionUrlResponse> {
-  if (!dependencies.speech || !dependencies.answers) return json(404, { error: "not_found" });
+  if (!dependencies.speech) return json(404, { error: "not_found" });
   try {
     const secrets = await dependencies.secrets.getSecrets();
     const token = bearerToken(header(event, "authorization"));
@@ -242,10 +247,16 @@ async function handleSpeech(event: FunctionUrlEvent, dependencies: ApiDependenci
     if (!identity) return json(401, { error: "unauthorized" });
     if (contentType(event) !== "application/json" || header(event, "x-friday-speech") !== dependencies.speech.provider.clientVersion) return json(400, { error: "bad_request" });
     const at = dependencies.clock.now();
-    const answer = readSpeechRequest(parseJsonBody(event), identity, secrets.jwtSigningKey, at, dependencies.speech.provider.clientVersion);
-    if (!answer) return json(400, { error: "bad_request" });
-    if (!await dependencies.speech.usage.reserve(identity, answer.answerId, [...answer.text].length, at)) return json(429, { error: "busy" });
-    const audio = await dependencies.speech.provider.synthesize(answer.text);
+    const body = parseJsonBody(event);
+    const confirmation = header(event, "x-friday-confirmations") === "1"
+      ? readConfirmationSpeech(body, identity, secrets.jwtSigningKey, at, dependencies.speech.provider.clientVersion) : null;
+    const answer = dependencies.answers
+      ? readSpeechRequest(body, identity, secrets.jwtSigningKey, at, dependencies.speech.provider.clientVersion) : null;
+    const text = confirmation?.text ?? answer?.text;
+    const speechId = confirmation?.speechId ?? answer?.answerId;
+    if (!text || !speechId) return json(400, { error: "bad_request" });
+    if (!await dependencies.speech.usage.reserve(identity, speechId, [...text].length, at)) return json(429, { error: "busy" });
+    const audio = await dependencies.speech.provider.synthesize(text);
     return { statusCode: 200, headers: { ...baseHeaders(), "content-type": "audio/wav" },
       body: Buffer.from(audio).toString("base64"), isBase64Encoded: true };
   } catch {

@@ -38,6 +38,7 @@ import com.puneet.friday.auth.SignInActivity
 import com.puneet.friday.auth.SignInRequired
 import com.puneet.friday.voice.CommandResult
 import com.puneet.friday.voice.ConfirmationSpeaker
+import com.puneet.friday.voice.ConfirmationSpeech
 import com.puneet.friday.voice.CaptureResult
 import com.puneet.friday.voice.FridayBackendClient
 import com.puneet.friday.voice.PcmProcessor
@@ -112,6 +113,7 @@ open class MainActivity : Activity() {
     private var resultDismissal: Runnable? = null
     private var resultInteracted = false
     private var pendingSequence: PendingSequence? = null
+    private var pendingConfirmationSpeech: ConfirmationSpeech? = null
 
     private class PendingSequence(val request: Int, val steps: List<PhoneAction>) {
         val completed = mutableListOf<String>()
@@ -634,6 +636,7 @@ open class MainActivity : Activity() {
                 surface.showRequest(ActionPresentation.describe(response.action))
                 showVoiceStatus("Preparing action")
                 val sequence = response.action as? PhoneAction.Sequence
+                pendingConfirmationSpeech = response.confirmationSpeech
                 pendingSequence = sequence?.let { PendingSequence(request, it.steps) }
                 prepareVoiceAction(request, sequence?.steps?.first() ?: response.action)
             }
@@ -709,6 +712,8 @@ open class MainActivity : Activity() {
         showCompletion(message, "Settings opened", CompletionPolicy.spokenHandoff(message))
 
     private fun showCompletion(message: String, status: String, spoken: String?) {
+        val cloudSpeech = pendingConfirmationSpeech.takeIf { AnswerConsent.isAllowed(this) }
+        pendingConfirmationSpeech = null
         DebugTools.cancelErrorRecovery(this)
         unlockRequired = false
         state = VoiceState.IDLE
@@ -730,12 +735,15 @@ open class MainActivity : Activity() {
         }
         orb.setState(AssistantOrbView.State.SUCCESS)
         resultInteracted = false
-        if (spoken != null) confirmationSpeaker.speak(spoken)
+        if (cloudSpeech != null) confirmationSpeaker.speakCloud(cloudSpeech.text) { cancelled ->
+            backend.fetchConfirmationSpeech(cloudSpeech, cancelled)
+        } else if (spoken != null) confirmationSpeaker.speak(spoken)
         releaseLauncherWakeBlock()
-        scheduleResultDismissal(speaking = false, waitingForSpeech = spoken != null && speechAvailable)
+        scheduleResultDismissal(speaking = false, waitingForSpeech = cloudSpeech != null || spoken != null && speechAvailable)
     }
 
     private fun showError(message: String) {
+        pendingConfirmationSpeech = null
         cancelResultDismissal()
         answerSetupOutcome = null
         unlockRequired = false
@@ -823,7 +831,7 @@ open class MainActivity : Activity() {
         // Leave time to read if the optional speech engine never starts.
         scheduleAnswerDismissal(answerReadingDelay() + 12_000)
         if (answer.speechToken == null) confirmationSpeaker.speak(answer.text)
-        else confirmationSpeaker.speakAnswer(answer.text) { cancelled -> backend.fetchSpeech(answer, cancelled) }
+        else confirmationSpeaker.speakCloud(answer.text) { cancelled -> backend.fetchSpeech(answer, cancelled) }
     }
 
     private fun closeAnswer() {
@@ -938,6 +946,7 @@ open class MainActivity : Activity() {
     }
 
     private fun showUnlockRequired(speak: Boolean = true) {
+        pendingConfirmationSpeech = null
         answerSetupOutcome = null
         DebugTools.cancelErrorRecovery(this)
         state = VoiceState.IDLE
@@ -997,6 +1006,7 @@ open class MainActivity : Activity() {
         answerSetupOutcome = null
         clearAnswer()
         pendingSequence = null
+        pendingConfirmationSpeech = null
         orbDemoRunnable?.let(orb::removeCallbacks)
         orbDemoRunnable = null
         cancelResultDismissal()
@@ -1016,6 +1026,7 @@ open class MainActivity : Activity() {
     }
 
     private fun resetIdle() {
+        pendingConfirmationSpeech = null
         answerSetupOutcome = null
         releaseLauncherWakeBlock()
         unlockRequired = false
