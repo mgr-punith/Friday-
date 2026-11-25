@@ -186,7 +186,7 @@ test("v3 describes Settings as a user handoff with allowlisted arguments", async
   });
 });
 
-test("exact spoken music and torch commands survive an unsupported model response", async () => {
+test("exact spoken music and torch commands skip classification while compound and negated requests do not", async () => {
   const cases = [
     ["Turn on the flash light.", { name: "flashlight", args: { on: true } }],
     ["Could you switch my torch off, please?", { name: "flashlight", args: { on: false } }],
@@ -205,7 +205,7 @@ test("exact spoken music and torch commands survive an unsupported model respons
     }, new Runtime());
     const result = await provider.select({ kind: "audio", bytes: createPcmWav(), mimeType: "audio/wav", actionVersion: 2 }, NOW);
     assert.deepEqual(result.selection, expected);
-    assert.equal(count, 2);
+    assert.equal(count, expected.name === "unsupported" ? 2 : 1);
   }
 });
 

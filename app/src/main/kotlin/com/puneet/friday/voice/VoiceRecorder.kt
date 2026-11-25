@@ -10,7 +10,11 @@ import android.os.Process
 import com.puneet.friday.DebugTools
 import kotlin.math.max
 
-class VoiceRecorder(private val context: Context, private val afterWake: Boolean = false) {
+class VoiceRecorder(
+    private val context: Context,
+    private val afterWake: Boolean = false,
+    private val answerReply: Boolean = false,
+) {
     @Volatile private var stopRequested = false
     @Volatile private var activeRecorder: AudioRecord? = null
 
@@ -91,7 +95,7 @@ class VoiceRecorder(private val context: Context, private val afterWake: Boolean
                     readySent = true
                     onReady()
                 }
-                if (shouldStop && AudioCapturePolicy.canStopAfterSilence(afterWake, count)) break
+                if (shouldStop && AudioCapturePolicy.canStopAfterSilence(afterWake, count, answerReply)) break
             }
         } finally {
             activeRecorder = null

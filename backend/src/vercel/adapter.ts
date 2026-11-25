@@ -19,7 +19,7 @@ export function createVercelHandler(api: FridayApi) {
 async function toFunctionEvent(request: Request): Promise<FunctionUrlEvent> {
   const url = new URL(request.url);
   const route = url.searchParams.get("fridayRoute");
-  const rawPath = route?.startsWith("auth/") && /^[a-z/]+$/.test(route) ? `/v1/${route}` : route === "register" || route === "warm" || route === "command"
+  const rawPath = route?.startsWith("auth/") && /^[a-z/]+$/.test(route) ? `/v1/${route}` : route === "register" || route === "warm" || route === "command" || route === "answers/report"
     ? `/v1/${route}`
     : url.pathname;
   const headers = Object.fromEntries(request.headers.entries());

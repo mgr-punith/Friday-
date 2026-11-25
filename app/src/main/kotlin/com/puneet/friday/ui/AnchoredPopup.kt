@@ -30,7 +30,14 @@ class AnchoredPopup(private val activity: Activity) {
         show(anchor, text, withPointer = true)
     }
 
-    fun show(anchor: View, content: View, widthDp: Int = 280, withPointer: Boolean = false) {
+    fun show(
+        anchor: View,
+        content: View,
+        widthDp: Int = 280,
+        withPointer: Boolean = false,
+        label: String = if (withPointer) "Help" else "About Friday",
+        onDismiss: () -> Unit = {},
+    ) {
         dismiss()
         if (!anchor.isAttachedToWindow || !anchor.isShown || activity.isFinishing || activity.isDestroyed) return
         val visible = Rect()
@@ -44,7 +51,7 @@ class AnchoredPopup(private val activity: Activity) {
         val body = BubbleFrame(activity, withPointer).apply {
             isFocusableInTouchMode = true
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
-            contentDescription = if (withPointer) "Help" else "About Friday"
+            contentDescription = label
         }
         val scroll = ScrollView(activity).apply {
             overScrollMode = ScrollView.OVER_SCROLL_IF_CONTENT_SCROLLS
@@ -71,6 +78,7 @@ class AnchoredPopup(private val activity: Activity) {
                 if (anchor.isAttachedToWindow && anchor.isShown) {
                     anchor.requestFocusFromTouch()
                 }
+                onDismiss()
             }
         }
         body.setOnKeyListener { _, key, event ->

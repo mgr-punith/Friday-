@@ -49,7 +49,8 @@ export interface RedisEvalSender {
 export class RedisUsageLimitStore implements UsageLimitStore {
   constructor(
     private readonly client: RedisEvalSender,
-    private readonly limits: UsageLimits
+    private readonly limits: UsageLimits,
+    private readonly keyPrefix = KEY_PREFIX
   ) {}
 
   async consumeRegistration(identityHash: string, at: Date): Promise<boolean> {
@@ -79,9 +80,9 @@ export class RedisUsageLimitStore implements UsageLimitStore {
       CONSUME_COMMAND_SCRIPT,
       [
         `${KEY_PREFIX}:install:${installId}:blocked`,
-        `${KEY_PREFIX}:command:install:${installId}:minute:${minute}`,
-        `${KEY_PREFIX}:command:install:${installId}:day:${day}`,
-        `${KEY_PREFIX}:command:global:day:${day}`
+        `${this.keyPrefix}:command:install:${installId}:minute:${minute}`,
+        `${this.keyPrefix}:command:install:${installId}:day:${day}`,
+        `${this.keyPrefix}:command:global:day:${day}`
       ],
       [
         this.limits.commandPerInstallMinute,

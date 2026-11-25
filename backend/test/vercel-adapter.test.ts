@@ -77,3 +77,13 @@ test("rejects route traversal in the auth rewrite parameter", async () => {
   await createVercelHandler(api)(new Request("https://friday.example/api/index?fridayRoute=auth/../command"));
   assert.equal(api.event?.rawPath, "/api/index");
 });
+
+test("answer reports reach the shared router after Vercel rewriting", async () => {
+  const api = new RecordingApi();
+  api.response = { statusCode: 204 };
+  const response = await createVercelHandler(api)(new Request("https://friday.example/api/index?fridayRoute=answers/report", {
+    method: "POST", headers: { "content-type": "application/json" }, body: "{}"
+  }));
+  assert.equal(api.event?.rawPath, "/v1/answers/report");
+  assert.equal(response.status, 204);
+});

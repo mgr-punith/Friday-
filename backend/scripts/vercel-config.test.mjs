@@ -15,7 +15,7 @@ function validConfig() {
     regions: ["bom1"],
     functions: {
       "api/index.mjs": {
-        maxDuration: 15,
+        maxDuration: 30,
         supportsCancellation: true
       }
     },
@@ -23,7 +23,8 @@ function validConfig() {
       { source: "/v1/register", destination: "/api/index?fridayRoute=register" },
       { source: "/v1/warm", destination: "/api/index?fridayRoute=warm" },
       { source: "/v1/command", destination: "/api/index?fridayRoute=command" },
-      { source: "/v1/auth/:path*", destination: "/api/index?fridayRoute=auth/:path*" }
+      { source: "/v1/auth/:path*", destination: "/api/index?fridayRoute=auth/:path*" },
+      { source: "/v1/answers/report", destination: "/api/index?fridayRoute=answers/report" }
     ]
   };
 }

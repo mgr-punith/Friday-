@@ -1,11 +1,13 @@
 import type { ActionProtocolVersion } from "./capabilities";
+import type { AnswerContent } from "./answers";
+import type { AnswerContext } from "./answer-continuation";
 
 export type AudioMimeType = "audio/wav" | "audio/mp4";
 
 export type CommandInput = (
   | { readonly kind: "audio"; readonly bytes: Uint8Array; readonly mimeType: AudioMimeType }
   | { readonly kind: "text"; readonly text: string }
-) & { readonly actionVersion?: ActionProtocolVersion };
+) & { readonly actionVersion?: ActionProtocolVersion; readonly supportsAnswers?: boolean; readonly answerContext?: AnswerContext };
 
 export interface FunctionSelection {
   readonly name: string;
@@ -14,9 +16,13 @@ export interface FunctionSelection {
 
 export interface AssistantProviderResult {
   readonly selection: FunctionSelection;
+  readonly answer?: AnswerContent;
+  /** In-memory original question or latest reply, used only to issue a clarification continuation. Never log. */
+  readonly question?: string;
   readonly durationMs: number;
   readonly timingMetric?: "gemini" | "groq";
   readonly stages?: Readonly<Record<string, number>>;
+  readonly usage?: Readonly<Record<string, { readonly inputTokens: number; readonly outputTokens: number; readonly cachedTokens: number }>>;
 }
 
 export type AssistantProviderErrorCode = "busy" | "timeout";
@@ -26,6 +32,7 @@ export interface ProviderFailure {
   readonly httpStatus?: number;
   readonly retryAfterSeconds?: number;
   readonly timingMetric?: "gemini" | "groq";
+  readonly usage?: AssistantProviderResult["usage"];
 }
 
 export class AssistantProviderError extends Error {
@@ -40,7 +47,7 @@ export class AssistantProviderError extends Error {
 }
 
 export interface AssistantProvider {
-  select(input: CommandInput, now: string): Promise<AssistantProviderResult>;
+  select(input: CommandInput, now: string, context?: { authorizeAnswer(): Promise<boolean> }): Promise<AssistantProviderResult>;
 }
 
 export interface SecretBundle {
@@ -63,4 +70,5 @@ export interface Clock {
 
 export interface SafeLogger {
   error(code: string, requestId?: string): void;
+  usage?(value: NonNullable<AssistantProviderResult["usage"]>): void;
 }

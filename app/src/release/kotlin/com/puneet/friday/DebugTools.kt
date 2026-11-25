@@ -34,5 +34,5 @@ internal object DebugTools {
     fun beginSpeechPlayback(speaker: Any) = Unit
     fun endSpeechPlayback(speaker: Any) = Unit
     fun permissionSummary() = "Friday records after you tap the microphone. Background listening is off."
-    fun microphoneDisclosure() = "Friday records one short command after you tap the microphone. It sends that audio to Friday’s Vercel backend and Groq to transcribe the command and choose a phone action. Friday does not store audio or transcripts. Background listening is off."
+    fun microphoneDisclosure() = "Friday records a short request after you tap the microphone. It sends that audio to its Vercel backend and Groq to understand phone commands and answer questions. For current information, Groq sends search queries to Exa. Friday does not store audio or transcripts. Background listening is off."
 }

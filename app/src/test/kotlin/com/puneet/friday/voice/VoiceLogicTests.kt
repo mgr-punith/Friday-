@@ -85,6 +85,48 @@ object VoiceLogicTests {
         rejects("flashlight", mapOf("on" to "false"))
         rejects("set_volume", mapOf("stream" to "media", "percent" to 101))
 
+        val answerFields: Map<String, Any?> = mapOf(
+            "type" to "answer", "kind" to "knowledge", "text" to "Sachin Tendulkar is a former Indian cricketer.",
+            "sources" to emptyList<Any>(), "answerId" to "123e4567-e89b-42d3-a456-426614174000",
+            "issuedAt" to 1_795_000_000L, "reportToken" to "a".repeat(43),
+        )
+        val answer = AnswerPayload.parse(answerFields)
+        expect(answer != null && answer.sources.isEmpty(), "A short knowledge answer parses independently of phone actions")
+        expect(VoiceCommandResponse.Answer(answer!!).uiOutcome() == VoiceUiOutcome.ANSWER, "An answer has its own UI outcome")
+        expect(VoiceResponseParser.parseFields("action", "answer_question", answerFields) is VoiceCommandResponse.Error,
+            "A question answer cannot execute as a phone action")
+        expect(VoiceResponseParser.parseSequence(listOf(flashlight, VoiceCommandResponse.Answer(answer)), null) is VoiceCommandResponse.Error,
+            "An answer cannot run inside an action sequence")
+        for (invalid in listOf(
+            answerFields + ("text" to "a".repeat(601)), answerFields + ("text" to "word ".repeat(81)),
+            answerFields + ("text" to "line\nbreak"), answerFields + ("text" to " "),
+            answerFields + ("kind" to "action"), answerFields + ("kind" to "information"),
+            answerFields + ("issuedAt" to -1), answerFields + ("issuedAt" to 1.5),
+            answerFields + ("reportToken" to "short"), answerFields + ("action" to "call_number"),
+        )) expect(AnswerPayload.parse(invalid) == null, "Malformed answers cannot reach the popup")
+        val sourced = answerFields + mapOf("kind" to "information", "sources" to listOf(
+            mapOf("title" to "Match report", "url" to "https://example.com/report"),
+        ))
+        expect(AnswerPayload.parse(sourced)?.sources?.size == 1, "A searched answer has a source")
+        expect(AnswerPayload.parse(sourced + ("kind" to "knowledge")) == null, "Memory answers cannot claim web sources")
+        val clarification = answerFields + mapOf("kind" to "clarification", "text" to "Which Gandhi do you mean?",
+            "continuation" to "a".repeat(80))
+        expect(AnswerPayload.parse(clarification)?.continuation == "a".repeat(80), "A clarification carries an opaque continuation")
+        for (invalid in listOf(
+            clarification + ("continuation" to "x".repeat(4_097)), clarification + ("continuation" to "too-short"),
+            clarification + ("continuation" to "not a valid token ".repeat(8)), clarification + ("continuation" to null),
+            clarification + ("kind" to "knowledge"), clarification + ("kind" to "unavailable"),
+        )) expect(AnswerPayload.parse(invalid) == null, "Only bounded clarification continuations can open reply capture")
+        for (url in listOf("http://example.com", "intent://example.com", "file:///data/local", "https://localhost",
+            "https://127.0.0.1", "https://[::1]/", "https://example.local", "https://example.internal",
+            "https://user:pass@example.com", "https://example.com:444/", "https://example.com/\n", "https://example.com\\test")) {
+            expect(!AnswerPayload.isPublicSource(url), "Unsafe source links are rejected")
+        }
+        for (url in listOf("https://localhost./", "https://service.local./", "https://0x7f.0.0.1/")) {
+            expect(!AnswerPayload.isPublicSource(url), "Alternate local host forms are rejected")
+        }
+        expect(AnswerPayload.isPublicSource("https://example.com/report?a=1"), "Public HTTPS sources remain usable")
+
         val tabs = TabNavigation()
         expect(tabs.current == Destination.HOME, "Main navigation starts on Home")
         expect(!tabs.select(Destination.HOME), "Reselecting Home does not reload its view")
@@ -219,6 +261,12 @@ object VoiceLogicTests {
             "Wake capture can stop on silence after two seconds")
         expect(AudioCapturePolicy.canStopAfterSilence(afterWake = false, sampleCount = 1),
             "Tap capture keeps its current silence stop")
+        expect(!AudioCapturePolicy.canStopAfterSilence(afterWake = false, sampleCount = 79_999, answerReply = true),
+            "Reply capture leaves five seconds to respond before a silence stop")
+        expect(AudioCapturePolicy.canStopAfterSilence(afterWake = false, sampleCount = 80_000, answerReply = true),
+            "Reply capture can finish on silence after five seconds")
+        expect(!AudioCapturePolicy.canStopAfterSilence(afterWake = true, sampleCount = 32_000, answerReply = true),
+            "A clarification after a wake still uses the reply listening window")
         expect(
             AudioCapturePolicy.reviewedSampleCount(24_000, manualStop = true) == 18_240,
             "Manual stop review removes the final tap window",
