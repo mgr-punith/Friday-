@@ -86,6 +86,8 @@ class FridayBackendClient(
             // Production servers that predate media controls still understand the v4 base contract.
             setRequestProperty("x-friday-actions", PhoneCapabilityRegistry.BASE_ACTION_PROTOCOL_VERSION.toString())
             setRequestProperty("x-friday-media-controls", "1")
+            // Capability only: it allows a setup hint, never an answer or search without consent.
+            setRequestProperty("x-friday-answer-setup", "1")
             if (AnswerConsent.isAllowed(appContext)) setRequestProperty("x-friday-answers", "2")
             if (answerContext != null) setRequestProperty("x-friday-answer-context", answerContext)
             setFixedLengthStreamingMode(wavBytes.size)

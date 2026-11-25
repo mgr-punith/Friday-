@@ -220,6 +220,27 @@ test("old clients, disabled servers and missing quota context cannot select answ
   }
 });
 
+test("answer setup uses the existing selection without an answer or search", async () => {
+  for (const reason of ["answers_disabled", "answers_unavailable"] as const) {
+    let calls = 0;
+    const provider = new GroqProvider(CONFIG, async (_url, init) => {
+      calls++;
+      const body = JSON.parse(String(init?.body));
+      assert.equal(body.tools.some((t: any) => t.function?.name === "answer_question"), false);
+      assert.equal(body.tools.some((t: any) => t.function?.name === "short_answers_required"), true);
+      assert.match(body.messages[0].content, /Do not answer or search/);
+      return tool({}, "short_answers_required");
+    }, new Runtime());
+    const result = await provider.select({ ...INPUT, supportsAnswers: false, answerSetup: reason }, NOW,
+      { async authorizeAnswer() { throw new Error("unexpected_search"); } });
+    assert.equal(result.selection.name, "short_answers_required");
+    assert.equal(result.answer, undefined);
+    assert.equal(calls, 1);
+    await provider.select({ ...INPUT, text: "Pause music", supportsAnswers: false, answerSetup: reason }, NOW);
+    assert.equal(calls, 1);
+  }
+});
+
 test("exact commands skip the selector but never bypass action version, negation or whole-request checks", async () => {
   let calls = 0;
   const provider = new GroqProvider(CONFIG, async () => { calls++; return tool({}, "unsupported"); }, new Runtime());

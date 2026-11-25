@@ -18,7 +18,8 @@ import {
 } from "./jwt";
 import { isFridayWav } from "./wav";
 import type { AccountGateway } from "../auth/api";
-import { parseReport, signAnswer, validateAnswer, type AnswerReportStore, type AnswerResponse } from "./answers";
+import { ANSWER_SETUP_TOOL, parseReport, signAnswer, validateAnswer, type AnswerReportStore,
+  type AnswerResponse, type AnswerSetupResponse } from "./answers";
 import { safeAiUsage } from "./ai-usage";
 import { createAnswerContinuation, readAnswerContinuation } from "./answer-continuation";
 
@@ -156,6 +157,8 @@ async function handleCommand(
   if (!input || !now || !isOffsetDateTime(now)) return commandError(400, "bad_audio");
   const answersVersion = header(event, "x-friday-answers");
   const supportsAnswers = ["1", "2"].includes(answersVersion ?? "") && dependencies.answers !== undefined;
+  const answerSetup = header(event, "x-friday-answer-setup") === "1" && !supportsAnswers
+    ? (["1", "2"].includes(answersVersion ?? "") ? "answers_unavailable" : "answers_disabled") : undefined;
   const continuation = header(event, "x-friday-answer-context");
   const answerContext = continuation !== undefined && supportsAnswers && answersVersion === "2"
     ? readAnswerContinuation(continuation, installId, secrets.jwtSigningKey, dependencies.clock.now()) : null;
@@ -173,11 +176,17 @@ async function handleCommand(
     const actionVersion = actionProtocolVersion(header(event, "x-friday-actions"), header(event, "x-friday-media-controls"));
     const result = await dependencies.assistant.select(
       { ...input, ...(actionVersion === 1 ? {} : { actionVersion }), ...(supportsAnswers ? { supportsAnswers: true } : {}),
+        ...(answerSetup ? { answerSetup } : {}),
         ...(answerContext ? { answerContext } : {}) },
       now,
       ...(supportsAnswers ? [{ authorizeAnswer: () => dependencies.answers!.usage.consumeCommand(installId, dependencies.clock.now()) }] : []),
     );
     if (result.usage) dependencies.logger.usage?.(safeAiUsage(result.usage));
+    if (result.selection.name === ANSWER_SETUP_TOOL.name) {
+      if (!answerSetup || result.answer !== undefined || !isRecord(result.selection.args) ||
+        !hasOnlyKeys(result.selection.args, [])) return commandError(503, "busy");
+      return commandSuccess({ type: "unsupported", reason: answerSetup }, result.durationMs, result.timingMetric, result.stages);
+    }
     if (result.answer !== undefined) {
       let answer = validateAnswer(result.answer);
       if (!supportsAnswers || !answer || result.selection.name !== "answer_question") return commandError(503, "busy");
@@ -335,7 +344,7 @@ function requestId(event: FunctionUrlEvent): string | undefined {
   return event.requestContext?.requestId;
 }
 
-function commandSuccess(response: CommandResponse | AnswerResponse, durationMs: number, metric?: "gemini" | "groq",
+function commandSuccess(response: CommandResponse | AnswerResponse | AnswerSetupResponse, durationMs: number, metric?: "gemini" | "groq",
   stages?: Readonly<Record<string, number>>): FunctionUrlResponse {
   return json(200, response, serverTiming(durationMs, metric, stages));
 }

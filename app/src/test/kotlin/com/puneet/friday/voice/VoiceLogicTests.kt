@@ -511,6 +511,18 @@ object VoiceLogicTests {
         rejects("unknown", emptyMap())
         rejects("set_timer", null)
         expect(VoiceResponseParser.parseFields("unsupported") == VoiceCommandResponse.Unsupported, "Unsupported response parses")
+        val answersDisabled = VoiceResponseParser.parseFields("unsupported", reason = "answers_disabled")
+        expect(answersDisabled == VoiceCommandResponse.AnswerSetup(VoiceCommandResponse.AnswerSetupReason.DISABLED),
+            "A disabled answer points to client setup")
+        expect(answersDisabled.uiOutcome() == VoiceUiOutcome.ANSWERS_DISABLED, "A disabled answer has its own UI outcome")
+        val answersUnavailable = VoiceResponseParser.parseFields("unsupported", reason = "answers_unavailable")
+        expect(answersUnavailable.uiOutcome() == VoiceUiOutcome.ANSWERS_UNAVAILABLE, "Unavailable answers do not ask for new consent")
+        expect(VoiceResponseParser.parseFields("unsupported", reason = "unknown") is VoiceCommandResponse.Error,
+            "An unknown setup reason fails validation")
+        expect(VoiceResponseParser.parseSequence(listOf(flashlight, answersDisabled), null) is VoiceCommandResponse.Error,
+            "An answer setup hint cannot execute in an action sequence")
+        expect(VoiceFailureCopy.forOutcome(VoiceUiOutcome.ANSWERS_DISABLED) == "Turn on Short answers to ask questions.",
+            "Disabled answers explain how to enable them")
         expect(
             VoiceResponseParser.parseFields("error", reason = "timeout") ==
                 VoiceCommandResponse.Error(VoiceCommandResponse.Reason.TIMEOUT),

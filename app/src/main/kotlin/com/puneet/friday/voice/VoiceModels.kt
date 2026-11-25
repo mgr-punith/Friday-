@@ -10,6 +10,7 @@ data class RecordedCommand(
 sealed interface VoiceCommandResponse {
     data class Action(val action: PhoneAction, val serverDurationMs: Double?) : VoiceCommandResponse
     data class Answer(val answer: InformationAnswer) : VoiceCommandResponse
+    data class AnswerSetup(val reason: AnswerSetupReason) : VoiceCommandResponse
     data object Unsupported : VoiceCommandResponse
     data class Error(val reason: Reason) : VoiceCommandResponse
 
@@ -19,6 +20,8 @@ sealed interface VoiceCommandResponse {
         BAD_AUDIO,
         UNAUTHORIZED,
     }
+
+    enum class AnswerSetupReason { DISABLED, UNAVAILABLE }
 }
 
 data class CommandTimings(
@@ -34,6 +37,8 @@ data class CommandResult(
 enum class VoiceUiOutcome {
     ACTION,
     ANSWER,
+    ANSWERS_DISABLED,
+    ANSWERS_UNAVAILABLE,
     UNSUPPORTED,
     BUSY,
     TIMEOUT,
@@ -44,6 +49,10 @@ enum class VoiceUiOutcome {
 fun VoiceCommandResponse.uiOutcome(): VoiceUiOutcome = when (this) {
     is VoiceCommandResponse.Action -> VoiceUiOutcome.ACTION
     is VoiceCommandResponse.Answer -> VoiceUiOutcome.ANSWER
+    is VoiceCommandResponse.AnswerSetup -> when (reason) {
+        VoiceCommandResponse.AnswerSetupReason.DISABLED -> VoiceUiOutcome.ANSWERS_DISABLED
+        VoiceCommandResponse.AnswerSetupReason.UNAVAILABLE -> VoiceUiOutcome.ANSWERS_UNAVAILABLE
+    }
     VoiceCommandResponse.Unsupported -> VoiceUiOutcome.UNSUPPORTED
     is VoiceCommandResponse.Error -> when (reason) {
         VoiceCommandResponse.Reason.BUSY -> VoiceUiOutcome.BUSY
