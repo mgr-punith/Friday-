@@ -21,6 +21,7 @@ public final class ConfirmationSpeakerTests {
                 speaking -> { callbacks++; return Unit.INSTANCE; },
                 audio -> { callbacks++; return Unit.INSTANCE; },
                 available -> { callbacks++; return Unit.INSTANCE; },
+                () -> { callbacks++; completions++; return Unit.INSTANCE; },
                 () -> { callbacks++; completions++; return Unit.INSTANCE; });
         }
     }

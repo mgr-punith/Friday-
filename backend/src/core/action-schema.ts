@@ -7,14 +7,18 @@ import {
   type ActionProtocolVersion
 } from "./capabilities";
 
-export const SYSTEM_PROMPT =
+const COMMAND_CONTEXT =
   "You control an Android phone. The user speaks English. Pick exactly one function. " +
   "The speaker may use Indian English pronunciation and phrasing. Require a clear request, not a keyword mentioned in conversation. " +
-  "Interpret double and triple digit words in phone numbers. " +
-  "For audio, use unclear_command for silence, noise, music, or words you cannot understand. Never guess an action. " +
+  "Interpret double and triple digit words in phone numbers. ";
+const COMMAND_RULES =
   "Use unsupported only for a clear request outside the supported actions. Never answer questions. " +
   "For set_ringer_mode, copy the exact command words into utterance. Use set_timer for durations. " +
   "Use the supplied current phone time for clock times such as tomorrow.";
+
+export const SYSTEM_PROMPT = COMMAND_CONTEXT +
+  "For audio, use unclear_command for silence, noise, music, or words you cannot understand. Never guess an action. " + COMMAND_RULES;
+export const TRANSCRIPT_SYSTEM_PROMPT = COMMAND_CONTEXT + COMMAND_RULES;
 
 export const FUNCTION_DECLARATIONS = [
   {
@@ -213,7 +217,9 @@ export function actionInstructionsFor(version: ActionProtocolVersion): string {
   const settings = version >= 3
     ? " Use open_settings for its allowlisted settings. It opens Android Settings; the user completes the change."
     : "";
-  const music = version >= 4 ? " Use play_media for named music, including a title followed by a player name. Use open_music for generic music requests and open_app to open a named player." : "";
+  const music = version >= 4 ? " Use play_media for named songs, artists or albums, even if the name is unfamiliar or comes from another language in an English command. " +
+    "'Play Believer on YouTube' uses query='Believer', appName='YouTube'. 'Play Yo Yo Honey Singh' uses query='Yo Yo Honey Singh' without appName. " +
+    "Keep the spoken title and artist. Use open_music for generic music requests and open_app to open a named player." : "";
   const transport = version >= 5 ? " Use control_media for pause music, resume music, next track, and previous track. A transport command can only be the final action." : "";
   return " For several actions, use run_actions for the entire request in spoken order. If any step is unsupported or must leave Friday before a later step, return unsupported without picking a subset." + settings + music + transport;
 }

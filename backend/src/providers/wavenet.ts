@@ -1,6 +1,7 @@
 import { createPrivateKey, sign } from "node:crypto";
 import { isSpeechWav } from "../core/speech-audio";
 import type { FetchLike } from "./gemini";
+import { abortable, readSpeechBytes } from "./speech-http";
 
 export interface WaveNetConfig {
   readonly serviceAccountEmail: string;
@@ -12,6 +13,7 @@ export interface WaveNetConfig {
 
 /** Plain REST with cached OAuth credentials; text and generated audio stay in memory. */
 export class WaveNetProvider {
+  readonly clientVersion = "wavenet-v1";
   private token: { value: string; expiresAt: number } | undefined;
   private tokenRequest: Promise<string> | undefined;
   private readonly key;
@@ -86,36 +88,7 @@ export class WaveNetProvider {
 }
 
 async function readJson(response: Response, maximum: number, signal: AbortSignal): Promise<unknown> {
-  if (!response.body) throw new Error("speech_empty_response");
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let length = 0;
-  let complete = false;
-  try {
-    while (true) {
-      const next = await abortable(reader.read(), signal);
-      if (next.done) break;
-      length += next.value.byteLength;
-      if (length > maximum) throw new Error("speech_large_response");
-      chunks.push(next.value);
-    }
-    complete = true;
-  } finally {
-    if (!complete) void reader.cancel().catch(() => {});
-    reader.releaseLock();
-  }
-  signal.throwIfAborted();
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
-}
-function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const abort = () => reject(new Error("speech_timeout"));
-    if (signal.aborted) { operation.catch(() => {}); abort(); return; }
-    signal.addEventListener("abort", abort, { once: true });
-    operation.then(value => { signal.removeEventListener("abort", abort); resolve(value); }, error => {
-      signal.removeEventListener("abort", abort); reject(error);
-    });
-  });
+  return JSON.parse((await readSpeechBytes(response, maximum, signal)).toString("utf8"));
 }
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

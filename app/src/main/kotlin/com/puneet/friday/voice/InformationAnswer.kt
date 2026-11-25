@@ -12,6 +12,7 @@ data class InformationAnswer(
     val issuedAt: Long,
     val reportToken: String,
     val continuation: String? = null,
+    val speechToken: String? = null,
 )
 
 /** Validates the answer separately from executable phone actions. */
@@ -43,7 +44,12 @@ object AnswerPayload {
             if (kind != "clarification" || value.length !in 64..4_096 || !Regex("[A-Za-z0-9_-]+").matches(value)) return null
             value
         } else null
-        return InformationAnswer(kind, text.trim(), sources, id, at.toLong(), token, continuation)
+        val speechToken = if (fields.containsKey("speechToken")) {
+            val value = fields["speechToken"] as? String ?: return null
+            if (!Regex("[A-Za-z0-9_-]{43}").matches(value)) return null
+            value
+        } else null
+        return InformationAnswer(kind, text.trim(), sources, id, at.toLong(), token, continuation, speechToken)
     }
 
     fun isPublicSource(url: String): Boolean {
@@ -57,5 +63,5 @@ object AnswerPayload {
         } catch (_: Exception) { false }
     }
 
-    private val FIELDS = setOf("type", "kind", "text", "sources", "answerId", "issuedAt", "reportToken", "continuation")
+    private val FIELDS = setOf("type", "kind", "text", "sources", "answerId", "issuedAt", "reportToken", "continuation", "speechToken")
 }

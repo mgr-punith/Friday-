@@ -10,13 +10,13 @@ import { createPcmWav, MockAssistant, MockUsage, RecordingLogger, StaticClock, S
 
 const CONTENT = { kind: "knowledge" as const, text: "Sachin Tendulkar is a former Indian cricketer.", sources: [] };
 function request(answer = signAnswer(CONTENT, TEST_SECRETS.jwtSigningKey, TEST_NOW), identity = TEST_INSTALL_ID,
-  capability = speechToken(answer, identity, TEST_SECRETS.jwtSigningKey)): FunctionUrlEvent {
+  capability = speechToken(answer, identity, TEST_SECRETS.jwtSigningKey, "wavenet-v1")): FunctionUrlEvent {
   return { rawPath: "/v1/speech", requestContext: { http: { method: "POST" } }, headers: {
     authorization: "Bearer " + signInstallToken(identity, TEST_SECRETS.jwtSigningKey, TEST_NOW),
     "content-type": "application/json", "x-friday-speech": "wavenet-v1"
   }, body: JSON.stringify({ answer, speechToken: capability }) };
 }
-function harness(speechEnabled = true, accounts?: AccountGateway) {
+function harness(speechEnabled = true, accounts?: AccountGateway, clientVersion: "wavenet-v1" | "elevenlabs-v1" = "wavenet-v1") {
   const assistant = new MockAssistant();
   assistant.result = { selection: { name: "answer_question", args: {} }, answer: CONTENT, durationMs: 12 };
   const usage = new MockUsage(); const logger = new RecordingLogger();
@@ -29,7 +29,7 @@ function harness(speechEnabled = true, accounts?: AccountGateway) {
       usage: { async reserve(identity, answerId, characters) {
         if (failReserve) throw new Error("private store detail");
         reservations.push({ identity, answerId, characters }); return allowed;
-      } }, provider: { async synthesize(text) {
+      } }, provider: { clientVersion, async synthesize(text) {
         syntheses.push(text); if (failSpeech) throw new Error("private provider text and key"); return audio;
       } }
     } } : {}) });
@@ -39,17 +39,17 @@ function harness(speechEnabled = true, accounts?: AccountGateway) {
 
 test("signed answer speech capabilities bind text and issuance to the authenticated account", () => {
   const answer = signAnswer(CONTENT, TEST_SECRETS.jwtSigningKey, TEST_NOW);
-  const token = speechToken(answer, TEST_INSTALL_ID, TEST_SECRETS.jwtSigningKey);
+  const token = speechToken(answer, TEST_INSTALL_ID, TEST_SECRETS.jwtSigningKey, "wavenet-v1");
   const payload = { answer, speechToken: token };
-  assert.deepEqual(readSpeechRequest(payload, TEST_INSTALL_ID, TEST_SECRETS.jwtSigningKey, TEST_NOW), answer);
-  assert.equal(readSpeechRequest(payload, "different-account", TEST_SECRETS.jwtSigningKey, TEST_NOW), null);
-  assert.equal(readSpeechRequest(payload, TEST_INSTALL_ID, "different-key", TEST_NOW), null);
-  assert.equal(readSpeechRequest(payload, TEST_INSTALL_ID, TEST_SECRETS.jwtSigningKey, new Date(TEST_NOW.getTime() + 121_000)), null);
-  assert.ok(readSpeechRequest(payload, TEST_INSTALL_ID, TEST_SECRETS.jwtSigningKey, new Date(TEST_NOW.getTime() + 120_000)));
+  assert.deepEqual(readSpeechRequest(payload, TEST_INSTALL_ID, TEST_SECRETS.jwtSigningKey, TEST_NOW, "wavenet-v1"), answer);
+  assert.equal(readSpeechRequest(payload, "different-account", TEST_SECRETS.jwtSigningKey, TEST_NOW, "wavenet-v1"), null);
+  assert.equal(readSpeechRequest(payload, TEST_INSTALL_ID, "different-key", TEST_NOW, "wavenet-v1"), null);
+  assert.equal(readSpeechRequest(payload, TEST_INSTALL_ID, TEST_SECRETS.jwtSigningKey, new Date(TEST_NOW.getTime() + 121_000), "wavenet-v1"), null);
+  assert.ok(readSpeechRequest(payload, TEST_INSTALL_ID, TEST_SECRETS.jwtSigningKey, new Date(TEST_NOW.getTime() + 120_000), "wavenet-v1"));
   for (const invalid of [null, { text: CONTENT.text }, { ...payload, speechToken: "short" }, { ...payload, extra: true },
     { ...payload, answer: { ...answer, text: "Changed text" } }, { ...payload, answer: { ...answer, reportToken: "a".repeat(43) } },
     { ...payload, answer: { ...answer, issuedAt: answer.issuedAt + 1 } }, { ...payload, answer: { ...answer, continuation: "a".repeat(80) } }]) {
-    assert.equal(readSpeechRequest(invalid, TEST_INSTALL_ID, TEST_SECRETS.jwtSigningKey, TEST_NOW), null);
+    assert.equal(readSpeechRequest(invalid, TEST_INSTALL_ID, TEST_SECRETS.jwtSigningKey, TEST_NOW, "wavenet-v1"), null);
   }
 });
 
@@ -64,7 +64,7 @@ test("only clients with speech consent receive speech tokens, and command respon
     const answer = JSON.parse(response.body!) as AnswerResponse;
     assert.equal(typeof answer.speechToken === "string", enabled && consent);
     assert.equal(h.syntheses.length, 0); assert.equal(h.reservations.length, 0);
-    if (answer.speechToken) assert.equal(answer.speechToken, speechToken(answer, TEST_INSTALL_ID, TEST_SECRETS.jwtSigningKey));
+    if (answer.speechToken) assert.equal(answer.speechToken, speechToken(answer, TEST_INSTALL_ID, TEST_SECRETS.jwtSigningKey, "wavenet-v1"));
   }
 });
 
@@ -77,12 +77,49 @@ test("authentication and signed-text checks precede quota and billable provider 
     [{ headers: { ...base.headers, "x-friday-speech": undefined } }, 400],
     [{ body: JSON.stringify({ text: CONTENT.text }) }, 400],
     [{ body: "{" }, 400], [{ body: " ".repeat(16_385) }, 400],
-    [{ body: JSON.stringify({ answer: { ...answer, text: "Changed" }, speechToken: speechToken(answer, TEST_INSTALL_ID, TEST_SECRETS.jwtSigningKey) }) }, 400]
+    [{ body: JSON.stringify({ answer: { ...answer, text: "Changed" }, speechToken: speechToken(answer, TEST_INSTALL_ID, TEST_SECRETS.jwtSigningKey, "wavenet-v1") }) }, 400]
   ] as const) {
     const h = harness();
     assert.equal((await h.api.handle({ ...base, ...patch })).statusCode, status);
     assert.equal(h.reservations.length, 0); assert.equal(h.syntheses.length, 0);
   }
+});
+
+test("speech capabilities require consent to the configured provider before quota or synthesis", async () => {
+  for (const configured of ["wavenet-v1", "elevenlabs-v1"] as const) {
+    for (const consent of ["wavenet-v1", "elevenlabs-v1", "unknown", undefined]) {
+      const h = harness(true, undefined, configured);
+      const base = request();
+      const headers = { ...base.headers, "x-friday-speech": consent };
+      const command = await h.api.handle({ ...base, rawPath: "/v1/command", headers: {
+        ...headers, "x-now": "2026-11-17T14:00:00+05:30", "x-friday-answers": "2"
+      }, body: JSON.stringify({ text: "Who is Sachin?" }) });
+      assert.equal(command.statusCode, 200);
+      const answer = JSON.parse(command.body!) as AnswerResponse;
+      assert.equal(typeof answer.speechToken === "string", configured === consent);
+      const response = await h.api.handle({ ...base, headers, body: JSON.stringify({
+        answer: { ...answer, speechToken: undefined }, speechToken: answer.speechToken ?? "a".repeat(43)
+      }) });
+      assert.equal(response.statusCode, configured === consent ? 200 : 400);
+      assert.equal(h.reservations.length, configured === consent ? 1 : 0);
+      assert.equal(h.syntheses.length, configured === consent ? 1 : 0);
+    }
+  }
+});
+
+test("switching providers invalidates outstanding speech tokens", async () => {
+  const previous = harness();
+  const base = request();
+  const response = await previous.api.handle({ ...base, rawPath: "/v1/command", headers: {
+    ...base.headers, "x-now": "2026-11-17T14:00:00+05:30", "x-friday-answers": "2"
+  }, body: JSON.stringify({ text: "Who is Sachin?" }) });
+  const { speechToken: token, ...answer } = JSON.parse(response.body!) as AnswerResponse;
+  const current = harness(true, undefined, "elevenlabs-v1");
+  const speech = await current.api.handle({ ...base, headers: { ...base.headers, "x-friday-speech": "elevenlabs-v1" },
+    body: JSON.stringify({ answer, speechToken: token }) });
+  assert.equal(speech.statusCode, 400);
+  assert.equal(current.reservations.length, 0);
+  assert.equal(current.syntheses.length, 0);
 });
 
 test("speech reserves characters once before returning binary WAV with no persistent answer storage", async () => {
@@ -102,7 +139,7 @@ test("revoked account tokens and other accounts cannot reuse a speech capability
     return token === "account-access-token" && accountId ? { accountId, installId: TEST_INSTALL_ID, sessionId: "b".repeat(43) } : null;
   } };
   const h = harness(true, accounts); const answer = signAnswer(CONTENT, TEST_SECRETS.jwtSigningKey, TEST_NOW);
-  const base = request(answer, TEST_INSTALL_ID, speechToken(answer, accountId!, TEST_SECRETS.jwtSigningKey));
+  const base = request(answer, TEST_INSTALL_ID, speechToken(answer, accountId!, TEST_SECRETS.jwtSigningKey, "wavenet-v1"));
   const signedIn = { ...base, headers: { ...base.headers, authorization: "Bearer account-access-token" } };
   assert.equal((await h.api.handle(signedIn)).statusCode, 200);
   accountId = "c".repeat(43);

@@ -25,11 +25,11 @@ object VoiceProtocol {
         }
         if (value.optString("type") == "actions") {
             val array = value.optJSONArray("actions")
-                ?: return VoiceCommandResponse.Error(VoiceCommandResponse.Reason.BAD_AUDIO)
-            if (array.length() !in 2..3) return VoiceCommandResponse.Error(VoiceCommandResponse.Reason.BAD_AUDIO)
+                ?: return VoiceCommandResponse.Error(VoiceCommandResponse.Reason.BUSY)
+            if (array.length() !in 2..3) return VoiceCommandResponse.Error(VoiceCommandResponse.Reason.BUSY)
             val steps = (0 until array.length()).map { index ->
                 val step = array.optJSONObject(index)
-                    ?: return VoiceCommandResponse.Error(VoiceCommandResponse.Reason.BAD_AUDIO)
+                    ?: return VoiceCommandResponse.Error(VoiceCommandResponse.Reason.BUSY)
                 VoiceResponseParser.parseFields(step.optString("type"), step.optString("action"),
                     step.optJSONObject("args")?.let(::toMap))
             }
@@ -77,6 +77,15 @@ object VoiceResponseParser {
     fun parseServerDuration(header: String?): Double? {
         if (header == null) return null
         return SERVER_DURATION.find(header)?.groupValues?.getOrNull(1)?.toDoubleOrNull()
+    }
+
+    fun parseStageDurations(header: String?): Map<String, Double> = buildMap {
+        if (header == null) return@buildMap
+        for (match in STAGE_DURATION.findAll(header)) {
+            val name = if (match.groupValues[1].equals("transcription", ignoreCase = true)) "transcription" else "classification"
+            val duration = match.groupValues[2].toDoubleOrNull()?.takeIf { it.isFinite() } ?: continue
+            if (!containsKey(name)) put(name, duration)
+        }
     }
 
     fun parseFields(
@@ -215,10 +224,14 @@ object VoiceResponseParser {
         value.keys.all(allowed.toSet()::contains)
 
     private fun badResponse(): VoiceCommandResponse =
-        VoiceCommandResponse.Error(VoiceCommandResponse.Reason.BAD_AUDIO)
+        VoiceCommandResponse.Error(VoiceCommandResponse.Reason.BUSY)
 
     private const val MAX_NAME_LENGTH = 100
     private const val MAX_NUMBER_LENGTH = 40
     private const val MAX_LABEL_LENGTH = 100
     private val SERVER_DURATION = Regex("(?:^|[,]\\s*)(?:gemini|groq)\\s*;\\s*dur=([0-9]+(?:\\.[0-9]+)?)", RegexOption.IGNORE_CASE)
+    private val STAGE_DURATION = Regex(
+        "(?:^|,)\\s*(transcription|classification)\\s*;\\s*dur=([0-9]+(?:\\.[0-9]+)?)(?=\\s*(?:;|,|$))",
+        RegexOption.IGNORE_CASE,
+    )
 }

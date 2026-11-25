@@ -3,6 +3,7 @@ package android.media;
 public final class AudioManager {
     public static final int AUDIOFOCUS_GAIN = 1;
     public static final int AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE = 4;
+    public static final int AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK = 3;
     public static final int AUDIOFOCUS_LOSS = -1;
     public static final int AUDIOFOCUS_LOSS_TRANSIENT = -2;
     public static final int AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK = -3;

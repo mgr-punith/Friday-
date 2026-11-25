@@ -262,7 +262,7 @@ open class MainActivity : Activity() {
                 if (lastAnswer != null) scheduleAnswerDismissal(answerReadingDelay())
                 if (lastConfirmation != null) scheduleResultDismissal(speaking = false, waitingForSpeech = false)
             }
-        }, onFinished = ::onSpeechFinished)
+        }, onFinished = ::onSpeechFinished, onInterrupted = ::onSpeechInterrupted)
 
     override fun onUserInteraction() {
         super.onUserInteraction()
@@ -757,7 +757,7 @@ open class MainActivity : Activity() {
     }
 
     private fun showUnsupported() {
-        showError("Sorry, I can't do that yet")
+        showError(VoiceFailureCopy.forOutcome(VoiceUiOutcome.UNSUPPORTED))
     }
 
     private fun showAnswerSetup(outcome: VoiceUiOutcome) {
@@ -822,7 +822,8 @@ open class MainActivity : Activity() {
         )
         // Leave time to read if the optional speech engine never starts.
         scheduleAnswerDismissal(answerReadingDelay() + 12_000)
-        confirmationSpeaker.speak(answer.text)
+        if (answer.speechToken == null) confirmationSpeaker.speak(answer.text)
+        else confirmationSpeaker.speakAnswer(answer.text) { cancelled -> backend.fetchSpeech(answer, cancelled) }
     }
 
     private fun closeAnswer() {
@@ -1077,6 +1078,11 @@ open class MainActivity : Activity() {
             return
         }
         if (resumed && lastConfirmation != null) scheduleResultDismissal(speaking = false, waitingForSpeech = false)
+    }
+
+    private fun onSpeechInterrupted() {
+        // Do not open reply capture over the audio session that interrupted a clarification.
+        if (lastAnswer != null) closeAnswer() else onSpeechFinished()
     }
 
     private fun cancelResultDismissal() {

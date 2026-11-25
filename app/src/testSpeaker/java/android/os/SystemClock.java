@@ -1,6 +1,7 @@
 package android.os;
 
 public final class SystemClock {
-    static long now;
+    static volatile long now;
     public static long uptimeMillis() { return now; }
+    public static long elapsedRealtime() { return now; }
 }

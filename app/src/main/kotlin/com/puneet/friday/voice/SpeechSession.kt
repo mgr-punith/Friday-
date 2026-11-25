@@ -4,8 +4,8 @@ import java.util.concurrent.atomic.AtomicLong
 
 /** Rejects callbacks from cancelled or replaced utterances, including engine startup. */
 internal class SpeechSession {
-    private var generation = 0L
-    private var active = false
+    @Volatile private var generation = 0L
+    @Volatile private var active = false
     val isActive: Boolean get() = active
 
     fun begin(): String {

@@ -57,7 +57,7 @@ class WakeTrialActivity : Activity() {
         commandMode = savedInstanceState?.getBoolean("commands") ?: intent.getBooleanExtra("debug_wake_commands", true)
         val (page, content) = AppUi.groupedContent(this, "Wake detector test")
         content.addView(AppUi.notice(this,
-            "Start this test to listen for Hey Friday on this phone. After a wake, Friday can open its command panel. Wait for Listening, then say your command. Only command audio goes to Friday's backend and Groq. The test reports counts and timings. Wake audio tracking is a separate setting."), AppUi.params(this, 24))
+            "Start this test to listen for Hey Friday on this phone. After a wake, Friday can open its command panel. Wait for Listening, then say your command. Friday sends command audio to its backend and NVIDIA or Groq for speech recognition. The test reports counts and timings. Wake audio tracking is a separate setting."), AppUi.params(this, 24))
         status = AppUi.text(this, "Microphone off", 15f, bold = true).apply {
             accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
         }

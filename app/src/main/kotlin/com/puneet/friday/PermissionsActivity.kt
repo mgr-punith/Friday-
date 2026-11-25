@@ -39,7 +39,7 @@ class PermissionsActivity : Activity() {
                 Manifest.permission.READ_CONTACTS,
                 "Contacts",
                 R.drawable.ic_account,
-                "Friday reads contact names and phone numbers on this phone to match the person you asked to call. Your contact list and contact details stay on this phone. Friday sends the recorded command to its Vercel backend and Groq, and does not store audio or transcripts.",
+                "Friday reads contact names and phone numbers on this phone to match the person you asked to call. Your contact list and contact details stay on this phone. Friday sends the recorded command to its Vercel backend and NVIDIA or Groq for speech recognition. Groq chooses the phone action. Friday does not store audio or transcripts.",
             ),
             PermissionInfo(
                 Manifest.permission.CALL_PHONE,

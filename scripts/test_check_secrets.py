@@ -35,6 +35,16 @@ class CredentialPatternsTests(unittest.TestCase):
         token = b"eyJ" + b"a" * 20 + b"." + b"b" * 20 + b"." + b"c" * 30
         self.assertTrue(CHECK.scan_bytes("source.txt", token))
 
+    def test_elevenlabs_key_assignments_do_not_expose_values(self):
+        value = b"synthetic" + b"9bJ0k2L4m6N8p0Q2r4T6v8X0"
+        for data in (b'ELEVENLABS_API_KEY="' + value + b'"',
+                     b'export ELEVENLABS_API_KEY=' + value,
+                     b'{"ELEVENLABS_API_KEY": "' + value + b'"}'):
+            findings = CHECK.scan_bytes("config.txt", data)
+            self.assertTrue(findings)
+            self.assertNotIn(value.decode(), str(findings))
+        self.assertFalse(CHECK.scan_bytes("backend/.env.example", b"ELEVENLABS_API_KEY=replace-with-a-key"))
+
     def test_examples_and_runtime_lookups(self):
         self.assertFalse(CHECK.scan_bytes("backend/.env.example", b"GEMINI_API_KEY=replace-with-a-key"))
         self.assertFalse(CHECK.scan_bytes("source.py", b'GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")'))
