@@ -90,8 +90,8 @@ test("titles with conjunctions, punctuation or negation keep their original quer
       calls++;
       const body = JSON.parse(String(init?.body));
       assert.ok(body.messages[1].content.endsWith(`Command: ${text}`));
-      assert.match(body.messages[0].content, /even if the name is unfamiliar/);
-      assert.match(body.messages[0].content, /Play Believer on YouTube/);
+      if (/\b(?:and|not)\b/i.test(query)) assert.match(body.messages[0].content, /Play Believer on YouTube/);
+      else assert.match(body.messages[0].content, /Keep named song and artist words exactly/);
       assert.doesNotMatch(body.messages[0].content, /For audio|silence, noise, music/);
       const unclear = body.tools.find((entry: { function: { name: string } }) => entry.function.name === "unclear_command");
       assert.match(unclear.function.description, /transcript/);

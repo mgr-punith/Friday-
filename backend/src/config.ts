@@ -162,7 +162,7 @@ function loadAssistantConfig(environment: NodeJS.ProcessEnv): VercelAssistantCon
       transcriptionModel: groqModel(environment.GROQ_TRANSCRIPTION_MODEL?.trim() || "whisper-large-v3-turbo"),
       actionModel: groqModel(environment.GROQ_ACTION_MODEL?.trim() || "openai/gpt-oss-20b"),
       timeoutMs: integer(environment, "GROQ_TIMEOUT_MS", 10_000, 500, 12_000),
-      maxCompletionTokens: integer(environment, "GROQ_MAX_COMPLETION_TOKENS", 512, 512, 2_048),
+      maxCompletionTokens: integer(environment, "GROQ_MAX_COMPLETION_TOKENS", 256, 128, 2_048),
       ...loadTranscriptionConfig(environment),
       ...(environment.ANSWERS_ENABLED === "true" ? {
         answersEnabled: true,

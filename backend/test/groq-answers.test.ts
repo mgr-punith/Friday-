@@ -40,10 +40,11 @@ test("stable answers reuse classification without a second completion or search 
   const provider = new GroqProvider(CONFIG, async (_url, init) => {
     calls++;
     const body = JSON.parse(String(init?.body));
-    assert.equal(body.max_completion_tokens, 512);
+    assert.equal(body.max_completion_tokens, 256);
     assert.equal(body.reasoning_effort, "low");
     assert.equal(body.include_reasoning, false);
     assert.equal(body.tools.some((t: any) => t.function?.name === "answer_question"), true);
+    assert.deepEqual(body.tools.map((t: any) => t.function.name), ["unclear_command", "unsupported", "answer_question"]);
     assert.equal(body.messages[0].content.includes("Never answer questions"), false);
     assert.equal(body.tools.find((t: any) => t.function?.name === "unsupported").function.description.includes("questions"), false);
     return tool();
@@ -129,7 +130,7 @@ test("live questions use one bounded browser completion after the search quota",
     if (body.tools[0].type === "browser_search") {
       order.push("browser");
       assert.equal(body.tool_choice, "required");
-      assert.equal(body.max_completion_tokens, 2_048);
+      assert.equal(body.max_completion_tokens, 512);
       assert.equal(body.model, CONFIG.actionModel);
       assert.equal(body.messages[1].content, `Current phone time: ${NOW}\nQuestion: What happened in todays India match?`);
       assert.equal(body.tools.length, 1);

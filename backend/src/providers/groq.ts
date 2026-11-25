@@ -1,8 +1,7 @@
 import {
   TRANSCRIPT_SYSTEM_PROMPT,
   actionInstructionsFor,
-  functionDeclarationsFor,
-  functionNamesFor
+  functionDeclarationsFor
 } from "../core/action-schema";
 import { AssistantProviderError, type AssistantProvider, type AssistantProviderResult,
   type CommandInput, type FunctionSelection } from "../core/contracts";
@@ -37,6 +36,9 @@ const DEFAULT_RUNTIME: GroqRequestRuntime = {
 const API = "https://api.groq.com/openai/v1";
 const MAX_TRANSCRIPT_LENGTH = 500;
 const MIN_RETRY_BUDGET_MS = 250;
+const ACTION_COMPLETION_TOKEN_CAP = 256;
+const REPAIR_COMPLETION_TOKEN_CAP = 384;
+const SEARCH_COMPLETION_TOKEN_CAP = 512;
 type Stage = "transcription" | "classification" | "answer";
 interface RequestBudget { readonly startedAt: number; deadline: number; retries: number;
   readonly usage: Record<string, { inputTokens: number; outputTokens: number; cachedTokens: number }> }
@@ -92,7 +94,14 @@ export class GroqProvider implements AssistantProvider {
     const tools = following ? [answerTool] : [...compactGroqTools(actionVersion).map(tool => (supportsAnswers || answerSetup) && tool.name === "unsupported"
       ? { ...tool, description: "Use for chat, essays, non-English speech or unsupported phone controls." } : tool),
       ...(supportsAnswers ? [answerTool] : answerSetup ? [ANSWER_SETUP_TOOL] : [])];
-    const actionInstructions = actionInstructionsFor(actionVersion);
+    const requestTools = following ? tools : focusedGroqTools(text, tools);
+    const focused = requestTools.length < tools.length;
+    const actionInstructions = focused
+      ? " Handle one clear request. Use the matching action only; use unsupported if it does not match. Never guess a target." +
+        (requestTools.some(tool => tool.name === "play_media")
+          ? " Keep named song and artist words exactly in the play_media query; include a player only when spoken."
+          : "")
+      : actionInstructionsFor(actionVersion);
     const question = following ? JSON.stringify({ originalQuestion: following.question, earlierReplies: following.turns,
       clarification: following.prompt, reply: text }) : text;
     const instructions = following
@@ -118,23 +127,24 @@ export class GroqProvider implements AssistantProvider {
             (answerSetup ? " For an English factual question choose short_answers_required with no arguments. " +
               "Use unsupported for unsupported phone controls, chat, essays or non-English speech." : "") +
             " Return one tool call with a valid JSON object. Omit optional fields that were not spoken. Do not output prose." +
-            (repair ? ` The previous tool call was invalid. Choose one declared function name: ${tools.map(tool => tool.name).join(", ")}. ` +
+            (repair ? ` The previous tool call was invalid. Choose one declared function name: ${requestTools.map(tool => tool.name).join(", ")}. ` +
               "Never call json or invent a function. Put the JSON object in the function arguments." : "") },
           { role: "user", content: `Current phone time: ${now}\n${following ? "Question context" : "Command"}: ${question}` }
         ],
-        tools: tools.map((declaration) => ({ type: "function", function: {
+        tools: requestTools.map((declaration) => ({ type: "function", function: {
           ...declaration,
           parameters: { ...declaration.parameters, additionalProperties: false }
         } })),
         tool_choice: "required",
         parallel_tool_calls: false,
         temperature: 0,
-        max_completion_tokens: repair ? Math.min(2_048, this.config.maxCompletionTokens * 2) : this.config.maxCompletionTokens,
+        max_completion_tokens: repair
+          ? Math.min(REPAIR_COMPLETION_TOKEN_CAP, Math.ceil(Math.min(ACTION_COMPLETION_TOKEN_CAP, this.config.maxCompletionTokens) * 1.5))
+          : Math.min(ACTION_COMPLETION_TOKEN_CAP, this.config.maxCompletionTokens),
         ...(this.config.actionModel.startsWith("openai/gpt-oss-") ? { reasoning_effort: "low", include_reasoning: false } : {})
       })
     }), budget);
-    const selection = readToolCall(value, following ? [ANSWER_TOOL.name] : [...functionNamesFor(actionVersion),
-      ...(supportsAnswers ? [ANSWER_TOOL.name] : answerSetup ? [ANSWER_SETUP_TOOL.name] : [])]);
+    const selection = readToolCall(value, requestTools.map(tool => tool.name));
     if (!selection) throw this.failure(budget, "classification", "invalid_response");
     stages.classification = this.runtime.now() - started;
     if (selection.name === ANSWER_TOOL.name) {
@@ -160,7 +170,7 @@ export class GroqProvider implements AssistantProvider {
           messages: [{ role: "system", content: ANSWER_PROMPT },
             { role: "user", content: `Current phone time: ${now}\nQuestion: ${question}` }],
           tools: [{ type: "browser_search" }], tool_choice: "required", temperature: 0,
-          max_completion_tokens: 2_048, reasoning_effort: "low", include_reasoning: false })
+          max_completion_tokens: SEARCH_COMPLETION_TOKEN_CAP, reasoning_effort: "low", include_reasoning: false })
       }), budget);
       let answer = readBrowserAnswer(raw);
       if (!answer) throw this.failure(budget, "answer", "invalid_response");
@@ -310,6 +320,54 @@ export function compactGroqTools(version: NonNullable<CommandInput["actionVersio
         args: { type: "object", description: "Same arguments as the selected action tool." } },
       required: ["action", "args"], additionalProperties: false } } }, required: ["actions"] }
   });
+}
+
+/** Narrow schemas only for an obvious standalone command; uncertain language keeps the complete tool set. */
+function focusedGroqTools<T extends { readonly name: string }>(text: string, tools: readonly T[]): readonly T[] {
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(text)) return tools;
+  const normalized = text.toLowerCase().replace(/[’']/g, "").replace(/[.!?]+$/, "").replace(/\s+/g, " ").trim();
+  const command = normalized.replace(/^(?:(?:can|could|would|will) you\s+)?(?:please\s+)?/, "");
+  if (/\b(?:and|or|then|also|but|if|unless|before|after|without|except|instead|not|never|dont|cannot|cant|wont)\b/.test(command)) return tools;
+  const actionStart = /^(?:call|phone|dial|ring|set|start|open|launch|close|exit|go to|leave|switch|turn|put|change|mute|unmute|play|pause|resume|skip|lower|raise|increase|decrease|make)\b/.test(command);
+  const question = /^(?:who|what|when|where|why|how|which|tell me|explain)\b/.test(command) || /\?$/.test(text.trim());
+  const answerNames = new Set(["answer_question", "short_answers_required"]);
+  const fallbackNames = new Set(["unsupported", "unclear_command", ...answerNames]);
+  const narrow = (names: readonly string[]) => {
+    const candidates = new Set([...fallbackNames, ...names]);
+    const result = tools.filter(tool => candidates.has(tool.name));
+    return result.length > 0 ? result : tools;
+  };
+  if (question && !actionStart) {
+    const allowed = new Set([...fallbackNames].filter(name => tools.some(tool => tool.name === name)));
+    return allowed.size > 0 ? tools.filter(tool => allowed.has(tool.name)) : tools;
+  }
+  if (!actionStart) return tools;
+
+  const opening = /^(?:open|launch|go to)\b/.test(command);
+  if (opening) {
+    if (/\bairplane mode\b/.test(command)) return narrow(["open_settings"]);
+    if (/\b(?:music|song|track|playlist|spotify|youtube)\b/.test(command)) {
+      return narrow(["open_music", "open_app", "play_media", "control_media"]);
+    }
+    if (/\b(?:home screen|home)\b/.test(command)) return narrow(["close_app"]);
+    return narrow(["open_app"]);
+  }
+
+  const groups: { match: RegExp; names: readonly string[] }[] = [
+    { match: /\b(?:call|phone|dial|ring)\b/, names: ["call_contact", "call_number"] },
+    { match: /\b(?:alarm|wake me|wake-up)\b/, names: ["set_alarm"] },
+    { match: /\b(?:timer|countdown)\b/, names: ["set_timer"] },
+    { match: /\b(?:ringer|silent|vibrat\w*|mute|unmute)\b/, names: ["set_ringer_mode"] },
+    { match: /\b(?:flashlight|flash light|torch)\b/, names: ["flashlight"] },
+    { match: /\b(?:volume|louder|quieter)\b/, names: ["set_volume"] },
+    { match: /\bairplane mode\b/, names: ["open_settings"] },
+    { match: /\b(?:home screen|go home|close|exit)\b/, names: ["close_app"] },
+    { match: /\b(?:music|song|track|playlist|spotify|youtube|play|pause|resume|skip|previous)\b/,
+      names: ["open_music", "open_app", "play_media", "control_media"] }
+  ];
+  const matches = groups.filter(group => group.match.test(command));
+  if (matches.length !== 1) return tools;
+  return narrow(matches[0]!.names);
 }
 
 // Pin common, explicit commands after the transcript check. Never match part of a compound or negated request.

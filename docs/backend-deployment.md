@@ -49,7 +49,7 @@ Add each value through Vercel project settings. Apply them to Production and Pre
 - `GROQ_TRANSCRIPTION_MODEL`: `whisper-large-v3-turbo`
 - `GROQ_ACTION_MODEL`: `openai/gpt-oss-20b`
 - `GROQ_TIMEOUT_MS`: `10000`
-- `GROQ_MAX_COMPLETION_TOKENS`: `512`
+- `GROQ_MAX_COMPLETION_TOKENS`: `256`
 - `JWT_SIGNING_KEY`: random value with at least 32 characters
 - `GOOGLE_WEB_CLIENT_ID`: the Web application OAuth client ID; required for the account router
 
