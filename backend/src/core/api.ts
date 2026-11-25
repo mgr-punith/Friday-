@@ -22,6 +22,7 @@ import { ANSWER_SETUP_TOOL, parseReport, signAnswer, validateAnswer, type Answer
   type AnswerResponse, type AnswerSetupResponse } from "./answers";
 import { safeAiUsage } from "./ai-usage";
 import { createAnswerContinuation, readAnswerContinuation } from "./answer-continuation";
+import { readSpeechRequest, speechToken, type SpeechServices } from "./speech";
 
 const MAX_AUDIO_BYTES = 1_000_000;
 const MAX_TEXT_LENGTH = 500;
@@ -45,7 +46,7 @@ export interface FunctionUrlResponse {
   readonly statusCode: number;
   readonly headers?: Readonly<Record<string, string>>;
   readonly body?: string;
-  readonly isBase64Encoded?: false;
+  readonly isBase64Encoded?: boolean;
 }
 
 export interface ApiDependencies {
@@ -56,6 +57,8 @@ export interface ApiDependencies {
   readonly logger: SafeLogger;
   readonly accounts?: AccountGateway;
   readonly answers?: { readonly usage: UsageLimitStore; readonly reports: AnswerReportStore };
+  readonly speech?: SpeechServices;
+  readonly transcriptionClient?: "nvidia-v1";
 }
 
 export function createApi(dependencies: ApiDependencies) {
@@ -81,6 +84,7 @@ export function createApi(dependencies: ApiDependencies) {
       if (method === "POST" && path === "/v1/answers/report") {
         return handleAnswerReport(event, dependencies);
       }
+      if (method === "POST" && path === "/v1/speech") return handleSpeech(event, dependencies);
       return json(404, { error: "not_found" });
     }
   };
@@ -155,6 +159,11 @@ async function handleCommand(
   const input = parseCommandInput(event);
   const now = header(event, "x-now");
   if (!input || !now || !isOffsetDateTime(now)) return commandError(400, "bad_audio");
+  if (input.kind === "audio" && dependencies.transcriptionClient &&
+    header(event, "x-friday-transcription") !== dependencies.transcriptionClient) {
+    dependencies.logger.error("unsupported_transcription_client", requestId(event));
+    return commandError(503, "busy");
+  }
   const answersVersion = header(event, "x-friday-answers");
   const supportsAnswers = ["1", "2"].includes(answersVersion ?? "") && dependencies.answers !== undefined;
   const answerSetup = header(event, "x-friday-answer-setup") === "1" && !supportsAnswers
@@ -195,9 +204,11 @@ async function handleCommand(
         answer = { kind: "unavailable", text: "I couldn't narrow that down. Please ask the full question with more detail.", sources: [] };
       }
       const signed = signAnswer(answer, secrets.jwtSigningKey, dependencies.clock.now());
+      const spoken = dependencies.speech && header(event, "x-friday-speech") === "wavenet-v1"
+        ? { ...signed, speechToken: speechToken(signed, installId, secrets.jwtSigningKey) } : signed;
       const next = answer.kind === "clarification" && answersVersion === "2" && result.question !== undefined
         ? createAnswerContinuation(result.question, answer.text, installId, secrets.jwtSigningKey, dependencies.clock.now(), answerContext ?? undefined) : null;
-      return commandSuccess(next ? { ...signed, continuation: next } : signed,
+      return commandSuccess(next ? { ...spoken, continuation: next } : spoken,
         result.durationMs, result.timingMetric, result.stages);
     }
     if (answerContext) return commandError(503, "busy");
@@ -217,6 +228,29 @@ async function handleCommand(
     }
     dependencies.logger.error("assistant_failed", requestId(event));
     return commandError(503, "busy");
+  }
+}
+
+async function handleSpeech(event: FunctionUrlEvent, dependencies: ApiDependencies): Promise<FunctionUrlResponse> {
+  if (!dependencies.speech || !dependencies.answers) return json(404, { error: "not_found" });
+  try {
+    const secrets = await dependencies.secrets.getSecrets();
+    const token = bearerToken(header(event, "authorization"));
+    const account = dependencies.accounts && token ? await dependencies.accounts.authorize(token) : null;
+    const identity = dependencies.accounts ? account?.accountId
+      : token ? verifyInstallToken(token, secrets.jwtSigningKey, dependencies.clock.now()) : null;
+    if (!identity) return json(401, { error: "unauthorized" });
+    if (contentType(event) !== "application/json" || header(event, "x-friday-speech") !== "wavenet-v1") return json(400, { error: "bad_request" });
+    const at = dependencies.clock.now();
+    const answer = readSpeechRequest(parseJsonBody(event), identity, secrets.jwtSigningKey, at);
+    if (!answer) return json(400, { error: "bad_request" });
+    if (!await dependencies.speech.usage.reserve(identity, answer.answerId, [...answer.text].length, at)) return json(429, { error: "busy" });
+    const audio = await dependencies.speech.provider.synthesize(answer.text);
+    return { statusCode: 200, headers: { ...baseHeaders(), "content-type": "audio/wav" },
+      body: Buffer.from(audio).toString("base64"), isBase64Encoded: true };
+  } catch {
+    dependencies.logger.error("speech_unavailable", requestId(event));
+    return json(503, { error: "unavailable" });
   }
 }
 

@@ -24,7 +24,8 @@ function validConfig() {
       { source: "/v1/warm", destination: "/api/index?fridayRoute=warm" },
       { source: "/v1/command", destination: "/api/index?fridayRoute=command" },
       { source: "/v1/auth/:path*", destination: "/api/index?fridayRoute=auth/:path*" },
-      { source: "/v1/answers/report", destination: "/api/index?fridayRoute=answers/report" }
+      { source: "/v1/answers/report", destination: "/api/index?fridayRoute=answers/report" },
+      { source: "/v1/speech", destination: "/api/index?fridayRoute=speech" }
     ]
   };
 }

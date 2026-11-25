@@ -87,3 +87,40 @@ test("answer reports reach the shared router after Vercel rewriting", async () =
   assert.equal(api.event?.rawPath, "/v1/answers/report");
   assert.equal(response.status, 204);
 });
+
+test("speech rewrite returns binary audio rather than base64 text", async () => {
+  const api = new RecordingApi();
+  const audio = Buffer.from([82, 73, 70, 70, 0, 255]);
+  api.response = { statusCode: 200, headers: { "content-type": "audio/wav", "cache-control": "no-store" },
+    body: audio.toString("base64"), isBase64Encoded: true };
+  const response = await createVercelHandler(api)(new Request("https://friday.example/api/index?fridayRoute=speech", {
+    method: "POST", headers: { "content-type": "application/json", "x-friday-speech": "wavenet-v1" }, body: "{}"
+  }));
+  assert.equal(api.event?.rawPath, "/v1/speech");
+  assert.equal(api.event?.headers?.["x-friday-speech"], "wavenet-v1");
+  assert.equal(response.headers.get("content-type"), "audio/wav");
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), audio);
+});
+
+test("speech request bodies are bounded before the shared router buffers them", async () => {
+  for (const declaredSize of [undefined, "20000"]) {
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(Buffer.alloc(16_385)); },
+      cancel() { cancelled = true; }
+    });
+    const api = new RecordingApi();
+    const init: RequestInit & { duplex: "half" } = { method: "POST", duplex: "half", body: stream,
+      headers: { "content-type": "application/json", ...(declaredSize ? { "content-length": declaredSize } : {}) } };
+    await createVercelHandler(api)(new Request("https://friday.example/api/index?fridayRoute=speech", init));
+    assert.equal(api.event?.rawPath, "/v1/speech");
+    assert.equal(api.event?.body, undefined);
+    assert.equal(cancelled, true);
+  }
+  const api = new RecordingApi();
+  const body = JSON.stringify({ text: "Small request" });
+  await createVercelHandler(api)(new Request("https://friday.example/v1/speech", {
+    method: "POST", headers: { "content-type": "application/json" }, body
+  }));
+  assert.equal(api.event?.body, body);
+});

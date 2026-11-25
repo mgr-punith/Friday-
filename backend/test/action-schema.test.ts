@@ -36,7 +36,9 @@ test("named media is a validated terminal v4 handoff", () => {
   assert.equal(functionNamesFor(4).includes(play.name), true);
   assert.deepEqual(parseFunctionSelection(play, 4), { type: "action", action: play.name, args });
   for (const fields of [{}, { query: "x".repeat(161) }, { query: "\nBeliever" },
-    { ...args, package: "app" }, { ...args, appName: null }]) {
+    { ...args, package: "app" }, { ...args, appName: null }, { ...args, appName: 42 },
+    { ...args, appName: false }, { ...args, appName: [] }, { ...args, appName: {} },
+    { ...args, appName: "" }, { ...args, appName: " " }, { ...args, appName: "\nYouTube" }]) {
     assert.deepEqual(parseFunctionSelection({ ...play, args: fields }, 4), { type: "error", reason: "bad_audio" });
   }
   const media = { action: play.name, args };

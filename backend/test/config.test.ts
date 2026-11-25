@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { generateKeyPairSync } from "node:crypto";
 import { loadConfig, loadVercelConfig } from "../src/config";
 
 function environment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -120,4 +121,33 @@ test("answers require explicit enablement, a browser-capable model and bounded s
     ["GROQ_ANSWER_TIMEOUT_MS", "30000"]]) {
     assert.throws(() => loadVercelConfig({ ...base, ANSWERS_ENABLED: "true", [name!]: value }), /invalid_/);
   }
+});
+
+test("WaveNet requires explicit enablement, answer consent support and valid server-only credentials", () => {
+  const base = { GOOGLE_WEB_CLIENT_ID: "123456789-test.apps.googleusercontent.com", AI_PROVIDER: "groq",
+    GROQ_API_KEY: "example-development-groq-key", JWT_SIGNING_KEY: "example-long-test-signing-key-with-thirty-two-bytes",
+    UPSTASH_REDIS_REST_URL: "https://example.upstash.io", UPSTASH_REDIS_REST_TOKEN: "development-redis-token" };
+  assert.equal(loadVercelConfig(base).speech, undefined);
+  assert.equal(loadVercelConfig({ ...base, SPEECH_PROVIDER: "device" }).speech, undefined);
+  assert.throws(() => loadVercelConfig({ ...base, SPEECH_PROVIDER: "unknown" }), /invalid_speech_provider/);
+  assert.throws(() => loadVercelConfig({ ...base, SPEECH_PROVIDER: "wavenet" }), /speech_requires_answers/);
+  const key = generateKeyPairSync("rsa", { modulusLength: 2_048 }).privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+  const enabled = { ...base, ANSWERS_ENABLED: "true", SPEECH_PROVIDER: "wavenet",
+    GOOGLE_TTS_PROJECT_ID: "friday-example", GOOGLE_TTS_SERVICE_ACCOUNT_EMAIL: "friday-voice@friday-example.iam.gserviceaccount.com",
+    GOOGLE_TTS_PRIVATE_KEY: key };
+  const config = loadVercelConfig(enabled).speech!;
+  assert.equal(config.provider.voice, "en-IN-Wavenet-A");
+  assert.equal(config.provider.privateKey, key.trim());
+  assert.equal(config.provider.timeoutMs, 3_000);
+  assert.deepEqual(config.limits, { accountMinute: 12, accountDailyCharacters: 10_000, globalMonthlyCharacters: 3_500_000 });
+  assert.equal(loadVercelConfig({ ...enabled, GOOGLE_TTS_PRIVATE_KEY: key.replace(/\n/g, "\\n") }).speech!.provider.privateKey.trim(), key.trim());
+  const weakKey = generateKeyPairSync("rsa", { modulusLength: 1_024 }).privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+  const otherKey = generateKeyPairSync("ec", { namedCurve: "prime256v1" }).privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+  for (const patch of [
+    { GOOGLE_TTS_PROJECT_ID: "https://example.com" }, { GOOGLE_TTS_SERVICE_ACCOUNT_EMAIL: "user@example.com" },
+    { GOOGLE_TTS_PRIVATE_KEY: "invalid" }, { GOOGLE_TTS_PRIVATE_KEY: weakKey }, { GOOGLE_TTS_PRIVATE_KEY: otherKey },
+    { GOOGLE_TTS_VOICE: "en-IN-Neural2-A" }, { GOOGLE_TTS_VOICE: "hi-IN-Wavenet-A" },
+    { SPEECH_GLOBAL_MONTHLY_CHARACTERS: "4000001" }, { SPEECH_PER_ACCOUNT_MINUTE: "0" },
+    { SPEECH_PER_ACCOUNT_DAILY_CHARACTERS: "599" }, { SPEECH_TIMEOUT_MS: "5001" }
+  ]) assert.throws(() => loadVercelConfig({ ...enabled, ...patch }), /invalid_speech_/);
 });

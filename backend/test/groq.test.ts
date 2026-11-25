@@ -272,6 +272,32 @@ test("blank optional Groq fields preserve Home navigation and alarms without acc
   }
 });
 
+test("artist-only music requests omit blank optional players without accepting invalid arguments", async () => {
+  const expected = { type: "action", action: "play_media", args: { query: "Honey Singh" } };
+  for (const appName of [undefined, "", " ", "\t "]) {
+    const args = { query: "Honey Singh", ...(appName === undefined ? {} : { appName }) };
+    const provider = new GroqProvider(CONFIG, async () => tool("play_media", JSON.stringify(args)), new Runtime());
+    const result = await provider.select({ kind: "text", text: "Play Honey Singh", actionVersion: 5 }, NOW);
+    assert.deepEqual(result.selection, { name: "play_media", args: { query: "Honey Singh" } });
+    assert.deepEqual(parseFunctionSelection(result.selection, 5), expected);
+  }
+  for (const args of [
+    { query: "Honey Singh", appName: null }, { query: "Honey Singh", appName: 42 },
+    { query: "Honey Singh", appName: false }, { query: "Honey Singh", appName: [] },
+    { query: "Honey Singh", appName: {} }, { query: "Honey Singh", appName: "\nYouTube" },
+    { query: "Honey Singh", appName: "x".repeat(101) }, { query: "", appName: "" }
+  ]) {
+    const provider = new GroqProvider(CONFIG, async () => tool("play_media", JSON.stringify(args)), new Runtime());
+    const result = await provider.select({ kind: "text", text: "Play Honey Singh", actionVersion: 5 }, NOW);
+    assert.deepEqual(parseFunctionSelection(result.selection, 5), { type: "error", reason: "bad_audio" });
+  }
+  const provider = new GroqProvider(CONFIG, async () => tool("play_media", '{"query":"Honey Singh","appName":"YouTube"}'), new Runtime());
+  const result = await provider.select({ kind: "text", text: "Play Honey Singh on YouTube", actionVersion: 5 }, NOW);
+  assert.deepEqual(parseFunctionSelection(result.selection, 5), {
+    type: "action", action: "play_media", args: { query: "Honey Singh", appName: "YouTube" }
+  });
+});
+
 test("never retries missing models, invalid keys or an ordinary bad request", async () => {
   for (const status of [400, 401, 403, 404, 422]) {
     const runtime = new Runtime();

@@ -1,3 +1,8 @@
+import { createPrivateKey } from "node:crypto";
+import type { WaveNetConfig } from "./providers/wavenet";
+import type { SpeechLimits } from "./core/speech";
+import { PARAKEET_V2_FUNCTION_ID, type ParakeetConfig } from "./providers/parakeet";
+
 export interface UsageLimits {
   readonly registerPerIpDaily: number;
   readonly registerGlobalDaily: number;
@@ -27,6 +32,7 @@ export interface VercelBackendConfig extends UsageLimits {
   readonly redisRestUrl: string;
   readonly redisRestToken: string;
   readonly answerLimits?: { readonly perAccountMinute: number; readonly perAccountDaily: number; readonly globalDaily: number };
+  readonly speech?: { readonly provider: WaveNetConfig; readonly limits: SpeechLimits };
 }
 
 export type VercelAssistantConfig =
@@ -34,7 +40,8 @@ export type VercelAssistantConfig =
       readonly thinkingLevel: RuntimeConfig["geminiThinkingLevel"]; readonly timeoutMs: number }
   | { readonly provider: "groq"; readonly apiKey: string; readonly transcriptionModel: string;
       readonly actionModel: string; readonly timeoutMs: number; readonly maxCompletionTokens: number;
-      readonly answersEnabled?: boolean; readonly answerTimeoutMs?: number };
+      readonly answersEnabled?: boolean; readonly answerTimeoutMs?: number;
+      readonly transcription?: ParakeetConfig & { readonly provider: "nvidia-parakeet" } };
 
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env): BackendConfig {
   return {
@@ -65,6 +72,7 @@ export function loadVercelConfig(environment: NodeJS.ProcessEnv = process.env): 
     ...(redirectUri ? { googleOauthRedirectUri: redirectUri } : {}),
     ...loadUsageLimits(environment),
     assistant: loadAssistantConfig(environment),
+    ...loadSpeechConfig(environment),
     ...(environment.ANSWERS_ENABLED === "true" ? { answerLimits: {
       perAccountMinute: integer(environment, "ANSWER_PER_ACCOUNT_MINUTE", 3, 1, 12),
       perAccountDaily: integer(environment, "ANSWER_PER_ACCOUNT_DAILY", 20, 1, 100),
@@ -80,6 +88,30 @@ export function loadVercelConfig(environment: NodeJS.ProcessEnv = process.env): 
       "UPSTASH_REDIS_REST_KV_REST_API_TOKEN"
     ], 16)
   };
+}
+
+function loadSpeechConfig(environment: NodeJS.ProcessEnv): Pick<VercelBackendConfig, "speech"> {
+  const provider = environment.SPEECH_PROVIDER?.trim() || "device";
+  if (provider === "device") return {};
+  if (provider !== "wavenet") throw new Error("invalid_speech_provider");
+  if (environment.ANSWERS_ENABLED !== "true") throw new Error("speech_requires_answers");
+  const voice = environment.GOOGLE_TTS_VOICE?.trim() || "en-IN-Wavenet-A";
+  if (!/^en-(?:IN|US|GB|AU)-Wavenet-[A-J]$/.test(voice)) throw new Error("invalid_speech_voice");
+  const serviceAccountEmail = required(environment, "GOOGLE_TTS_SERVICE_ACCOUNT_EMAIL");
+  if (!/^[a-z0-9-]+@[a-z0-9-]+\.iam\.gserviceaccount\.com$/.test(serviceAccountEmail)) throw new Error("invalid_speech_account");
+  const projectId = required(environment, "GOOGLE_TTS_PROJECT_ID");
+  if (!/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(projectId)) throw new Error("invalid_speech_project");
+  const privateKey = required(environment, "GOOGLE_TTS_PRIVATE_KEY").replace(/\\n/g, "\n");
+  try {
+    const key = createPrivateKey(privateKey);
+    if (key.asymmetricKeyType !== "rsa" || (key.asymmetricKeyDetails?.modulusLength ?? 0) < 2_048) throw new Error();
+  } catch { throw new Error("invalid_speech_private_key"); }
+  return { speech: { provider: { serviceAccountEmail, privateKey, projectId, voice,
+    timeoutMs: integer(environment, "SPEECH_TIMEOUT_MS", 3_000, 500, 5_000) }, limits: {
+    accountMinute: integer(environment, "SPEECH_PER_ACCOUNT_MINUTE", 12, 1, 60),
+    accountDailyCharacters: integer(environment, "SPEECH_PER_ACCOUNT_DAILY_CHARACTERS", 10_000, 600, 100_000),
+    globalMonthlyCharacters: integer(environment, "SPEECH_GLOBAL_MONTHLY_CHARACTERS", 3_500_000, 600, 4_000_000)
+  } } };
 }
 
 function loadRuntimeConfig(environment: NodeJS.ProcessEnv): RuntimeConfig {
@@ -112,6 +144,7 @@ function loadAssistantConfig(environment: NodeJS.ProcessEnv): VercelAssistantCon
       actionModel: groqModel(environment.GROQ_ACTION_MODEL?.trim() || "openai/gpt-oss-20b"),
       timeoutMs: integer(environment, "GROQ_TIMEOUT_MS", 10_000, 500, 12_000),
       maxCompletionTokens: integer(environment, "GROQ_MAX_COMPLETION_TOKENS", 512, 512, 2_048),
+      ...loadTranscriptionConfig(environment),
       ...(environment.ANSWERS_ENABLED === "true" ? {
         answersEnabled: true,
         answerTimeoutMs: integer(environment, "GROQ_ANSWER_TIMEOUT_MS", 18_000, 1_000, 25_000)
@@ -119,6 +152,9 @@ function loadAssistantConfig(environment: NodeJS.ProcessEnv): VercelAssistantCon
     };
   }
   if (provider !== "gemini") throw new Error("invalid_ai_provider");
+  if (environment.TRANSCRIPTION_PROVIDER && environment.TRANSCRIPTION_PROVIDER !== "groq") {
+    throw new Error("separate_transcription_requires_groq");
+  }
   return {
     provider,
     apiKey: secret(environment, "GEMINI_API_KEY", 16),
@@ -126,6 +162,19 @@ function loadAssistantConfig(environment: NodeJS.ProcessEnv): VercelAssistantCon
     thinkingLevel: thinkingLevel(environment.GEMINI_THINKING_LEVEL ?? "MINIMAL"),
     timeoutMs: integer(environment, "GEMINI_TIMEOUT_MS", 10_000, 500, 12_000)
   };
+}
+
+function loadTranscriptionConfig(environment: NodeJS.ProcessEnv): { transcription?: ParakeetConfig & { provider: "nvidia-parakeet" } } {
+  const provider = environment.TRANSCRIPTION_PROVIDER?.trim() || "groq";
+  if (provider === "groq") return {};
+  if (provider !== "nvidia-parakeet") throw new Error("invalid_transcription_provider");
+  const apiKey = secret(environment, "NVIDIA_API_KEY", 16);
+  if (apiKey.length > 4_096 || /[^\x21-\x7e]/.test(apiKey)) throw new Error("invalid_nvidia_api_key");
+  const functionId = environment.NVIDIA_ASR_FUNCTION_ID?.trim() || PARAKEET_V2_FUNCTION_ID;
+  if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(functionId)) throw new Error("invalid_nvidia_asr_function_id");
+  const minConfidence = Number(required(environment, "NVIDIA_ASR_MIN_CONFIDENCE"));
+  if (!Number.isFinite(minConfidence) || minConfidence === 0) throw new Error("invalid_nvidia_asr_min_confidence");
+  return { transcription: { provider, apiKey, functionId, minConfidence } };
 }
 
 function groqModel(value: string): string {
