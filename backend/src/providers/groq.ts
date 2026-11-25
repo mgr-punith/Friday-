@@ -7,6 +7,7 @@ import {
 import { AssistantProviderError, type AssistantProvider, type AssistantProviderResult,
   type CommandInput, type FunctionSelection } from "../core/contracts";
 import type { FetchLike } from "./gemini";
+import { ANSWER_PROMPT, ANSWER_TOOL, needsCurrentInformation, readBrowserAnswer, readKnowledgeAnswer } from "../core/answers";
 
 export interface GroqProviderConfig {
   readonly apiKey: string;
@@ -14,6 +15,8 @@ export interface GroqProviderConfig {
   readonly actionModel: string;
   readonly timeoutMs: number;
   readonly maxCompletionTokens: number;
+  readonly answersEnabled?: boolean;
+  readonly answerTimeoutMs?: number;
 }
 
 export interface GroqRequestRuntime {
@@ -30,10 +33,11 @@ const DEFAULT_RUNTIME: GroqRequestRuntime = {
 const API = "https://api.groq.com/openai/v1";
 const MAX_TRANSCRIPT_LENGTH = 500;
 const MIN_RETRY_BUDGET_MS = 250;
-type Stage = "transcription" | "classification";
-interface RequestBudget { readonly startedAt: number; readonly deadline: number; retries: number }
+type Stage = "transcription" | "classification" | "answer";
+interface RequestBudget { readonly startedAt: number; deadline: number; retries: number;
+  readonly usage: Record<string, { inputTokens: number; outputTokens: number; cachedTokens: number }> }
 
-/** One transcription and one forced tool call, sharing a deadline and one retry allowance. */
+/** Skip selection for exact safe commands; otherwise share one retry across recognition and answering. */
 export class GroqProvider implements AssistantProvider {
   constructor(
     private readonly config: GroqProviderConfig,
@@ -41,9 +45,9 @@ export class GroqProvider implements AssistantProvider {
     private readonly runtime: GroqRequestRuntime = DEFAULT_RUNTIME
   ) {}
 
-  async select(input: CommandInput, now: string): Promise<AssistantProviderResult> {
+  async select(input: CommandInput, now: string, context?: { authorizeAnswer(): Promise<boolean> }): Promise<AssistantProviderResult> {
     const startedAt = this.runtime.now();
-    const budget: RequestBudget = { startedAt, deadline: startedAt + this.config.timeoutMs, retries: 1 };
+    const budget: RequestBudget = { startedAt, deadline: startedAt + this.config.timeoutMs, retries: 1, usage: {} };
     const stages: Record<string, number> = {};
     let text = input.kind === "text" ? input.text.trim() : "";
     if (input.kind === "audio") {
@@ -58,22 +62,47 @@ export class GroqProvider implements AssistantProvider {
       const value = await this.request("transcription", () => ({ body: form }), budget);
       stages.transcription = this.runtime.now() - started;
       text = this.readTranscript(value, budget);
-      if (!text) return { selection: { name: "unclear_command", args: {} }, durationMs: this.elapsed(budget), timingMetric: "groq", stages };
+      if (!text) return { selection: { name: "unclear_command", args: {} }, durationMs: this.elapsed(budget), timingMetric: "groq", stages, usage: budget.usage };
     }
     if (!text || text.length > MAX_TRANSCRIPT_LENGTH) {
-      return { selection: { name: "unclear_command", args: {} }, durationMs: this.elapsed(budget), timingMetric: "groq", stages };
+      return { selection: { name: "unclear_command", args: {} }, durationMs: this.elapsed(budget), timingMetric: "groq", stages, usage: budget.usage };
     }
-    const started = this.runtime.now();
     const actionVersion = input.actionVersion ?? 1;
-    const tools = functionDeclarationsFor(actionVersion);
+    const supportsAnswers = input.supportsAnswers === true && this.config.answersEnabled === true && context !== undefined;
+    const following = input.answerContext;
+    if (following && !supportsAnswers) throw this.failure(budget, "classification", "invalid_context");
+    // Clarification replies are answer-only, including replies that look like exact phone commands.
+    const exact = !following && actionVersion >= 2 ? exactDeviceRequest(text, input.actionVersion === 5) : null;
+    if (exact) return { selection: exact, durationMs: this.elapsed(budget), timingMetric: "groq", stages, usage: budget.usage };
+    const started = this.runtime.now();
+    const answerTool = following?.remaining === 0 ? { ...ANSWER_TOOL, parameters: { ...ANSWER_TOOL.parameters,
+      properties: { ...ANSWER_TOOL.parameters.properties, mode: { type: "string", enum: ["knowledge", "lookup", "unavailable"] } } } } : ANSWER_TOOL;
+    const tools = following ? [answerTool] : [...compactGroqTools(actionVersion).map(tool => supportsAnswers && tool.name === "unsupported"
+      ? { ...tool, description: "Use for chat, essays, non-English speech or unsupported phone controls." } : tool),
+      ...(supportsAnswers ? [answerTool] : [])];
     const actionInstructions = actionInstructionsFor(actionVersion);
+    const question = following ? JSON.stringify({ originalQuestion: following.question, earlierReplies: following.turns,
+      clarification: following.prompt, reply: text }) : text;
+    const instructions = following
+      ? "You give brief factual answers for an English voice assistant. Use the original question, earlier replies and latest reply together. " +
+        "Do not ask again for details already provided. Only answer questions; phone commands, chat or non-English replies use unavailable. " +
+        (following.remaining === 0 ? "No clarification questions remain. If essential detail is still missing, use unavailable and ask the user to start a new question with more detail. "
+          : "If essential detail is still missing, ask one short clarification before searching. ")
+      : (supportsAnswers ? SYSTEM_PROMPT.replace("Never answer questions.", "Use answer_question for factual questions. " +
+          "Answer clear questions directly. You cannot see the screen or earlier conversations. " +
+          "If the person, match, place or other essential subject is missing, use clarification with one short question. " +
+          "Do not guess the missing subject or answer with a request for detail in knowledge mode.") : SYSTEM_PROMPT) + actionInstructions;
     const value = await this.request("classification", (repair) => ({
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         model: this.config.actionModel,
         messages: [
-          { role: "system", content: SYSTEM_PROMPT + actionInstructions + " Return one tool call with a valid JSON object. Omit optional fields that were not spoken. Do not output prose." },
-          { role: "user", content: `Current phone time: ${now}\nCommand: ${text}` }
+          { role: "system", content: instructions + (supportsAnswers && !following
+            ? " For intelligible factual questions, including incomplete questions about a person or match, choose answer_question. " +
+              "Missing essential details use answer_question with arguments {\"mode\":\"clarification\",\"text\":\"your short question\"}." : "") +
+            (supportsAnswers ? " The answer modes are argument values, never function names." : "") +
+            " Return one tool call with a valid JSON object. Omit optional fields that were not spoken. Do not output prose." },
+          { role: "user", content: `Current phone time: ${now}\n${following ? "Question context" : "Command"}: ${question}` }
         ],
         tools: tools.map((declaration) => ({ type: "function", function: {
           ...declaration,
@@ -86,11 +115,42 @@ export class GroqProvider implements AssistantProvider {
         ...(this.config.actionModel.startsWith("openai/gpt-oss-") ? { reasoning_effort: "low", include_reasoning: false } : {})
       })
     }), budget);
-    const selection = readToolCall(value, functionNamesFor(actionVersion));
+    const selection = readToolCall(value, following ? [ANSWER_TOOL.name] : [...functionNamesFor(actionVersion), ...(supportsAnswers ? [ANSWER_TOOL.name] : [])]);
     if (!selection) throw this.failure(budget, "classification", "invalid_response");
     stages.classification = this.runtime.now() - started;
-    const exact = actionVersion >= 2 ? exactDeviceRequest(text, actionVersion >= 5) : null;
-    return { selection: exact ?? selection, durationMs: this.elapsed(budget), timingMetric: "groq", stages };
+    if (selection.name === ANSWER_TOOL.name) {
+      let directAnswer = readKnowledgeAnswer(selection.args);
+      if (directAnswer?.kind === "clarification" && following?.remaining === 0) {
+        directAnswer = { kind: "unavailable", text: "I couldn't narrow that down. Please ask the full question with more detail.", sources: [] };
+      }
+      const forceLookup = directAnswer?.kind === "knowledge" && needsCurrentInformation(question, directAnswer.text, now);
+      if (directAnswer && !forceLookup) return { selection, answer: directAnswer, question: text,
+        durationMs: this.elapsed(budget), timingMetric: "groq", stages, usage: budget.usage };
+      // Lookup text is never trusted as a rewritten query; always search the original request.
+      if (!forceLookup && (!isRecord(selection.args) || selection.args.mode !== "lookup" ||
+        (selection.args.text !== undefined && (typeof selection.args.text !== "string" || selection.args.text.length > 600)) ||
+        Object.keys(selection.args).some(key => !["mode", "text"].includes(key)))) throw this.failure(budget, "answer", "invalid_response");
+      if (!await context?.authorizeAnswer()) {
+        throw this.failure(budget, "answer", "quota_denied");
+      }
+      budget.deadline = startedAt + (this.config.answerTimeoutMs ?? 18_000);
+      const answerStarted = this.runtime.now();
+      const raw = await this.request("answer", () => ({
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: this.config.actionModel,
+          messages: [{ role: "system", content: ANSWER_PROMPT },
+            { role: "user", content: `Current phone time: ${now}\nQuestion: ${question}` }],
+          tools: [{ type: "browser_search" }], tool_choice: "required", temperature: 0,
+          max_completion_tokens: 2_048, reasoning_effort: "low", include_reasoning: false })
+      }), budget);
+      let answer = readBrowserAnswer(raw);
+      if (!answer) throw this.failure(budget, "answer", "invalid_response");
+      if (answer.kind === "clarification") answer = { kind: "unavailable",
+        text: "I couldn't verify that. Please ask a new question with more detail.", sources: [] };
+      stages.answer = this.runtime.now() - answerStarted;
+      return { selection, answer, durationMs: this.elapsed(budget), timingMetric: "groq", stages, usage: budget.usage };
+    }
+    return { selection, durationMs: this.elapsed(budget), timingMetric: "groq", stages, usage: budget.usage };
   }
 
   private readTranscript(value: unknown, budget: RequestBudget): string {
@@ -124,7 +184,14 @@ export class GroqProvider implements AssistantProvider {
           signal: controller.signal
         });
         if (response.ok) {
-          const value = await readJson(response, 65_536);
+          const value = await readJson(response, stage === "answer" ? 262_144 : 65_536);
+          if (isRecord(value) && isRecord(value.usage)) {
+            const count = (v: unknown) => typeof v === "number" && Number.isSafeInteger(v) && v >= 0 ? v : 0;
+            const previous = budget.usage[stage];
+            budget.usage[stage] = { inputTokens: (previous?.inputTokens ?? 0) + count(value.usage.prompt_tokens),
+              outputTokens: (previous?.outputTokens ?? 0) + count(value.usage.completion_tokens),
+              cachedTokens: (previous?.cachedTokens ?? 0) + count(isRecord(value.usage.prompt_tokens_details) ? value.usage.prompt_tokens_details.cached_tokens : 0) };
+          }
           if (this.runtime.now() >= budget.deadline) throw this.failure(budget, stage, "timeout");
           return value;
         }
@@ -172,9 +239,23 @@ export class GroqProvider implements AssistantProvider {
     retryAfterSeconds?: number): AssistantProviderError {
     return new AssistantProviderError(reason === "timeout" || status === 408 || status === 504 ? "timeout" : "busy",
       this.elapsed(budget), { diagnosticCode: `groq_${stage}_${reason}`, timingMetric: "groq",
+        usage: budget.usage,
         ...(status === undefined ? {} : { httpStatus: status }),
         ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }) });
   }
+}
+
+/** Refer to the existing action tools instead of repeating every schema inside a sequence. */
+export function compactGroqTools(version: NonNullable<CommandInput["actionVersion"]>) {
+  const declarations = functionDeclarationsFor(version);
+  const actions = declarations.filter(tool => !["run_actions", "unsupported", "unclear_command"].includes(tool.name)).map(tool => tool.name);
+  return declarations.map(tool => tool.name !== "run_actions" ? tool : {
+    name: tool.name, description: "Run 2-3 requested actions in order. Use each action tool's arguments. Only flashlight, volume and ringer may precede another action.",
+    parameters: { type: "object", properties: { actions: { type: "array", minItems: 2, maxItems: 3,
+      items: { type: "object", properties: { action: { type: "string", enum: actions },
+        args: { type: "object", description: "Same arguments as the selected action tool." } },
+      required: ["action", "args"], additionalProperties: false } } }, required: ["actions"] }
+  });
 }
 
 // Pin common, explicit commands after the transcript check. Never match part of a compound or negated request.

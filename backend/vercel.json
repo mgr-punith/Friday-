@@ -7,11 +7,15 @@
   "regions": ["bom1"],
   "functions": {
     "api/index.mjs": {
-      "maxDuration": 15,
+      "maxDuration": 30,
       "supportsCancellation": true
     }
   },
   "rewrites": [
+    {
+      "source": "/v1/answers/report",
+      "destination": "/api/index?fridayRoute=answers/report"
+    },
     {
       "source": "/v1/auth/:path*",
       "destination": "/api/index?fridayRoute=auth/:path*"

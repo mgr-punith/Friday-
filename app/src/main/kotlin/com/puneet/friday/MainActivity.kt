@@ -30,6 +30,8 @@ import com.puneet.friday.ui.Destination
 import com.puneet.friday.ui.TabHostView
 import com.puneet.friday.ui.FridayDialog
 import com.puneet.friday.ui.CompletionPolicy
+import com.puneet.friday.ui.AnswerDialog
+import com.puneet.friday.ui.AnswerConsent
 import com.puneet.friday.auth.AccountClient
 import com.puneet.friday.auth.AccountStore
 import com.puneet.friday.auth.SignInActivity
@@ -45,6 +47,9 @@ import com.puneet.friday.voice.VoiceFailureCopy
 import com.puneet.friday.voice.VoiceUiOutcome
 import com.puneet.friday.voice.VoiceRecorder
 import com.puneet.friday.voice.uiOutcome
+import com.puneet.friday.voice.InformationAnswer
+import com.puneet.friday.voice.AnswerSource
+import com.puneet.friday.voice.AnswerPayload
 import java.io.IOException
 import java.net.ConnectException
 import java.net.SocketTimeoutException
@@ -91,6 +96,13 @@ open class MainActivity : Activity() {
     private var pendingAutoListen = false
     private var setupPromptOpen = false
     private var permissionDialog: Dialog? = null
+    private var answerDialog: AnswerDialog? = null
+    private var lastAnswer: InformationAnswer? = null
+    private var answerSpeechStarted = false
+    private var answerOptionsOpen = false
+    private var answerCloseDelay: Long? = null
+    private var answerDismissal: Runnable? = null
+    private var reportDialog: Dialog? = null
     private var resumeListeningAfterSetup = false
     private var unlockRequired = false
     private var accountRequired = false
@@ -218,6 +230,8 @@ open class MainActivity : Activity() {
     }
 
     override fun onPause() {
+        val wasAnswer = answerDialog != null
+        clearAnswer()
         permissionDialog?.dismiss()
         settingsPanel?.dismissPopups()
         logEntryLifecycle("pause")
@@ -231,7 +245,7 @@ open class MainActivity : Activity() {
         DebugTools.onAssistantHidden(this)
         // Clock/call/app intents can pause us before the speech close timer fires.
         // A completed compact panel must not return as an empty listening screen.
-        if (completion.closeScreen) {
+        if (completion.closeScreen || compactSurface && wasAnswer && !isChangingConfigurations) {
             if (BuildConfig.DEBUG) Log.i(VOICE_LOG_TAG, "event=success_panel_dismissed_on_pause")
             finish()
         }
@@ -241,8 +255,10 @@ open class MainActivity : Activity() {
     private fun createConfirmationSpeaker() = ConfirmationSpeaker(this, ::onSpeechState, ::onSpeechAudio,
         onAvailable = { available ->
             speechAvailable = available
+            answerDialog?.setSpeechAvailable(available)
             if (!available) {
                 surface.replay.visibility = View.GONE
+                if (lastAnswer != null) scheduleAnswerDismissal(answerReadingDelay())
                 if (lastConfirmation != null) scheduleResultDismissal(speaking = false, waitingForSpeech = false)
             }
         }, onFinished = ::onSpeechFinished)
@@ -420,8 +436,10 @@ open class MainActivity : Activity() {
         }
     }
 
-    private fun startListening(fromWake: Boolean = false) {
+    private fun startListening(fromWake: Boolean = false, answerContext: String? = null) {
         if (!resumed) return
+        clearAnswer()
+        if (answerContext != null && (DeviceLock.isLocked(this) || !AnswerConsent.isAllowed(this))) return
         if (!AccountStore.isSignedIn(this)) { showSignInRequired(); return }
         ConfirmationSpeaker.stopPlayback()
         cancelResultDismissal()
@@ -438,6 +456,15 @@ open class MainActivity : Activity() {
             showPermission(RequiredAccess.MICROPHONE)
             return
         }
+        if (!AnswerConsent.hasChoice(this)) {
+            if (DeviceLock.isLocked(this)) { showUnlockRequired(); return }
+            if (permissionDialog?.isShowing == true) return
+            permissionDialog = AnswerConsent.show(this) {
+                permissionDialog = null
+                if (resumed) startListening(fromWake, answerContext)
+            }
+            return
+        }
         if (!compactSurface) DebugTools.onAssistantVisible(this)
         val request = ++generation
         state = VoiceState.LISTENING
@@ -452,12 +479,12 @@ open class MainActivity : Activity() {
         detail.setTextColor(getColor(R.color.text_secondary))
         orb.setState(AssistantOrbView.State.LISTENING)
         backend.warmAsync()
-        val commandRecorder = VoiceRecorder(applicationContext, afterWake = fromWake)
+        val commandRecorder = VoiceRecorder(applicationContext, afterWake = fromWake, answerReply = answerContext != null)
         activeRecorder = commandRecorder
         worker.execute {
             val capture = try {
                 commandRecorder.record(
-                    onReady = { runIfCurrent(request) { showListeningReady(fromWake) } },
+                    onReady = { runIfCurrent(request) { showListeningReady(fromWake, answerContext != null) } },
                     onLevel = { level -> updateAudioLevel(request, level) },
                 )
             } catch (_: SecurityException) {
@@ -480,11 +507,11 @@ open class MainActivity : Activity() {
                         if (BuildConfig.DEBUG) Log.i(
                             VOICE_LOG_TAG, "event=command_captured wake=$fromWake audioMs=${capture.recording.durationMs}",
                         )
-                        sendRecording(request, capture.recording)
+                        sendRecording(request, capture.recording, answerContext)
                     }
                     CaptureResult.NoClearCommand -> {
                         if (BuildConfig.DEBUG) Log.i(VOICE_LOG_TAG, "event=command_no_speech wake=$fromWake")
-                        showError("I couldn't hear a clear command")
+                        showError(if (answerContext != null) "I didn't hear a reply. Ask the full question again." else "I couldn't hear a clear command")
                     }
                     CaptureResult.AudioInUse -> {
                         if (BuildConfig.DEBUG) Log.i(VOICE_LOG_TAG, "event=command_audio_in_use wake=$fromWake")
@@ -523,18 +550,25 @@ open class MainActivity : Activity() {
         orb.isEnabled = micButton.isEnabled
     }
 
-    private fun showListeningReady(fromWake: Boolean) {
+    private fun showListeningReady(fromWake: Boolean, answerReply: Boolean = false) {
         if (state != VoiceState.LISTENING) return
-        showVoiceStatus("Listening")
-        surface.showToast("Listening")
+        val message = if (answerReply) "Listening for your reply" else "Listening"
+        showVoiceStatus(message)
+        surface.showToast(message)
+        if (BuildConfig.DEBUG && answerReply) Log.i(VOICE_LOG_TAG, "event=answer_reply_listening")
         if (fromWake) {
             DebugTools.playWakeCue()
             if (BuildConfig.DEBUG) Log.i(VOICE_LOG_TAG, "event=wake_listening")
         }
     }
 
-    private fun sendRecording(request: Int, recording: RecordedCommand) {
+    private fun sendRecording(request: Int, recording: RecordedCommand, answerContext: String? = null) {
         if (!isCurrent(request)) return
+        if (BuildConfig.DEBUG && answerContext == DEBUG_ANSWER_CONTEXT) {
+            // The labeled clarification fixture can exercise capture, but never uploads a recording.
+            showDebugState("answer")
+            return
+        }
         lastRecordMs = SystemClock.elapsedRealtime() - listenStartedMs
         state = VoiceState.PROCESSING
         micButton.setActive(false)
@@ -550,7 +584,7 @@ open class MainActivity : Activity() {
         worker.execute {
             if (!isCurrent(request)) return@execute
             val result = try {
-                backend.sendCommand(recording.wavBytes) { !isCurrent(request) }
+                backend.sendCommand(recording.wavBytes, answerContext) { !isCurrent(request) }
             } catch (error: SocketTimeoutException) {
                 logCommandFailure(error)
                 runIfCurrent(request) { showError(VoiceFailureCopy.forOutcome(VoiceUiOutcome.TIMEOUT)) }
@@ -578,6 +612,7 @@ open class MainActivity : Activity() {
         lastUploadMs = result.timings.uploadMs
         lastServerMs = result.timings.serverMs
         when (result.response.uiOutcome()) {
+            VoiceUiOutcome.ANSWER -> showAnswer((result.response as VoiceCommandResponse.Answer).answer)
             VoiceUiOutcome.ACTION -> {
                 val response = result.response as VoiceCommandResponse.Action
                 if (DeviceLock.requiresUnlock(this, response.action)) {
@@ -714,6 +749,115 @@ open class MainActivity : Activity() {
         showError("Sorry, I can't do that yet")
     }
 
+    private fun showAnswer(answer: InformationAnswer) {
+        if (DeviceLock.isLocked(this)) { showUnlockRequired(); return }
+        cancelVoiceWork(resetUi = true)
+        DebugTools.hideFromLockScreen(this)
+        lastAnswer = answer
+        if (compactSurface) surface.visibility = View.INVISIBLE
+        answerDialog = AnswerDialog(this, answer,
+            speechAvailable = speechAvailable,
+            onStop = ::closeAnswer,
+            onOptions = { open ->
+                answerOptionsOpen = open
+                if (open) cancelAnswerDismissal() else answerCloseDelay?.let(::scheduleAnswerDismissal)
+            },
+            onSource = { url ->
+                if (DeviceLock.isLocked(this)) { clearAnswer(); showUnlockRequired(); return@AnswerDialog }
+                if (AnswerPayload.isPublicSource(url)) try {
+                    startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE))
+                } catch (_: RuntimeException) { surface.showToast("No browser available") }
+            },
+            onReport = { chooseAnswerReport(answer) },
+            onClose = ::closeAnswer,
+        )
+        // Leave time to read if the optional speech engine never starts.
+        scheduleAnswerDismissal(answerReadingDelay() + 12_000)
+        confirmationSpeaker.speak(answer.text)
+    }
+
+    private fun closeAnswer() {
+        if (lastAnswer == null) return
+        clearAnswer()
+        confirmationSpeaker.stop()
+        if (compactSurface) finish() else resetIdle()
+    }
+
+    private fun finishAnswerSpeech(answer: InformationAnswer) {
+        val context = answer.continuation
+        if (context == null || DeviceLock.isLocked(this) || !AnswerConsent.isAllowed(this) ||
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            closeAnswer()
+            return
+        }
+        clearAnswer()
+        if (BuildConfig.DEBUG) Log.i(VOICE_LOG_TAG, "event=answer_reply_requested")
+        startListening(answerContext = context)
+    }
+
+    private fun clearAnswer() {
+        cancelAnswerDismissal()
+        answerCloseDelay = null
+        answerSpeechStarted = false
+        answerOptionsOpen = false
+        lastAnswer = null
+        val popup = answerDialog
+        answerDialog = null
+        popup?.dismiss()
+        reportDialog?.dismiss()
+        reportDialog = null
+        if (::surface.isInitialized) surface.visibility = View.VISIBLE
+    }
+
+    private fun cancelAnswerDismissal() {
+        answerDismissal?.let(surface::removeCallbacks)
+        answerDismissal = null
+    }
+
+    private fun answerReadingDelay(): Long =
+        ((lastAnswer?.text?.split(Regex("\\s+"))?.size ?: 0) * 350L).coerceIn(5_000L, 30_000L)
+
+    private fun scheduleAnswerDismissal(delay: Long) {
+        cancelAnswerDismissal()
+        answerCloseDelay = delay
+        val answer = lastAnswer ?: return
+        if (answerOptionsOpen || reportDialog?.isShowing == true) return
+        answerDismissal = Runnable {
+            answerDismissal = null
+            if (resumed && lastAnswer === answer && !answerOptionsOpen && reportDialog?.isShowing != true) {
+                if (BuildConfig.DEBUG) Log.i(VOICE_LOG_TAG, "event=answer_dismissed")
+                finishAnswerSpeech(answer)
+            }
+        }.also { surface.postDelayed(it, delay) }
+    }
+
+    private fun chooseAnswerReport(answer: InformationAnswer) {
+        if (DeviceLock.isLocked(this)) { clearAnswer(); showUnlockRequired(); return }
+        cancelAnswerDismissal()
+        answerCloseDelay = null
+        confirmationSpeaker.stop()
+        reportDialog?.dismiss()
+        reportDialog = FridayDialog.choices(this, "Report this answer",
+            listOf("Incorrect information", "Outdated information", "Offensive content", "Other problem"),
+            onCancel = ::closeAnswer) { index ->
+            reportDialog = FridayDialog.show(this, "Send this report?",
+                "Send this answer, its source links and the selected reason to Friday for review. Friday keeps reports for seven days. Your recording and question are not included.",
+                positive = "Send report", negative = "Cancel", onCancel = ::closeAnswer) {
+                val request = generation
+                worker.execute {
+                    val sent = try { backend.reportAnswer(answer, listOf("incorrect", "outdated", "offensive", "other")[index]) }
+                        catch (_: Exception) { false }
+                    runIfCurrent(request) {
+                        reportDialog = FridayDialog.show(this,
+                            if (sent) "Report sent" else "Report not sent",
+                            if (sent) "Friday received your report." else "Check your connection and try again.",
+                            onCancel = ::closeAnswer, onPositive = ::closeAnswer)
+                    }
+                }
+            }
+        }
+    }
+
     private fun showPermission(access: RequiredAccess, completed: String = "") {
         cancelResultDismissal()
         if (DeviceLock.isLocked(this)) {
@@ -798,6 +942,7 @@ open class MainActivity : Activity() {
     }
 
     private fun cancelVoiceWork(resetUi: Boolean, preserveConfirmation: Boolean = false) {
+        clearAnswer()
         pendingSequence = null
         orbDemoRunnable?.let(orb::removeCallbacks)
         orbDemoRunnable = null
@@ -842,6 +987,16 @@ open class MainActivity : Activity() {
         speechAudioSeen = false
         if (BuildConfig.DEBUG) Log.i(VOICE_LOG_TAG, "ttsSpeaking=$speaking")
         if (!resumed || state != VoiceState.IDLE) return
+        answerDialog?.let {
+            if (speaking) {
+                answerSpeechStarted = true
+                answerCloseDelay = null
+                cancelAnswerDismissal()
+            }
+            it.setSpeaking(speaking)
+            orb.setState(if (speaking) AssistantOrbView.State.SPEAKING else AssistantOrbView.State.IDLE)
+            return
+        }
         micButton.showStop(speaking)
         micButton.setActive(speaking)
         micButton.contentDescription = if (speaking) "Stop speaking" else "Start listening"
@@ -857,6 +1012,12 @@ open class MainActivity : Activity() {
 
     private fun onSpeechFinished() {
         if (BuildConfig.DEBUG) Log.i(VOICE_LOG_TAG, "event=speech_finished")
+        if (resumed && lastAnswer != null) {
+            scheduleAnswerDismissal(if (answerSpeechStarted) {
+                if (lastAnswer?.continuation != null) 350L else 0L
+            } else answerReadingDelay())
+            return
+        }
         if (resumed && lastConfirmation != null) scheduleResultDismissal(speaking = false, waitingForSpeech = false)
     }
 
@@ -935,6 +1096,19 @@ open class MainActivity : Activity() {
         selectDestination(Destination.HOME)
         cancelVoiceWork(resetUi = true)
         when (scenario) {
+            "answer", "answer-live", "answer-clarification", "answer-followup" -> {
+                val live = scenario == "answer-live"
+                val clarify = scenario == "answer-clarification" || scenario == "answer-followup"
+                showAnswer(InformationAnswer(
+                    if (live) "information" else if (clarify) "clarification" else "knowledge",
+                    if (live) "Preview: This card shows a short verified answer with source links. Live scores need a deployed backend and a current web search."
+                    else if (clarify) "Preview: Do you mean Mahatma Gandhi or Indira Gandhi?"
+                    else "Preview: Sachin Tendulkar is a former Indian cricketer known for his batting records. He played international cricket from 1989 to 2013.",
+                    if (live) listOf(AnswerSource("Sample source", "https://www.icc-cricket.com/")) else emptyList(),
+                    "123e4567-e89b-42d3-a456-426614174000", 0L, "a".repeat(43),
+                    if (scenario == "answer-followup") DEBUG_ANSWER_CONTEXT else null,
+                ))
+            }
             "success", "speaking" -> {
                 surface.showRequest("Set timer · 10 minutes")
                 showResult("Preview: Timer request sent for 10 minutes")
@@ -1051,6 +1225,7 @@ open class MainActivity : Activity() {
         const val WAKE_RECOVERY_CONTROL_LABEL = "Returning to Hey Friday"
         const val VOICE_LOG_TAG = "FridayVoice"
         const val DEBUG_ORB_VOICE_EXTRA = "debug_orb_voice"
+        const val DEBUG_ANSWER_CONTEXT = "friday_debug_answer_followup_no_upload"
         const val DEBUG_ORB_VOICE_DURATION_MS = 4_000L
         const val DEBUG_ORB_FRAME_MS = 32L
         const val SETUP_REQUEST = 203

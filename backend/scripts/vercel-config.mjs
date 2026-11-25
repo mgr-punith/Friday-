@@ -7,6 +7,7 @@ const FUNCTION_ENTRY = "api/index.mjs";
 const TYPESCRIPT_FUNCTION_ENTRY = "api/index.ts";
 const OUTPUT_DIRECTORY = "public";
 const EXPECTED_REWRITES = new Map([
+  ["/v1/answers/report", "/api/index?fridayRoute=answers/report"],
   ["/v1/auth/:path*", "/api/index?fridayRoute=auth/:path*"],
   ["/v1/register", "/api/index?fridayRoute=register"],
   ["/v1/warm", "/api/index?fridayRoute=warm"],
@@ -30,7 +31,7 @@ export function validateVercelConfig(config, projectDirectory) {
 
   const functionConfig = config.functions?.[FUNCTION_ENTRY];
   requireValue(functionConfig !== undefined, "vercel_function_entry_missing");
-  requireValue(functionConfig.maxDuration === 15, "vercel_function_duration_must_be_15");
+  requireValue(functionConfig.maxDuration === 30, "vercel_function_duration_must_be_30");
   requireValue(functionConfig.supportsCancellation === true, "vercel_function_cancellation_required");
   requireValue(fs.existsSync(path.join(projectDirectory, FUNCTION_ENTRY)), "vercel_function_source_missing");
   requireValue(

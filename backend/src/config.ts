@@ -26,13 +26,15 @@ export interface VercelBackendConfig extends UsageLimits {
   readonly jwtSigningKey: string;
   readonly redisRestUrl: string;
   readonly redisRestToken: string;
+  readonly answerLimits?: { readonly perAccountMinute: number; readonly perAccountDaily: number; readonly globalDaily: number };
 }
 
 export type VercelAssistantConfig =
   | { readonly provider: "gemini"; readonly apiKey: string; readonly model: string;
       readonly thinkingLevel: RuntimeConfig["geminiThinkingLevel"]; readonly timeoutMs: number }
   | { readonly provider: "groq"; readonly apiKey: string; readonly transcriptionModel: string;
-      readonly actionModel: string; readonly timeoutMs: number; readonly maxCompletionTokens: number };
+      readonly actionModel: string; readonly timeoutMs: number; readonly maxCompletionTokens: number;
+      readonly answersEnabled?: boolean; readonly answerTimeoutMs?: number };
 
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env): BackendConfig {
   return {
@@ -44,6 +46,10 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Backen
 }
 
 export function loadVercelConfig(environment: NodeJS.ProcessEnv = process.env): VercelBackendConfig {
+  if (environment.ANSWERS_ENABLED && !["true", "false"].includes(environment.ANSWERS_ENABLED)) throw new Error("invalid_answers_enabled");
+  if (environment.ANSWERS_ENABLED === "true" && (environment.AI_PROVIDER?.trim().toLowerCase() !== "groq" ||
+    !["openai/gpt-oss-20b", "openai/gpt-oss-120b", "openai/gpt-oss-safeguard-20b"].includes(
+      environment.GROQ_ACTION_MODEL?.trim() || "openai/gpt-oss-20b"))) throw new Error("answers_require_browser_model");
   const googleWebClientId = required(environment, "GOOGLE_WEB_CLIENT_ID");
   if (!/^[0-9]+-[a-zA-Z0-9_-]+\.apps\.googleusercontent\.com$/.test(googleWebClientId)) throw new Error("invalid_google_web_client_id");
   const clientSecret = environment.GOOGLE_WEB_CLIENT_SECRET?.trim();
@@ -59,6 +65,11 @@ export function loadVercelConfig(environment: NodeJS.ProcessEnv = process.env): 
     ...(redirectUri ? { googleOauthRedirectUri: redirectUri } : {}),
     ...loadUsageLimits(environment),
     assistant: loadAssistantConfig(environment),
+    ...(environment.ANSWERS_ENABLED === "true" ? { answerLimits: {
+      perAccountMinute: integer(environment, "ANSWER_PER_ACCOUNT_MINUTE", 3, 1, 12),
+      perAccountDaily: integer(environment, "ANSWER_PER_ACCOUNT_DAILY", 20, 1, 100),
+      globalDaily: integer(environment, "ANSWER_GLOBAL_DAILY", 1_000, 1, 100_000)
+    } } : {}),
     jwtSigningKey: secret(environment, "JWT_SIGNING_KEY", 32),
     redisRestUrl: httpsUrl(requiredFirst(environment, [
       "UPSTASH_REDIS_REST_URL",
@@ -100,7 +111,11 @@ function loadAssistantConfig(environment: NodeJS.ProcessEnv): VercelAssistantCon
       transcriptionModel: groqModel(environment.GROQ_TRANSCRIPTION_MODEL?.trim() || "whisper-large-v3-turbo"),
       actionModel: groqModel(environment.GROQ_ACTION_MODEL?.trim() || "openai/gpt-oss-20b"),
       timeoutMs: integer(environment, "GROQ_TIMEOUT_MS", 10_000, 500, 12_000),
-      maxCompletionTokens: integer(environment, "GROQ_MAX_COMPLETION_TOKENS", 512, 512, 2_048)
+      maxCompletionTokens: integer(environment, "GROQ_MAX_COMPLETION_TOKENS", 512, 512, 2_048),
+      ...(environment.ANSWERS_ENABLED === "true" ? {
+        answersEnabled: true,
+        answerTimeoutMs: integer(environment, "GROQ_ANSWER_TIMEOUT_MS", 18_000, 1_000, 25_000)
+      } : {})
     };
   }
   if (provider !== "gemini") throw new Error("invalid_ai_provider");

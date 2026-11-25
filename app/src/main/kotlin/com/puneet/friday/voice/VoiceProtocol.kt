@@ -8,6 +8,7 @@ import com.puneet.friday.actions.SettingsTarget
 import com.puneet.friday.actions.VolumeStream
 import com.puneet.friday.actions.validationError
 import org.json.JSONException
+import org.json.JSONArray
 import org.json.JSONObject
 
 object VoiceProtocol {
@@ -16,6 +17,11 @@ object VoiceProtocol {
             JSONObject(body)
         } catch (_: JSONException) {
             return VoiceCommandResponse.Error(VoiceCommandResponse.Reason.BUSY)
+        }
+        if (value.optString("type") == "answer") {
+            val answer = AnswerPayload.parse(toMap(value))
+                ?: return VoiceCommandResponse.Error(VoiceCommandResponse.Reason.BUSY)
+            return VoiceCommandResponse.Answer(answer)
         }
         if (value.optString("type") == "actions") {
             val array = value.optJSONArray("actions")
@@ -47,8 +53,15 @@ object VoiceProtocol {
         val keys = value.keys()
         while (keys.hasNext()) {
             val key = keys.next()
-            put(key, value.opt(key).takeUnless { it === JSONObject.NULL })
+            put(key, jsonValue(value.opt(key)))
         }
+    }
+
+    private fun jsonValue(value: Any?): Any? = when (value) {
+        JSONObject.NULL -> null
+        is JSONObject -> toMap(value)
+        is JSONArray -> (0 until value.length()).map { jsonValue(value.opt(it)) }
+        else -> value
     }
 }
 

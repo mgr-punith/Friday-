@@ -104,3 +104,20 @@ test("Google login fails closed without a valid web client and a complete browse
   }
   assert.equal(loadVercelConfig({ ...base, GOOGLE_WEB_CLIENT_SECRET: "example-browser-secret", GOOGLE_OAUTH_REDIRECT_URI: "https://example.com/v1/auth/google/callback" }).googleOauthRedirectUri, "https://example.com/v1/auth/google/callback");
 });
+
+test("answers require explicit enablement, a browser-capable model and bounded search budgets", () => {
+  const base = { GOOGLE_WEB_CLIENT_ID: "123456789-test.apps.googleusercontent.com", AI_PROVIDER: "groq",
+    GROQ_API_KEY: "example-development-groq-key", JWT_SIGNING_KEY: "example-long-test-signing-key-with-thirty-two-bytes",
+    UPSTASH_REDIS_REST_URL: "https://example.upstash.io", UPSTASH_REDIS_REST_TOKEN: "development-redis-token" };
+  assert.equal(loadVercelConfig(base).answerLimits, undefined);
+  const enabled = loadVercelConfig({ ...base, ANSWERS_ENABLED: "true" });
+  assert.deepEqual(enabled.answerLimits, { perAccountMinute: 3, perAccountDaily: 20, globalDaily: 1_000 });
+  if (enabled.assistant.provider === "groq") assert.equal(enabled.assistant.answerTimeoutMs, 18_000);
+  assert.throws(() => loadVercelConfig({ ...base, ANSWERS_ENABLED: "yes" }), /invalid_answers_enabled/);
+  assert.throws(() => loadVercelConfig({ ...base, ANSWERS_ENABLED: "true", AI_PROVIDER: "gemini" }), /answers_require_browser_model/);
+  assert.throws(() => loadVercelConfig({ ...base, ANSWERS_ENABLED: "true", GROQ_ACTION_MODEL: "groq/compound-mini" }), /answers_require_browser_model/);
+  for (const [name, value] of [["ANSWER_GLOBAL_DAILY", "0"], ["ANSWER_PER_ACCOUNT_MINUTE", "100"],
+    ["GROQ_ANSWER_TIMEOUT_MS", "30000"]]) {
+    assert.throws(() => loadVercelConfig({ ...base, ANSWERS_ENABLED: "true", [name!]: value }), /invalid_/);
+  }
+});

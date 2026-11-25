@@ -14,6 +14,7 @@ import com.puneet.friday.entry.EntryPointPolicy
 import com.puneet.friday.entry.ReadyNotification
 import com.puneet.friday.ui.AppUi
 import com.puneet.friday.ui.FridayDialog
+import com.puneet.friday.ui.AnswerConsent
 import com.puneet.friday.ui.AnchoredPopup
 import com.puneet.friday.ui.SettingsGroup
 import com.puneet.friday.ui.SettingsRow
@@ -28,6 +29,8 @@ class SettingsPanel(private val activity: Activity, onAccount: () -> Unit, onBac
     private val assistantButton: SettingsRow
     private val assistantFallback: SettingsRow
     private val assistantFallbackGroup: SettingsGroup
+    private val answersButton: SettingsRow
+    private var answerConsentDialog: android.app.Dialog? = null
     private var pendingAssistantSettings = false
     private var showAssistantFallback = false
 
@@ -55,6 +58,15 @@ class SettingsPanel(private val activity: Activity, onAccount: () -> Unit, onBac
         val phone = SettingsGroup(activity).apply {
             addRow(SettingsRow(activity, "Permissions", icon = R.drawable.ic_permissions, onClick = onPermissions))
         }
+        answersButton = SettingsRow(activity, "Short answers", showChevron = false, icon = R.drawable.ic_info_circle) {
+            if (AnswerConsent.isAllowed(activity)) {
+                AnswerConsent.setAllowed(activity, false)
+                refresh()
+            } else {
+                answerConsentDialog = AnswerConsent.show(activity) { answerConsentDialog = null; refresh() }
+            }
+        }
+        phone.addRow(answersButton)
         content.addView(phone, AppUi.params(activity, 16))
         val debug = SettingsGroup(activity)
         DebugTools.addSettings(activity, debug)
@@ -69,9 +81,14 @@ class SettingsPanel(private val activity: Activity, onAccount: () -> Unit, onBac
         startFriday?.setValue(DebugTools.startMode(activity))
         updateReadyNotificationButton()
         updateAssistantButton()
+        answersButton.setValue(if (AnswerConsent.isAllowed(activity)) "On" else "Off")
     }
 
-    fun dismissPopups() = popup.dismiss()
+    fun dismissPopups() {
+        popup.dismiss()
+        answerConsentDialog?.dismiss()
+        answerConsentDialog = null
+    }
 
     private fun showAbout() {
         val menu = LinearLayout(activity).apply {

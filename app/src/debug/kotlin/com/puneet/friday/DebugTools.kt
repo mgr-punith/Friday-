@@ -80,5 +80,5 @@ internal object DebugTools {
     fun beginSpeechPlayback(speaker: Any) = WakeTrialService.beginSpeechPlayback(speaker)
     fun endSpeechPlayback(speaker: Any) = WakeTrialService.endSpeechPlayback(speaker)
     fun permissionSummary() = "Friday records commands after a tap or a wake in the opt-in Hey Friday test. Wake detection stays on this phone."
-    fun microphoneDisclosure() = "Friday sends short command recordings to its Vercel backend and Groq to transcribe the command and choose a phone action. Friday does not store command recordings or transcripts. Hey Friday runs on this phone. The optional wake audio tracker saves short wake clips in private storage on this phone."
+    fun microphoneDisclosure() = "Friday sends short recordings to its Vercel backend and Groq to understand phone commands and answer questions. For current information, Groq sends search queries to Exa. Friday does not store command recordings or transcripts. Hey Friday runs on this phone. The optional wake audio tracker saves short wake clips in private storage on this phone."
 }

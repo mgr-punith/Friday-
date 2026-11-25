@@ -83,10 +83,12 @@ object FridayDialog {
         }, AppUi.params(activity, 0))
     }
 
-    private fun create(
+    internal fun create(
         activity: Activity,
         title: String,
         onCancel: () -> Unit,
+        gravity: Int = Gravity.CENTER,
+        trailing: View? = null,
         actions: (Dialog, LinearLayout, LinearLayout, Int) -> Unit,
     ): Dialog {
         val dialog = Dialog(activity)
@@ -105,8 +107,15 @@ object FridayDialog {
             setPadding(padding, padding, padding, padding)
             background = AppUi.surface(context, 24, R.color.settings_surface, R.color.settings_divider)
         }
-        content.addView(AppUi.text(activity, title, 18f, bold = true).apply {
+        val heading = AppUi.text(activity, title, 18f, bold = true).apply {
             if (Build.VERSION.SDK_INT >= 28) isAccessibilityHeading = true
+        }
+        if (trailing == null) content.addView(heading, AppUi.params(activity, 10))
+        else content.addView(LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            this.gravity = Gravity.CENTER_VERTICAL
+            addView(heading, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(trailing, LinearLayout.LayoutParams(AppUi.dp(activity, 48), AppUi.dp(activity, 48)))
         }, AppUi.params(activity, 10))
         val body = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         val scroller = ScrollView(activity).apply {
@@ -126,7 +135,8 @@ object FridayDialog {
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
             setDimAmount(0.6f)
-            setGravity(Gravity.CENTER)
+            setGravity(gravity)
+            if (gravity and Gravity.TOP == Gravity.TOP) attributes = attributes.apply { y = margin }
         }
         dialog.show()
         content.measure(

@@ -18,6 +18,9 @@ import {
 } from "./jwt";
 import { isFridayWav } from "./wav";
 import type { AccountGateway } from "../auth/api";
+import { parseReport, signAnswer, validateAnswer, type AnswerReportStore, type AnswerResponse } from "./answers";
+import { safeAiUsage } from "./ai-usage";
+import { createAnswerContinuation, readAnswerContinuation } from "./answer-continuation";
 
 const MAX_AUDIO_BYTES = 1_000_000;
 const MAX_TEXT_LENGTH = 500;
@@ -51,6 +54,7 @@ export interface ApiDependencies {
   readonly clock: Clock;
   readonly logger: SafeLogger;
   readonly accounts?: AccountGateway;
+  readonly answers?: { readonly usage: UsageLimitStore; readonly reports: AnswerReportStore };
 }
 
 export function createApi(dependencies: ApiDependencies) {
@@ -72,6 +76,9 @@ export function createApi(dependencies: ApiDependencies) {
       }
       if (method === "POST" && path === "/v1/command") {
         return handleCommand(event, dependencies);
+      }
+      if (method === "POST" && path === "/v1/answers/report") {
+        return handleAnswerReport(event, dependencies);
       }
       return json(404, { error: "not_found" });
     }
@@ -147,6 +154,12 @@ async function handleCommand(
   const input = parseCommandInput(event);
   const now = header(event, "x-now");
   if (!input || !now || !isOffsetDateTime(now)) return commandError(400, "bad_audio");
+  const answersVersion = header(event, "x-friday-answers");
+  const supportsAnswers = ["1", "2"].includes(answersVersion ?? "") && dependencies.answers !== undefined;
+  const continuation = header(event, "x-friday-answer-context");
+  const answerContext = continuation !== undefined && supportsAnswers && answersVersion === "2"
+    ? readAnswerContinuation(continuation, installId, secrets.jwtSigningKey, dependencies.clock.now()) : null;
+  if (continuation !== undefined && !answerContext) return commandError(400, "bad_audio");
 
   try {
     const allowed = await dependencies.usage.consumeCommand(installId, dependencies.clock.now());
@@ -159,15 +172,33 @@ async function handleCommand(
   try {
     const actionVersion = actionProtocolVersion(header(event, "x-friday-actions"), header(event, "x-friday-media-controls"));
     const result = await dependencies.assistant.select(
-      actionVersion === 1 ? input : { ...input, actionVersion },
+      { ...input, ...(actionVersion === 1 ? {} : { actionVersion }), ...(supportsAnswers ? { supportsAnswers: true } : {}),
+        ...(answerContext ? { answerContext } : {}) },
       now,
+      ...(supportsAnswers ? [{ authorizeAnswer: () => dependencies.answers!.usage.consumeCommand(installId, dependencies.clock.now()) }] : []),
     );
+    if (result.usage) dependencies.logger.usage?.(safeAiUsage(result.usage));
+    if (result.answer !== undefined) {
+      let answer = validateAnswer(result.answer);
+      if (!supportsAnswers || !answer || result.selection.name !== "answer_question") return commandError(503, "busy");
+      // Clarify before the one permitted search, and stop after two clarification replies.
+      if (answer.kind === "clarification" && (answerContext?.remaining === 0 || result.stages?.answer !== undefined)) {
+        answer = { kind: "unavailable", text: "I couldn't narrow that down. Please ask the full question with more detail.", sources: [] };
+      }
+      const signed = signAnswer(answer, secrets.jwtSigningKey, dependencies.clock.now());
+      const next = answer.kind === "clarification" && answersVersion === "2" && result.question !== undefined
+        ? createAnswerContinuation(result.question, answer.text, installId, secrets.jwtSigningKey, dependencies.clock.now(), answerContext ?? undefined) : null;
+      return commandSuccess(next ? { ...signed, continuation: next } : signed,
+        result.durationMs, result.timingMetric, result.stages);
+    }
+    if (answerContext) return commandError(503, "busy");
     const response = parseFunctionSelection(result.selection, actionVersion);
     return response.type === "error"
       ? commandError(400, response.reason, result.durationMs, result.timingMetric, result.stages)
       : commandSuccess(response, result.durationMs, result.timingMetric, result.stages);
   } catch (error) {
     if (error instanceof AssistantProviderError) {
+      if (error.failure?.usage) dependencies.logger.usage?.(safeAiUsage(error.failure.usage));
       dependencies.logger.error(error.failure?.diagnosticCode ?? `assistant_${error.code}`, requestId(event));
       const status = error.code === "timeout" ? 504 : error.failure?.httpStatus === 429 ? 429 : 503;
       const response = commandError(status, error.code, error.durationMs, error.failure?.timingMetric);
@@ -177,6 +208,27 @@ async function handleCommand(
     }
     dependencies.logger.error("assistant_failed", requestId(event));
     return commandError(503, "busy");
+  }
+}
+
+async function handleAnswerReport(event: FunctionUrlEvent, dependencies: ApiDependencies): Promise<FunctionUrlResponse> {
+  if (!dependencies.answers) return json(404, { error: "not_found" });
+  try {
+    const secrets = await dependencies.secrets.getSecrets();
+    const token = bearerToken(header(event, "authorization"));
+    const account = dependencies.accounts && token ? await dependencies.accounts.authorize(token) : null;
+    const identity = dependencies.accounts ? account?.accountId
+      : token ? verifyInstallToken(token, secrets.jwtSigningKey, dependencies.clock.now()) : null;
+    if (!identity) return json(401, { error: "unauthorized" });
+    if (contentType(event) !== "application/json") return json(400, { error: "bad_request" });
+    const report = parseReport(parseJsonBody(event), secrets.jwtSigningKey, dependencies.clock.now());
+    if (!report) return json(400, { error: "bad_request" });
+    if (!await dependencies.usage.consumeCommand(identity, dependencies.clock.now())) return json(429, { error: "busy" });
+    await dependencies.answers.reports.save(report.answer, report.reason);
+    return { statusCode: 204, headers: baseHeaders() };
+  } catch {
+    dependencies.logger.error("answer_report_failed", requestId(event));
+    return serviceUnavailable();
   }
 }
 
@@ -283,7 +335,7 @@ function requestId(event: FunctionUrlEvent): string | undefined {
   return event.requestContext?.requestId;
 }
 
-function commandSuccess(response: CommandResponse, durationMs: number, metric?: "gemini" | "groq",
+function commandSuccess(response: CommandResponse | AnswerResponse, durationMs: number, metric?: "gemini" | "groq",
   stages?: Readonly<Record<string, number>>): FunctionUrlResponse {
   return json(200, response, serverTiming(durationMs, metric, stages));
 }
@@ -326,7 +378,7 @@ function serverTiming(durationMs: number, metric: "gemini" | "groq" = "gemini",
   stages: Readonly<Record<string, number>> = {}): Record<string, string> {
   const safeDuration = Number.isFinite(durationMs) ? Math.max(0, durationMs) : 0;
   const metrics = [`${metric};dur=${safeDuration.toFixed(1)}`];
-  for (const name of ["transcription", "classification"]) {
+  for (const name of ["transcription", "classification", "answer"]) {
     const duration = stages[name];
     if (duration !== undefined && Number.isFinite(duration) && duration >= 0) metrics.push(`${name};dur=${duration.toFixed(1)}`);
   }

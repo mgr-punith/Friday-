@@ -60,3 +60,13 @@ test("Redis limit responses fail closed", async () => {
     /invalid_redis_limit_result/
   );
 });
+
+test("live search has separate atomic counters but shares blocked-account checks", async () => {
+  let keys: string[] = [];
+  const store = new RedisUsageLimitStore({ async eval<T>(_script: string, k: string[]) { keys = k; return 1 as T; } },
+    { ...LIMITS, commandPerInstallMinute: 3, commandPerInstallDaily: 20, commandGlobalDaily: 1_000 }, "friday:answers:v1");
+  await store.consumeCommand(TEST_INSTALL_ID, TEST_NOW);
+  assert.equal(keys[0], `friday:v1:install:${TEST_INSTALL_ID}:blocked`);
+  assert.equal(keys[1]?.startsWith("friday:answers:v1:"), true);
+  assert.equal(keys[3], "friday:answers:v1:command:global:day:2026-11-17");
+});

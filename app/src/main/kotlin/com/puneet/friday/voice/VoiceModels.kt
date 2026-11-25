@@ -9,6 +9,7 @@ data class RecordedCommand(
 
 sealed interface VoiceCommandResponse {
     data class Action(val action: PhoneAction, val serverDurationMs: Double?) : VoiceCommandResponse
+    data class Answer(val answer: InformationAnswer) : VoiceCommandResponse
     data object Unsupported : VoiceCommandResponse
     data class Error(val reason: Reason) : VoiceCommandResponse
 
@@ -32,6 +33,7 @@ data class CommandResult(
 
 enum class VoiceUiOutcome {
     ACTION,
+    ANSWER,
     UNSUPPORTED,
     BUSY,
     TIMEOUT,
@@ -41,6 +43,7 @@ enum class VoiceUiOutcome {
 
 fun VoiceCommandResponse.uiOutcome(): VoiceUiOutcome = when (this) {
     is VoiceCommandResponse.Action -> VoiceUiOutcome.ACTION
+    is VoiceCommandResponse.Answer -> VoiceUiOutcome.ANSWER
     VoiceCommandResponse.Unsupported -> VoiceUiOutcome.UNSUPPORTED
     is VoiceCommandResponse.Error -> when (reason) {
         VoiceCommandResponse.Reason.BUSY -> VoiceUiOutcome.BUSY
