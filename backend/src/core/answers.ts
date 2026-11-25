@@ -17,6 +17,15 @@ export interface AnswerResponse extends AnswerContent {
 export interface AnswerReportStore {
   save(answer: AnswerResponse, reason: string): Promise<void>;
 }
+export interface AnswerSetupResponse {
+  readonly type: "unsupported";
+  readonly reason: "answers_disabled" | "answers_unavailable";
+}
+export const ANSWER_SETUP_TOOL = {
+  name: "short_answers_required",
+  description: "Use for an English factual question when Short answers is off or unavailable. No answer or search. Not for phone actions, chat, essays or non-English speech.",
+  parameters: { type: "object", properties: {} }
+};
 export const ANSWER_TOOL = {
   name: "answer_question",
   description: "Give a brief factual answer or explanation. Stable facts: knowledge, no current office or age. Current scores/news/weather/prices/offices: lookup, empty text. If essential detail is missing, clarification: ask one short question before searching. Do not clarify a full name already supplied. Unknown: unavailable. Not for chat, essays or phone actions.",

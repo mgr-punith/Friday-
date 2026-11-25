@@ -43,6 +43,46 @@ test("authenticated opted-in clients receive a signed bounded answer rather than
   assert.match(response.headers?.["server-timing"] ?? "", /classification;dur=12/);
 });
 
+test("answer setup distinguishes disabled client consent from unavailable server answers", async () => {
+  for (const enabled of [false, true]) {
+    for (const optedIn of [false, true]) {
+      const h = harness(enabled);
+      const request = event();
+      const headers = { ...request.headers, "x-friday-answers": optedIn ? "2" : undefined,
+        "x-friday-answer-setup": "1" };
+      h.assistant.result = { selection: { name: "short_answers_required", args: {} }, durationMs: 10 };
+      const response = await h.api.handle({ ...request, headers });
+      if (enabled && optedIn) {
+        assert.equal(response.statusCode, 503);
+      } else {
+        assert.equal(response.statusCode, 200);
+        assert.deepEqual(JSON.parse(response.body!), { type: "unsupported",
+          reason: optedIn ? "answers_unavailable" : "answers_disabled" });
+      }
+      assert.equal(h.assistant.calls[0]?.input.answerSetup,
+        enabled && optedIn ? undefined : optedIn ? "answers_unavailable" : "answers_disabled");
+      assert.equal(h.answerUsage.commandCalls.length, 0);
+      assert.equal(h.usage.commandCalls.length, 1);
+    }
+  }
+});
+
+test("setup hints cannot bypass opt-in, validation or quotas and preserve unsupported commands", async () => {
+  const h = harness();
+  const request = event();
+  h.assistant.result = { selection: { name: "short_answers_required", args: {} }, durationMs: 10 };
+  assert.equal((await h.api.handle(request)).statusCode, 503);
+  const setup = { ...request, headers: { ...request.headers, "x-friday-answers": undefined, "x-friday-answer-setup": "1" } };
+  h.assistant.result = { selection: { name: "short_answers_required", args: { text: "Unrequested answer" } }, durationMs: 10 };
+  assert.equal((await h.api.handle(setup)).statusCode, 503);
+  h.assistant.result = { selection: { name: "unsupported", args: {} }, durationMs: 10 };
+  assert.deepEqual(JSON.parse((await h.api.handle(setup)).body!), { type: "unsupported" });
+  h.usage.commandAllowed = false;
+  const before = h.assistant.calls.length;
+  assert.equal((await h.api.handle(setup)).statusCode, 429);
+  assert.equal(h.assistant.calls.length, before);
+});
+
 test("version two supports two account-bound clarification replies and then stops", async () => {
   const h = harness();
   const base = event();

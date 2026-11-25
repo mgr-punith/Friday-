@@ -7,7 +7,7 @@ import {
 import { AssistantProviderError, type AssistantProvider, type AssistantProviderResult,
   type CommandInput, type FunctionSelection } from "../core/contracts";
 import type { FetchLike } from "./gemini";
-import { ANSWER_PROMPT, ANSWER_TOOL, needsCurrentInformation, readBrowserAnswer, readKnowledgeAnswer } from "../core/answers";
+import { ANSWER_PROMPT, ANSWER_SETUP_TOOL, ANSWER_TOOL, needsCurrentInformation, readBrowserAnswer, readKnowledgeAnswer } from "../core/answers";
 
 export interface GroqProviderConfig {
   readonly apiKey: string;
@@ -69,6 +69,7 @@ export class GroqProvider implements AssistantProvider {
     }
     const actionVersion = input.actionVersion ?? 1;
     const supportsAnswers = input.supportsAnswers === true && this.config.answersEnabled === true && context !== undefined;
+    const answerSetup = !supportsAnswers && input.answerSetup !== undefined;
     const following = input.answerContext;
     if (following && !supportsAnswers) throw this.failure(budget, "classification", "invalid_context");
     // Clarification replies are answer-only, including replies that look like exact phone commands.
@@ -77,9 +78,9 @@ export class GroqProvider implements AssistantProvider {
     const started = this.runtime.now();
     const answerTool = following?.remaining === 0 ? { ...ANSWER_TOOL, parameters: { ...ANSWER_TOOL.parameters,
       properties: { ...ANSWER_TOOL.parameters.properties, mode: { type: "string", enum: ["knowledge", "lookup", "unavailable"] } } } } : ANSWER_TOOL;
-    const tools = following ? [answerTool] : [...compactGroqTools(actionVersion).map(tool => supportsAnswers && tool.name === "unsupported"
+    const tools = following ? [answerTool] : [...compactGroqTools(actionVersion).map(tool => (supportsAnswers || answerSetup) && tool.name === "unsupported"
       ? { ...tool, description: "Use for chat, essays, non-English speech or unsupported phone controls." } : tool),
-      ...(supportsAnswers ? [answerTool] : [])];
+      ...(supportsAnswers ? [answerTool] : answerSetup ? [ANSWER_SETUP_TOOL] : [])];
     const actionInstructions = actionInstructionsFor(actionVersion);
     const question = following ? JSON.stringify({ originalQuestion: following.question, earlierReplies: following.turns,
       clarification: following.prompt, reply: text }) : text;
@@ -91,7 +92,9 @@ export class GroqProvider implements AssistantProvider {
       : (supportsAnswers ? SYSTEM_PROMPT.replace("Never answer questions.", "Use answer_question for factual questions. " +
           "Answer clear questions directly. You cannot see the screen or earlier conversations. " +
           "If the person, match, place or other essential subject is missing, use clarification with one short question. " +
-          "Do not guess the missing subject or answer with a request for detail in knowledge mode.") : SYSTEM_PROMPT) + actionInstructions;
+          "Do not guess the missing subject or answer with a request for detail in knowledge mode.") : answerSetup
+          ? SYSTEM_PROMPT.replace("Never answer questions.", "For factual questions use short_answers_required. Do not answer or search.")
+          : SYSTEM_PROMPT) + actionInstructions;
     const value = await this.request("classification", (repair) => ({
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -101,6 +104,8 @@ export class GroqProvider implements AssistantProvider {
             ? " For intelligible factual questions, including incomplete questions about a person or match, choose answer_question. " +
               "Missing essential details use answer_question with arguments {\"mode\":\"clarification\",\"text\":\"your short question\"}." : "") +
             (supportsAnswers ? " The answer modes are argument values, never function names." : "") +
+            (answerSetup ? " For an English factual question choose short_answers_required with no arguments. " +
+              "Use unsupported for unsupported phone controls, chat, essays or non-English speech." : "") +
             " Return one tool call with a valid JSON object. Omit optional fields that were not spoken. Do not output prose." },
           { role: "user", content: `Current phone time: ${now}\n${following ? "Question context" : "Command"}: ${question}` }
         ],
@@ -115,7 +120,8 @@ export class GroqProvider implements AssistantProvider {
         ...(this.config.actionModel.startsWith("openai/gpt-oss-") ? { reasoning_effort: "low", include_reasoning: false } : {})
       })
     }), budget);
-    const selection = readToolCall(value, following ? [ANSWER_TOOL.name] : [...functionNamesFor(actionVersion), ...(supportsAnswers ? [ANSWER_TOOL.name] : [])]);
+    const selection = readToolCall(value, following ? [ANSWER_TOOL.name] : [...functionNamesFor(actionVersion),
+      ...(supportsAnswers ? [ANSWER_TOOL.name] : answerSetup ? [ANSWER_SETUP_TOOL.name] : [])]);
     if (!selection) throw this.failure(budget, "classification", "invalid_response");
     stages.classification = this.runtime.now() - started;
     if (selection.name === ANSWER_TOOL.name) {

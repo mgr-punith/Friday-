@@ -105,6 +105,7 @@ open class MainActivity : Activity() {
     private var reportDialog: Dialog? = null
     private var resumeListeningAfterSetup = false
     private var unlockRequired = false
+    private var answerSetupOutcome: VoiceUiOutcome? = null
     private var accountRequired = false
     private var showAccountDeletedToast = false
     private var signInOpen = false
@@ -309,7 +310,14 @@ open class MainActivity : Activity() {
             this, compactSurface,
             onMic = ::onMicPressed,
             onCancel = { cancelVoiceWork(resetUi = true) },
-            onPermissions = { if (accountRequired) launchSignIn() else if (unlockRequired) requestPhoneUnlock() else launchSetup(resumeAfterSetup = false) },
+            onPermissions = {
+                when {
+                    accountRequired -> launchSignIn()
+                    unlockRequired -> requestPhoneUnlock()
+                    answerSetupOutcome == VoiceUiOutcome.ANSWERS_DISABLED -> enableShortAnswers()
+                    else -> launchSetup(resumeAfterSetup = false)
+                }
+            },
             onClose = { finish() },
             onReplay = { lastConfirmation?.let(confirmationSpeaker::speak) },
             onSettings = { selectDestination(Destination.SETTINGS) },
@@ -439,6 +447,7 @@ open class MainActivity : Activity() {
     private fun startListening(fromWake: Boolean = false, answerContext: String? = null) {
         if (!resumed) return
         clearAnswer()
+        answerSetupOutcome = null
         if (answerContext != null && (DeviceLock.isLocked(this) || !AnswerConsent.isAllowed(this))) return
         if (!AccountStore.isSignedIn(this)) { showSignInRequired(); return }
         ConfirmationSpeaker.stopPlayback()
@@ -613,6 +622,7 @@ open class MainActivity : Activity() {
         lastServerMs = result.timings.serverMs
         when (result.response.uiOutcome()) {
             VoiceUiOutcome.ANSWER -> showAnswer((result.response as VoiceCommandResponse.Answer).answer)
+            VoiceUiOutcome.ANSWERS_DISABLED, VoiceUiOutcome.ANSWERS_UNAVAILABLE -> showAnswerSetup(result.response.uiOutcome())
             VoiceUiOutcome.ACTION -> {
                 val response = result.response as VoiceCommandResponse.Action
                 if (DeviceLock.requiresUnlock(this, response.action)) {
@@ -727,6 +737,7 @@ open class MainActivity : Activity() {
 
     private fun showError(message: String) {
         cancelResultDismissal()
+        answerSetupOutcome = null
         unlockRequired = false
         state = VoiceState.IDLE
         permissionButton.visibility = View.GONE
@@ -747,6 +758,44 @@ open class MainActivity : Activity() {
 
     private fun showUnsupported() {
         showError("Sorry, I can't do that yet")
+    }
+
+    private fun showAnswerSetup(outcome: VoiceUiOutcome) {
+        if (DeviceLock.isLocked(this)) { showUnlockRequired(); return }
+        val message = VoiceFailureCopy.forOutcome(outcome)
+        showError(message)
+        DebugTools.cancelErrorRecovery(this)
+        answerSetupOutcome = outcome
+        if (outcome == VoiceUiOutcome.ANSWERS_DISABLED && !AnswerConsent.isAllowed(this)) {
+            permissionButton.text = "Enable Short answers"
+            permissionButton.visibility = View.VISIBLE
+        }
+        showAnswerSetupStatus(outcome)
+        confirmationSpeaker.speak(message)
+    }
+
+    private fun showAnswerSetupStatus(outcome: VoiceUiOutcome) {
+        val message = VoiceFailureCopy.forOutcome(outcome)
+        if (compactSurface) showVoiceStatus(message) else {
+            micLabel.text = if (outcome == VoiceUiOutcome.ANSWERS_DISABLED) "Short answers off" else "Short answers unavailable"
+            setDetail(message)
+        }
+    }
+
+    private fun enableShortAnswers() {
+        if (!resumed) return
+        if (DeviceLock.isLocked(this)) { showUnlockRequired(); return }
+        if (permissionDialog?.isShowing == true) return
+        confirmationSpeaker.stop()
+        permissionDialog = AnswerConsent.show(this) {
+            permissionDialog = null
+            if (resumed) {
+                resetIdle()
+                val message = if (AnswerConsent.isAllowed(this)) "Short answers on. Ask your question again." else "Short answers off."
+                showVoiceStatus(message)
+                surface.showToast(message)
+            }
+        }
     }
 
     private fun showAnswer(answer: InformationAnswer) {
@@ -860,6 +909,7 @@ open class MainActivity : Activity() {
 
     private fun showPermission(access: RequiredAccess, completed: String = "") {
         cancelResultDismissal()
+        answerSetupOutcome = null
         if (DeviceLock.isLocked(this)) {
             showUnlockRequired()
             return
@@ -887,6 +937,7 @@ open class MainActivity : Activity() {
     }
 
     private fun showUnlockRequired(speak: Boolean = true) {
+        answerSetupOutcome = null
         DebugTools.cancelErrorRecovery(this)
         state = VoiceState.IDLE
         lastConfirmation = null
@@ -942,6 +993,7 @@ open class MainActivity : Activity() {
     }
 
     private fun cancelVoiceWork(resetUi: Boolean, preserveConfirmation: Boolean = false) {
+        answerSetupOutcome = null
         clearAnswer()
         pendingSequence = null
         orbDemoRunnable?.let(orb::removeCallbacks)
@@ -963,6 +1015,7 @@ open class MainActivity : Activity() {
     }
 
     private fun resetIdle() {
+        answerSetupOutcome = null
         releaseLauncherWakeBlock()
         unlockRequired = false
         lastConfirmation = null
@@ -1002,6 +1055,11 @@ open class MainActivity : Activity() {
         micButton.contentDescription = if (speaking) "Stop speaking" else "Start listening"
         setControl(if (speaking) "Stop" else "Speak", if (speaking) "Tap to stop voice" else "Tap to speak",
             if (speaking) "Stop speaking" else "Start listening")
+        answerSetupOutcome?.let {
+            showAnswerSetupStatus(it)
+            orb.setState(if (speaking) AssistantOrbView.State.SPEAKING else AssistantOrbView.State.ERROR)
+            return
+        }
         if (unlockRequired) return
         surface.cancel.visibility = View.GONE
         surface.replay.visibility = if (speaking || lastConfirmation == null || !speechAvailable) View.INVISIBLE else View.VISIBLE
@@ -1121,6 +1179,10 @@ open class MainActivity : Activity() {
                 showError("I couldn't find that app")
             }
             "unsupported" -> showUnsupported()
+            "answers-disabled", "answers-unavailable" -> {
+                showAnswerSetup(if (scenario == "answers-disabled") VoiceUiOutcome.ANSWERS_DISABLED else VoiceUiOutcome.ANSWERS_UNAVAILABLE)
+                surface.showRequest("Preview: Short answers setup")
+            }
             "contact-choices", "contact-exact" -> {
                 state = VoiceState.ACTION
                 val action = PhoneAction.CallContact("Sample contact")

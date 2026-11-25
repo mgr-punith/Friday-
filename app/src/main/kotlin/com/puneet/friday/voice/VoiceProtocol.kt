@@ -87,7 +87,12 @@ object VoiceResponseParser {
         serverTimingHeader: String? = null,
     ): VoiceCommandResponse = when (type) {
         "action" -> parseAction(actionName, args, parseServerDuration(serverTimingHeader))
-        "unsupported" -> VoiceCommandResponse.Unsupported
+        "unsupported" -> when (reason) {
+            "answers_disabled" -> VoiceCommandResponse.AnswerSetup(VoiceCommandResponse.AnswerSetupReason.DISABLED)
+            "answers_unavailable" -> VoiceCommandResponse.AnswerSetup(VoiceCommandResponse.AnswerSetupReason.UNAVAILABLE)
+            "" -> VoiceCommandResponse.Unsupported
+            else -> badResponse()
+        }
         "error" -> VoiceCommandResponse.Error(
             when (reason) {
                 "timeout" -> VoiceCommandResponse.Reason.TIMEOUT
