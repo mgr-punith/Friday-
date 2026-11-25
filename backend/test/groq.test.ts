@@ -44,7 +44,7 @@ test("Vercel selects Groq without requiring a Gemini key or model", async () => 
     JWT_SIGNING_KEY: TEST_SECRETS.jwtSigningKey,
     UPSTASH_REDIS_REST_URL: "https://test.upstash.io", UPSTASH_REDIS_REST_TOKEN: "replace-with-a-test-rest-token"
   });
-  assert.deepEqual(config.assistant, { provider: "groq", ...CONFIG, timeoutMs: 10_000 });
+  assert.deepEqual(config.assistant, { provider: "groq", ...CONFIG, timeoutMs: 10_000, maxCompletionTokens: 256 });
   const secrets = new EnvironmentSecretProvider(undefined, TEST_SECRETS.jwtSigningKey);
   assert.deepEqual(await secrets.getSecrets(), { jwtSigningKey: TEST_SECRETS.jwtSigningKey });
   const urls: string[] = [];
@@ -93,11 +93,14 @@ test("uploads WAV as multipart and classifies once with the corrected GPT OSS re
   assert.equal(body.model, "openai/gpt-oss-20b");
   assert.equal(body.tool_choice, "required");
   assert.equal(body.parallel_tool_calls, false);
-  assert.equal(body.max_completion_tokens, 512);
+  assert.equal(body.max_completion_tokens, 256);
   assert.equal(body.reasoning_effort, "low");
   assert.equal(body.include_reasoning, false);
   assert.equal(body.reasoning_format, undefined);
   assert.equal(body.temperature, 0);
+  assert.deepEqual(body.tools.map((entry: { function: { name: string } }) => entry.function.name),
+    ["set_timer", "unclear_command", "unsupported"]);
+  assert.ok(Buffer.byteLength(JSON.stringify(body.tools)) < 1_000);
   assert.equal(body.tools.every((entry: Record<string, any>) => entry.function.parameters.additionalProperties === false), true);
   assert.equal(classification?.redirect, "error");
   assert.equal((classification?.headers as Record<string, string>).authorization, `Bearer ${CONFIG.apiKey}`);
@@ -106,6 +109,44 @@ test("uploads WAV as multipart and classifies once with the corrected GPT OSS re
   assert.equal(result.timingMetric, "groq");
   assert.deepEqual(result.stages, { transcription: 20, classification: 20 });
   assert.equal(result.durationMs, 40);
+});
+
+test("clear standalone commands narrow tool schemas while compound requests keep all choices", async () => {
+  const requested: string[][] = [];
+  const provider = new GroqProvider(CONFIG, async (_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    requested.push(body.tools.map((entry: { function: { name: string } }) => entry.function.name));
+    return body.messages[1].content.includes("Open Camera")
+      ? tool("open_app", '{"name":"Camera"}') : tool();
+  }, new Runtime());
+  await provider.select({ kind: "text", text: "Open Camera", actionVersion: 5 }, NOW);
+  await provider.select({ kind: "text", text: "Set a timer and call Mom", actionVersion: 5 }, NOW);
+  assert.deepEqual(requested[0], ["open_app", "unclear_command", "unsupported"]);
+  assert.ok(requested[1]!.includes("run_actions"));
+  assert.ok(requested[1]!.includes("call_contact"));
+  assert.ok(requested[1]!.includes("set_timer"));
+});
+
+test("question-form phone requests keep their matching action available", async () => {
+  let requested: string[] = [];
+  const provider = new GroqProvider(CONFIG, async (_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    requested = body.tools.map((entry: { function: { name: string } }) => entry.function.name);
+    return tool("set_timer", '{"seconds":300}');
+  }, new Runtime());
+
+  const result = await provider.select({
+    kind: "text", text: "Will you set a timer for five minutes?", actionVersion: 5
+  }, NOW);
+
+  assert.ok(requested.includes("set_timer"));
+  assert.deepEqual(result.selection, { name: "set_timer", args: { seconds: 300 } });
+});
+
+test("a narrowed request cannot accept a tool that was not declared", async () => {
+  const provider = new GroqProvider(CONFIG, async () => tool("set_timer", '{"seconds":120}'), new Runtime());
+  await assert.rejects(provider.select({ kind: "text", text: "Open Camera", actionVersion: 5 }, NOW),
+    (error: unknown) => error instanceof AssistantProviderError && error.failure?.diagnosticCode === "groq_classification_invalid_response");
 });
 
 test("silence, uncertain speech and missing Whisper metadata cannot reach action classification", async () => {
@@ -172,7 +213,7 @@ test("v3 describes Settings as a user handoff with allowlisted arguments", async
     request = JSON.parse(String(init?.body));
     return tool("open_settings", '{"setting":"airplane_mode","state":"on"}');
   }, new Runtime());
-  const result = await provider.select({ ...INPUT, actionVersion: 3 }, NOW);
+  const result = await provider.select({ kind: "text", text: "Open airplane mode settings", actionVersion: 3 }, NOW);
   const declaration = request?.tools.find(
     (entry: Record<string, any>) => entry.function.name === "open_settings",
   )?.function;
@@ -180,7 +221,7 @@ test("v3 describes Settings as a user handoff with allowlisted arguments", async
   assert.deepEqual(declaration.parameters.properties.setting.enum, ["airplane_mode"]);
   assert.deepEqual(declaration.parameters.properties.state.enum, ["on", "off"]);
   assert.match(declaration.description, /user completes the switch in Settings/);
-  assert.match(request?.messages[0].content, /user completes the change/);
+  assert.match(request?.messages[0].content, /Use the matching action only/);
   assert.deepEqual(result.selection, {
     name: "open_settings", args: { setting: "airplane_mode", state: "on" }
   });
@@ -254,8 +295,8 @@ test("repairs the reported tool_use_failed JSON error once without retranscribin
   const result = await provider.select({ kind: "audio", bytes: createPcmWav(), mimeType: "audio/wav" }, NOW);
   assert.equal(transcriptions, 1);
   assert.equal(bodies.length, 2);
-  assert.equal(bodies[0]?.max_completion_tokens, 512);
-  assert.equal(bodies[1]?.max_completion_tokens, 1_024);
+  assert.equal(bodies[0]?.max_completion_tokens, 256);
+  assert.equal(bodies[1]?.max_completion_tokens, 384);
   assert.deepEqual(bodies[1]?.messages[1], bodies[0]?.messages[1], "Repair keeps the original command");
   assert.deepEqual(runtime.delays, [200]);
   assert.deepEqual(result.selection, { name: "set_timer", args: { seconds: 120 } });
@@ -306,7 +347,8 @@ test("blank optional Groq fields preserve Home navigation and alarms without acc
   ];
   for (const value of cases) {
     const provider = new GroqProvider(CONFIG, async () => tool(value.name, value.args), new Runtime());
-    const result = await provider.select(INPUT, NOW);
+    const text = value.name === "close_app" ? "Go home" : value.name === "set_alarm" ? "Set alarm for 6:30" : "Open Camera";
+    const result = await provider.select({ kind: "text", text }, NOW);
     assert.deepEqual(parseFunctionSelection(result.selection), value.expected);
   }
 });
