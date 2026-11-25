@@ -9,7 +9,7 @@ Friday is a native Android voice assistant for quick phone tasks. It sends one s
 - Open an installed app or go to the Home screen.
 - Say “Play some music” to choose an installed music app. Say “Open Spotify” to open Spotify when it’s installed.
 - Say “Play Believer” or “Play Believer in Spotify” to request a song. With a v4 backend, Friday sends the title to a compatible player. The player controls playback.
-- Say “Pause music,” “Resume music,” “Next track,” or “Previous track,” including while the phone is locked. Friday sends media controls without opening the player. For Previous, Friday uses the active player's session when it can identify one, so a player that restarts the current song on one Previous press can move to the preceding track. Opening a music app or requesting a named song still needs unlock.
+- Say “Pause music,” “Resume music,” “Next track,” or “Previous track,” including while the phone is locked. Friday sends media controls without opening the player. For Previous, Friday seeks to the start, then skips back through one identified player session. If the player does not expose a suitable session, Friday sends one Previous button press, which can restart the current song. Opening a music app or requesting a named song still needs unlock.
 - Switch the ringer between silent, vibrate, and normal.
 - Turn the flashlight on or off and set media, ring, or alarm volume.
 - Open Airplane mode settings and tell you which switch to change. Android requires this final tap.

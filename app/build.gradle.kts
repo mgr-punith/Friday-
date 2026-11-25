@@ -123,11 +123,22 @@ val commandAudioFocusTest by tasks.registering(JavaExec::class) {
     configurations.named("debugUnitTestRuntimeClasspath"),
   )
 }
+val previousTrackSessionTest by tasks.registering(JavaExec::class) {
+  group = "verification"
+  description = "Runs previous-track media service discovery and lifecycle checks."
+  dependsOn(compileSpeakerTests)
+  mainClass.set("com.puneet.friday.actions.PreviousTrackMediaSessionTests")
+  classpath(
+    compileSpeakerTests.flatMap { it.destinationDirectory },
+    layout.buildDirectory.dir("intermediates/built_in_kotlinc/debug/compileDebugKotlin/classes"),
+    configurations.named("debugUnitTestRuntimeClasspath"),
+  )
+}
 tasks.matching { it.name == "test" || it.name == "check" }.configureEach {
-  dependsOn(actionLogicTest, voiceLogicTest, wakeTrialLogicTest, confirmationSpeakerTest, commandAudioFocusTest)
+  dependsOn(actionLogicTest, voiceLogicTest, wakeTrialLogicTest, confirmationSpeakerTest, commandAudioFocusTest, previousTrackSessionTest)
 }
 // There is no JUnit dependency; the JavaExec task above runs our JVM checks.
 tasks.withType<Test>().configureEach {
   enabled = false
-  dependsOn(actionLogicTest, voiceLogicTest, wakeTrialLogicTest, confirmationSpeakerTest, commandAudioFocusTest)
+  dependsOn(actionLogicTest, voiceLogicTest, wakeTrialLogicTest, confirmationSpeakerTest, commandAudioFocusTest, previousTrackSessionTest)
 }
