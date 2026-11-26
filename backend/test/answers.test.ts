@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { needsCurrentInformation, parseReport, publicSourceUrl, readBrowserAnswer, readKnowledgeAnswer,
+import { localWeatherClarification, needsCurrentInformation, parseReport, publicSourceUrl, readBrowserAnswer, readKnowledgeAnswer,
   RedisAnswerReportStore, signAnswer, validateAnswer, type AnswerContent } from "../src/core/answers";
 import { safeAiUsage } from "../src/core/ai-usage";
 import { TEST_NOW, TEST_SECRETS } from "./helpers";
@@ -34,6 +34,17 @@ test("time-sensitive routing overrides a memory answer but allows explicit histo
   }
   assert.equal(needsCurrentInformation("Who is Modi?", "Narendra Modi is the prime minister of India.", NOW), true);
   assert.equal(needsCurrentInformation("Who is Modi?", "Narendra Modi became prime minister in 2014.", NOW), false);
+});
+
+test("weather asks for a city before search when the request has no location", () => {
+  assert.deepEqual(localWeatherClarification("What is the weather today?"),
+    { kind: "clarification", text: "Which city should I check?", sources: [] });
+  assert.equal(localWeatherClarification("Weather forecast in Mumbai today"), null);
+  assert.deepEqual(localWeatherClarification("What is the weather for tomorrow?"),
+    { kind: "clarification", text: "Which city should I check?", sources: [] });
+  assert.deepEqual(localWeatherClarification("What is the weather in next few days?"),
+    { kind: "clarification", text: "Which city should I check?", sources: [] });
+  assert.equal(localWeatherClarification("What time is it?"), null);
 });
 
 test("source URLs accept HTTPS websites and reject device, credential and local links", () => {

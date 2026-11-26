@@ -54,6 +54,7 @@ test("answer setup distinguishes disabled client consent from unavailable server
       const response = await h.api.handle({ ...request, headers });
       if (enabled && optedIn) {
         assert.equal(response.statusCode, 503);
+        assert.deepEqual(h.logger.entries, [{ code: "assistant_invalid_answer_setup" }]);
       } else {
         assert.equal(response.statusCode, 200);
         assert.deepEqual(JSON.parse(response.body!), { type: "unsupported",
@@ -134,6 +135,7 @@ test("follow-ups cannot execute actions and search results cannot start another 
   const rejected = await h.api.handle({ ...request,
     headers: { ...request.headers, "x-friday-answer-context": first.continuation } });
   assert.equal(rejected.statusCode, 503);
+  assert.deepEqual(h.logger.entries, [{ code: "assistant_invalid_answer_reply" }]);
   h.assistant.result = { selection: { name: "answer_question", args: {} }, question: "Which match?",
     answer: { kind: "clarification", text: "Which match?", sources: [] }, durationMs: 10, stages: { answer: 5 } };
   const searched = JSON.parse((await h.api.handle(request)).body!);
@@ -149,6 +151,7 @@ test("disabled and non-opted-in clients never receive free text from an unexpect
     assert.equal(response.statusCode, 503);
     assert.equal(h.assistant.calls[0]?.input.supportsAnswers, undefined);
     assert.deepEqual(JSON.parse(response.body ?? "null"), { type: "error", reason: "busy" });
+    assert.deepEqual(h.logger.entries, [{ code: "assistant_invalid_answer" }]);
   }
 });
 
