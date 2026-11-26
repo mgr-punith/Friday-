@@ -1,40 +1,40 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="screen_background_top">#121317</color>
-    <color name="screen_background">#0D0E11</color>
-    <color name="surface">#181A1F</color>
-    <color name="border">#30323A</color>
-    <color name="text_primary">#F3F4F7</color>
-    <color name="text_secondary">#B3B6BF</color>
-    <color name="accent">#9AA7D9</color>
-    <color name="accent_soft">#D8DDEF</color>
-    <color name="focus_ring">#DDE3FF</color>
-    <color name="text_tertiary">#858994</color>
-    <color name="surface_muted">#14161A</color>
-    <color name="field_background">#121419</color>
-    <color name="control_primary">#D9DEEF</color>
-    <color name="control_primary_text">#15171B</color>
-    <color name="control_pressed">#4B5268</color>
-    <color name="navigation_surface">#24262B</color>
-    <color name="settings_surface">#2C2C2D</color>
-    <color name="settings_divider">#454546</color>
+    <color name="screen_background_top">#111111</color>
+    <color name="screen_background">#080808</color>
+    <color name="surface">#1A1A1A</color>
+    <color name="border">#494949</color>
+    <color name="text_primary">#F3F3F3</color>
+    <color name="text_secondary">#BDBDBD</color>
+    <color name="accent">#AFAFAF</color>
+    <color name="accent_soft">#DEDEDE</color>
+    <color name="focus_ring">#FFFFFF</color>
+    <color name="text_tertiary">#858585</color>
+    <color name="surface_muted">#151515</color>
+    <color name="field_background">#121212</color>
+    <color name="control_primary">#E7E7E7</color>
+    <color name="control_primary_text">#151515</color>
+    <color name="control_pressed">#5A5A5A</color>
+    <color name="navigation_surface">#262626</color>
+    <color name="settings_surface">#2C2C2C</color>
+    <color name="settings_divider">#494949</color>
     <color name="help_background">#FFFFFF</color>
-    <color name="help_text">#202124</color>
+    <color name="help_text">#181818</color>
 
-    <color name="orb_glow">#8A9BEF</color>
-    <color name="orb_base_light">#8497E9</color>
-    <color name="orb_base">#626ED4</color>
-    <color name="orb_base_deep">#25387E</color>
-    <color name="orb_cyan">#86DEEE</color>
-    <color name="orb_blue">#487DE0</color>
-    <color name="orb_lilac">#D4B8F5</color>
-    <color name="orb_violet">#9875DA</color>
-    <color name="orb_pearl">#F0F5FF</color>
-    <color name="orb_shadow">#18234E</color>
+    <color name="orb_glow">#888888</color>
+    <color name="orb_base_light">#DADADA</color>
+    <color name="orb_base">#858585</color>
+    <color name="orb_base_deep">#292929</color>
+    <color name="orb_cyan">#BABABA</color>
+    <color name="orb_blue">#707070</color>
+    <color name="orb_lilac">#C6C6C6</color>
+    <color name="orb_violet">#929292</color>
+    <color name="orb_pearl">#F0F0F0</color>
+    <color name="orb_shadow">#171717</color>
 
-    <color name="mic_button">#B4BACD</color>
-    <color name="mic_icon">#17191E</color>
+    <color name="mic_button">#E0E0E0</color>
+    <color name="mic_icon">#171717</color>
 
-    <color name="error">#FF7588</color>
-    <color name="launcher_background">#0D0E11</color>
+    <color name="error">#D0D0D0</color>
+    <color name="launcher_background">#080808</color>
 </resources>

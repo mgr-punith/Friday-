@@ -14,6 +14,7 @@ class VoiceRecorder(
     private val context: Context,
     private val afterWake: Boolean = false,
     private val answerReply: Boolean = false,
+    private val handsFree: Boolean = false,
 ) {
     @Volatile private var stopRequested = false
     @Volatile private var activeRecorder: AudioRecord? = null
@@ -95,6 +96,9 @@ class VoiceRecorder(
                     readySent = true
                     onReady()
                 }
+                if (AudioCapturePolicy.shouldStopWaitingForSpeech(
+                        handsFree || afterWake, stopDetector.hasSpeech, count, answerReply,
+                    )) break
                 if (shouldStop && AudioCapturePolicy.canStopAfterSilence(afterWake, count, answerReply)) break
             }
         } finally {

@@ -18,7 +18,7 @@ import java.util.WeakHashMap
 internal object WakeAssistantBridge {
     private const val TOKEN = "friday_debug_wake_token"
     private const val ERROR_DISPLAY_MS = 3_000L
-    private var assistant: WeakReference<VoiceInteractionService>? = null
+    private var assistant: VoiceInteractionService? = null
     private val main = Handler(Looper.getMainLooper())
     private val panels = WeakHashMap<Activity, ErrorPanel>()
 
@@ -27,22 +27,37 @@ internal object WakeAssistantBridge {
         var dismiss: Runnable? = null
     }
 
-    fun ready(service: VoiceInteractionService) { assistant = WeakReference(service) }
+    fun ready(service: VoiceInteractionService) {
+        assistant = service
+        Log.i(TAG, "event=voice_service_ready")
+    }
 
     fun stopped(service: VoiceInteractionService) {
-        if (assistant?.get() === service) assistant = null
+        if (assistant === service) assistant = null
+        Log.i(TAG, "event=voice_service_stopped")
     }
 
     fun request(context: Context, token: String, testOutcome: String? = null): Boolean {
-        val service = assistant?.get() ?: return false
+        val service = assistant
+        if (service == null) {
+            Log.i(TAG, "event=assistant_request result=service_not_ready")
+            return false
+        }
         return try {
-            if (!VoiceInteractionService.isActiveService(context, ComponentName(context, service.javaClass))) return false
+            if (!VoiceInteractionService.isActiveService(context, ComponentName(context, service.javaClass))) {
+                Log.i(TAG, "event=assistant_request result=service_not_active")
+                return false
+            }
             service.showSession(Bundle().apply {
                 putString(TOKEN, token)
                 if (testOutcome in TEST_OUTCOMES) putString("debug_ui_state", testOutcome)
             }, 0)
+            Log.i(TAG, "event=assistant_request result=requested")
             true
-        } catch (_: RuntimeException) { false }
+        } catch (error: RuntimeException) {
+            Log.w(TAG, "event=assistant_request result=show_session_failed type=${error.javaClass.simpleName}")
+            false
+        }
     }
 
     fun tag(intent: Intent, token: String): Intent = intent.putExtra(TOKEN, token)
@@ -116,4 +131,5 @@ internal object WakeAssistantBridge {
     }
 
     private val TEST_OUTCOMES = setOf("no-command", "missing-app", "permission", "lock-call", "lock-app", "lock-timer", "lock-sound")
+    private const val TAG = "FridayWakeTrial"
 }
