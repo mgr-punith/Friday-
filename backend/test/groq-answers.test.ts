@@ -12,7 +12,7 @@ const CONFIG = { apiKey: "test-development-groq-key", transcriptionModel: "whisp
 const NOW = "2026-11-25T14:00:00+05:30";
 const INPUT = { kind: "text" as const, text: "Who is Sachin?", supportsAnswers: true, actionVersion: 5 as const };
 const KNOWLEDGE = { mode: "knowledge", text: "Sachin Tendulkar is a former Indian cricketer. He scored 100 international centuries." };
-const ALLOWED = { async authorizeAnswer() { return true; } };
+const ALLOWED = { async authorizeAnswer() { return { allowed: true as const }; } };
 const FOLLOW_UP: AnswerContext = { question: "Who is Gandhi?", turns: [],
   prompt: "Mahatma Gandhi or Indira Gandhi?", remaining: 1, expiresAt: 2_000_000_000 };
 class Runtime implements GroqRequestRuntime {
@@ -93,9 +93,7 @@ test("weather without a city asks before search", async () => {
     bodies.push(JSON.parse(String(init?.body)));
     return tool({ mode: "lookup", text: "" });
   }, new Runtime());
-  const result = await provider.select({ ...INPUT, text: "What is the weather today?" }, NOW, {
-    async authorizeAnswer() { return true; }
-  });
+  const result = await provider.select({ ...INPUT, text: "What is the weather today?" }, NOW, ALLOWED);
   assert.equal(result.answer?.kind, "clarification");
   assert.equal(result.answer?.text, "Which city should I check?");
   assert.equal(result.question, "What is the weather today?");
@@ -138,7 +136,7 @@ test("freshness uses the original question and search receives the clarification
   }, new Runtime());
   const result = await provider.select({ ...INPUT, text: "Cricket", answerContext: {
     ...FOLLOW_UP, question: "India match today", prompt: "Which sport?",
-  } }, NOW, { async authorizeAnswer() { searches++; return true; } });
+  } }, NOW, { async authorizeAnswer() { searches++; return { allowed: true }; } });
   assert.equal(result.answer?.kind, "information");
   assert.equal(calls, 2);
   assert.equal(searches, 1);
@@ -194,7 +192,7 @@ test("live questions use one bounded browser completion after the search quota",
     return tool({ mode: "lookup", text: "" });
   }, new Runtime());
   const result = await provider.select({ ...INPUT, text: "What happened in todays India match?" }, NOW,
-    { async authorizeAnswer() { order.push("quota"); return true; } });
+    { async authorizeAnswer() { order.push("quota"); return { allowed: true }; } });
   assert.deepEqual(order, ["selector", "quota", "browser"]);
   assert.equal(result.answer?.kind, "information");
   assert.equal(result.answer?.sources.length, 1);
@@ -258,8 +256,11 @@ test("search quota denial and storage failure prevent all browser requests", asy
     const provider = new GroqProvider(CONFIG, async () => { calls++; return tool({ mode: "lookup", text: "" }); }, new Runtime());
     await assert.rejects(provider.select(INPUT, NOW, { async authorizeAnswer() {
       if (fail) throw new Error("store_unavailable");
-      return false;
-    } }));
+      return { allowed: false, scope: "account_daily", retryAfterSeconds: 900 };
+    } }), (error: unknown) => error instanceof AssistantProviderError &&
+      error.failure?.diagnosticCode === (fail ? "groq_answer_quota_store_failed" : "groq_answer_quota_account_daily") &&
+      error.failure.httpStatus === (fail ? undefined : 429) &&
+      error.failure.retryAfterSeconds === (fail ? undefined : 900));
     assert.equal(calls, 1);
   }
 });

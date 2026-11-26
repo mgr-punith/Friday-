@@ -112,7 +112,9 @@ test("answers require explicit enablement, a browser-capable model and bounded s
     UPSTASH_REDIS_REST_URL: "https://example.upstash.io", UPSTASH_REDIS_REST_TOKEN: "development-redis-token" };
   assert.equal(loadVercelConfig(base).answerLimits, undefined);
   const enabled = loadVercelConfig({ ...base, ANSWERS_ENABLED: "true" });
-  assert.deepEqual(enabled.answerLimits, { perAccountMinute: 3, perAccountDaily: 20, globalDaily: 1_000 });
+  assert.deepEqual(enabled.answerLimits, { perAccountMinute: 12, perAccountDaily: 100, globalDaily: 1_000 });
+  assert.deepEqual(loadVercelConfig({ ...base, ANSWERS_ENABLED: "true", ANSWER_PER_ACCOUNT_MINUTE: "3",
+    ANSWER_PER_ACCOUNT_DAILY: "20" }).answerLimits, { perAccountMinute: 3, perAccountDaily: 20, globalDaily: 1_000 });
   if (enabled.assistant.provider === "groq") assert.equal(enabled.assistant.answerTimeoutMs, 18_000);
   assert.throws(() => loadVercelConfig({ ...base, ANSWERS_ENABLED: "yes" }), /invalid_answers_enabled/);
   assert.throws(() => loadVercelConfig({ ...base, ANSWERS_ENABLED: "true", AI_PROVIDER: "gemini" }), /answers_require_browser_model/);

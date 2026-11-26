@@ -28,6 +28,14 @@ export interface AssistantProviderResult {
 
 export type AssistantProviderErrorCode = "busy" | "timeout";
 
+export type QuotaDecision = { readonly allowed: true } |
+  { readonly allowed: false; readonly scope: "account_minute" | "account_daily" | "global_daily" | "blocked";
+    readonly retryAfterSeconds?: number };
+
+export interface SearchAuthorization {
+  authorizeAnswer(): Promise<QuotaDecision>;
+}
+
 export interface ProviderFailure {
   readonly diagnosticCode: string;
   readonly httpStatus?: number;
@@ -48,7 +56,7 @@ export class AssistantProviderError extends Error {
 }
 
 export interface AssistantProvider {
-  select(input: CommandInput, now: string, context?: { authorizeAnswer(): Promise<boolean> }): Promise<AssistantProviderResult>;
+  select(input: CommandInput, now: string, context?: SearchAuthorization): Promise<AssistantProviderResult>;
 }
 
 export interface SecretBundle {

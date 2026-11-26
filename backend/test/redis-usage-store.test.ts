@@ -61,6 +61,17 @@ test("Redis limit responses fail closed", async () => {
   );
 });
 
+test("search denials identify the limiting bucket and its UTC reset", async () => {
+  const at = new Date("2026-11-26T20:55:28.164Z");
+  for (const [code, scope, retryAfterSeconds] of [
+    [-2, "account_minute", 32], ["-3", "account_daily", 11072], [-4, "global_daily", 11072],
+  ] as const) {
+    const store = new RedisUsageLimitStore({ async eval<T>() { return code as T; } }, LIMITS);
+    assert.deepEqual(await store.reserveCommand(TEST_INSTALL_ID, at), { allowed: false, scope, retryAfterSeconds });
+    assert.equal(await store.consumeCommand(TEST_INSTALL_ID, at), false);
+  }
+});
+
 test("a lost Redis response cannot reserve command quota twice", async (context) => {
   let reserved = 0;
   let loseResponse = true;
