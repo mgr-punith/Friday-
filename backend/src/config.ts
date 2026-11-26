@@ -70,15 +70,17 @@ export function loadVercelConfig(environment: NodeJS.ProcessEnv = process.env): 
     const url = new URL(redirectUri);
     if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash || url.pathname !== "/v1/auth/google/callback") throw new Error("invalid_google_oauth_redirect_uri");
   }
+  const assistant = loadAssistantConfig(environment);
+  const groq20b = assistant.provider === "groq" && assistant.actionModel === "openai/gpt-oss-20b";
   return {
     googleWebClientId,
     ...(clientSecret ? { googleWebClientSecret: clientSecret } : {}),
     ...(redirectUri ? { googleOauthRedirectUri: redirectUri } : {}),
-    ...loadUsageLimits(environment),
-    assistant: loadAssistantConfig(environment),
+    ...loadUsageLimits(environment, groq20b ? { minute: 8, daily: 150 } : undefined),
+    assistant,
     ...loadSpeechConfig(environment),
     ...(environment.ANSWERS_ENABLED === "true" ? { answerLimits: {
-      perAccountMinute: integer(environment, "ANSWER_PER_ACCOUNT_MINUTE", 12, 1, 12),
+      perAccountMinute: integer(environment, "ANSWER_PER_ACCOUNT_MINUTE", groq20b ? 3 : 12, 1, 12),
       perAccountDaily: integer(environment, "ANSWER_PER_ACCOUNT_DAILY", 100, 1, 100),
       globalDaily: integer(environment, "ANSWER_GLOBAL_DAILY", 1_000, 1, 100_000)
     } } : {}),
@@ -142,12 +144,12 @@ function loadRuntimeConfig(environment: NodeJS.ProcessEnv): RuntimeConfig {
   };
 }
 
-function loadUsageLimits(environment: NodeJS.ProcessEnv): UsageLimits {
+function loadUsageLimits(environment: NodeJS.ProcessEnv, commandDefaults = { minute: 12, daily: 100 }): UsageLimits {
   return {
     registerPerIpDaily: integer(environment, "REGISTER_PER_IP_DAILY", 200, 1, 100_000),
     registerGlobalDaily: integer(environment, "REGISTER_GLOBAL_DAILY", 10_000, 1, 10_000_000),
-    commandPerInstallMinute: integer(environment, "COMMAND_PER_INSTALL_MINUTE", 12, 1, 1_000),
-    commandPerInstallDaily: integer(environment, "COMMAND_PER_INSTALL_DAILY", 100, 1, 100_000),
+    commandPerInstallMinute: integer(environment, "COMMAND_PER_INSTALL_MINUTE", commandDefaults.minute, 1, 1_000),
+    commandPerInstallDaily: integer(environment, "COMMAND_PER_INSTALL_DAILY", commandDefaults.daily, 1, 100_000),
     commandGlobalDaily: integer(environment, "COMMAND_GLOBAL_DAILY", 100_000, 1, 100_000_000)
   };
 }
