@@ -19,6 +19,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.Process
 import android.os.SystemClock
 import android.util.Log
 import com.puneet.friday.R
@@ -234,10 +235,11 @@ class WakeTrialService : Service() {
                 val token = session.claimHandoff(generation) ?: return
                 session.awaitingTap(generation)
                 updateNotification()
-                val requested = !forceFallbackForTest && WakeAssistantBridge.request(this, token, outcomeForTest)
+                val forceFallback = forceFallbackForTest
+                val testOutcome = outcomeForTest
                 forceFallbackForTest = false
                 outcomeForTest = null
-                Log.i(TAG, "event=handoff run=$generation requested=$requested")
+                requestAssistant(generation, token, forceFallback, testOutcome)
                 main.postDelayed({
                     if (session.expireWake(generation, token)) {
                         Log.i(TAG, "event=handoff_expired run=$generation")
@@ -248,6 +250,27 @@ class WakeTrialService : Service() {
             state.phase == WakeTrialSession.Phase.PAUSED -> { updateNotification(); resumeAfterCommand() }
             else -> finishRun("Microphone off")
         }
+    }
+
+    private fun requestAssistant(generation: Long, token: String, forceFallback: Boolean, testOutcome: String?) {
+        val retry = WakeAssistantRetry()
+        var attempts = 0
+        fun attempt() {
+            if (session.snapshot().generation != generation || !session.isPendingWake(token)) return
+            attempts++
+            val requested = !forceFallback && WakeAssistantBridge.request(this, token, testOutcome)
+            if (requested) {
+                Log.i(TAG, "event=handoff run=$generation requested=true attempts=$attempts")
+                return
+            }
+            val delay = if (forceFallback) null else retry.nextDelayMs()
+            if (delay != null) {
+                main.postDelayed({ attempt() }, delay)
+            } else {
+                Log.i(TAG, "event=handoff run=$generation requested=false attempts=$attempts")
+            }
+        }
+        attempt()
     }
 
     private fun updateNotification() {
@@ -341,6 +364,7 @@ class WakeTrialService : Service() {
             var computeNanos = 0L
             var failure: String? = null
             try {
+                Process.setThreadPriority(Process.THREAD_PRIORITY_LESS_FAVORABLE)
                 if (cancelled) return
                 check(FridayKeywordModel.available(assets)) { FridayKeywordModel.MISSING }
                 val model = FridayKeywordModel.load(assets)

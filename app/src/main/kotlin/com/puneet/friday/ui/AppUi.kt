@@ -117,7 +117,7 @@ object AppUi {
     ): TextView = TextView(context).apply {
         text = value
         textSize = size
-        typeface = geist(context, bold)
+        typeface = fridaySans(context, bold)
         setTextColor(context.getColor(if (secondary) R.color.text_secondary else R.color.text_primary))
         includeFontPadding = false
         setLineSpacing(0f, 1.12f)
@@ -136,7 +136,7 @@ object AppUi {
         text = label
         isAllCaps = false
         textSize = 13f
-        typeface = geist(context, bold = false)
+        typeface = fridaySans(context, bold = false)
         gravity = Gravity.CENTER
         minHeight = dp(context, 48)
         minWidth = dp(context, 88)
@@ -161,7 +161,7 @@ object AppUi {
 
     fun styleField(field: EditText) {
         field.apply {
-            typeface = geist(context, bold = false)
+            typeface = fridaySans(context, bold = false)
             textSize = 13f
             minHeight = dp(context, 48)
             setPadding(dp(context, 12), dp(context, 8), dp(context, 12), dp(context, 8))
@@ -215,8 +215,8 @@ object AppUi {
 
     fun dp(context: Context, value: Int): Int = (value * context.resources.displayMetrics.density).toInt()
 
-    private fun geist(context: Context, bold: Boolean): Typeface = Typeface.create(
-        context.resources.getFont(R.font.geist),
+    private fun fridaySans(context: Context, bold: Boolean): Typeface = Typeface.create(
+        context.resources.getFont(R.font.friday_sans),
         if (bold) Typeface.BOLD else Typeface.NORMAL,
     )
 }

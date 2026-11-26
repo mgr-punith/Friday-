@@ -15,3 +15,13 @@ internal object WakeTrialHandoff {
         }
     }
 }
+
+internal class WakeAssistantRetry {
+    private var attempt = 0
+
+    fun nextDelayMs(): Long? = RETRY_DELAYS_MS.getOrNull(attempt++)
+
+    private companion object {
+        val RETRY_DELAYS_MS = longArrayOf(150, 300, 600, 900)
+    }
+}

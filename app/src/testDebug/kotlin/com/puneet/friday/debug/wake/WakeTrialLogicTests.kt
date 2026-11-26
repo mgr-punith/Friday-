@@ -81,6 +81,12 @@ object WakeTrialLogicTests {
         expect(runCatching { WakeTrialHandoff.awaitStopped(CountDownLatch(1)) }.exceptionOrNull() is IllegalStateException,
             "Activity shutdown during handoff cannot escape as an unhandled checked exception")
         expect(Thread.interrupted(), "Cancellation preserves interruption and the test clears it afterward")
+        val assistantRetry = WakeAssistantRetry()
+        expect(assistantRetry.nextDelayMs() == 150L, "A late assistant service gets a short retry")
+        expect(assistantRetry.nextDelayMs() == 300L, "Assistant retries back off")
+        expect(assistantRetry.nextDelayMs() == 600L && assistantRetry.nextDelayMs() == 900L,
+            "Assistant retries stay bounded")
+        expect(assistantRetry.nextDelayMs() == null, "Exhausted assistant retries fall back to the notification")
         val commands = WakeTrialSession()
         expect(WakeTrialSession.DEFAULT_THRESHOLD == 1f, "Standard uses the bundled model's calibrated cutoff")
         expect(WakeTrialSession.HIGHER_SENSITIVITY_THRESHOLD < WakeTrialSession.DEFAULT_THRESHOLD,

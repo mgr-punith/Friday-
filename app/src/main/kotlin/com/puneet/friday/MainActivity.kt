@@ -146,6 +146,7 @@ open class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        if (::orb.isInitialized) orb.onHostResume()
         if (compactSurface) DebugTools.onAssistantVisible(this)
         resumed = true
         if (replaceSpeakerOnResume) {
@@ -221,6 +222,7 @@ open class MainActivity : Activity() {
                 resetIdle()
                 backend.registerInBackground()
                 if (!getSharedPreferences("friday", MODE_PRIVATE).getBoolean("setup_seen", false)) launchSetup(false)
+                else if (compactSurface) finish()
             } else showSignInRequired()
             return
         }
@@ -230,6 +232,7 @@ open class MainActivity : Activity() {
         resumeListeningAfterSetup = false
         pendingAutoListen = resultCode == RESULT_OK && shouldResume
         maybeStartFromEntryPoint()
+        if (compactSurface && !pendingAutoListen && state != VoiceState.LISTENING) finish()
     }
 
     override fun onPause() {
@@ -252,6 +255,7 @@ open class MainActivity : Activity() {
             if (BuildConfig.DEBUG) Log.i(VOICE_LOG_TAG, "event=success_panel_dismissed_on_pause")
             finish()
         }
+        if (::orb.isInitialized) orb.onHostPause()
         super.onPause()
     }
 
@@ -268,8 +272,10 @@ open class MainActivity : Activity() {
 
     override fun onUserInteraction() {
         super.onUserInteraction()
-        resultInteracted = true
-        cancelResultDismissal()
+        if (lastConfirmation != null) {
+            resultInteracted = true
+            cancelResultDismissal()
+        }
         if (DebugTools.onAssistantInteraction(this)) setControl("Speak", RETRY_CONTROL_LABEL, "Retry command")
     }
 
@@ -320,7 +326,6 @@ open class MainActivity : Activity() {
                     else -> launchSetup(resumeAfterSetup = false)
                 }
             },
-            onClose = { finish() },
             onReplay = { lastConfirmation?.let(confirmationSpeaker::speak) },
             onSettings = { selectDestination(Destination.SETTINGS) },
         )
@@ -488,9 +493,10 @@ open class MainActivity : Activity() {
         surface.clearToast()
         showVoiceStatus("Starting microphone…")
         detail.setTextColor(getColor(R.color.text_secondary))
-        orb.setState(AssistantOrbView.State.LISTENING)
+        surface.setVoiceState(AssistantOrbView.State.LISTENING)
         backend.warmAsync()
-        val commandRecorder = VoiceRecorder(applicationContext, afterWake = fromWake, answerReply = answerContext != null)
+        val commandRecorder = VoiceRecorder(applicationContext, afterWake = fromWake,
+            answerReply = answerContext != null, handsFree = compactSurface)
         activeRecorder = commandRecorder
         worker.execute {
             val capture = try {
@@ -522,7 +528,8 @@ open class MainActivity : Activity() {
                     }
                     CaptureResult.NoClearCommand -> {
                         if (BuildConfig.DEBUG) Log.i(VOICE_LOG_TAG, "event=command_no_speech wake=$fromWake")
-                        showError(if (answerContext != null) "I didn't hear a reply. Ask the full question again." else "I couldn't hear a clear command")
+                        if (compactSurface && answerContext == null) finish()
+                        else showError(if (answerContext != null) "I didn't hear a reply. Ask the full question again." else "I couldn't hear a clear command")
                     }
                     CaptureResult.AudioInUse -> {
                         if (BuildConfig.DEBUG) Log.i(VOICE_LOG_TAG, "event=command_audio_in_use wake=$fromWake")
@@ -536,7 +543,7 @@ open class MainActivity : Activity() {
     private fun updateAudioLevel(request: Int, level: PcmProcessor.Level) {
         runOnUiThread {
             if (!isCurrent(request) || state != VoiceState.LISTENING) return@runOnUiThread
-            orb.setAudioSignal(level.rms, level.low, level.mid, level.high)
+            surface.setAudioLevel(level)
         }
     }
 
@@ -548,7 +555,7 @@ open class MainActivity : Activity() {
     }
 
     private fun showVoiceStatus(value: String) {
-        micLabel.text = value
+        surface.setStatus(value)
         micLabel.visibility = if (compactSurface) View.VISIBLE else View.GONE
         detail.visibility = View.GONE
     }
@@ -557,7 +564,7 @@ open class MainActivity : Activity() {
         if (!compactSurface) micButton.setLabel(homeLabel)
         surface.controlLabel.text = panelLabel
         micButton.contentDescription = action
-        orb.contentDescription = "Orb. $action"
+        if (!compactSurface) orb.contentDescription = "Orb. $action"
         orb.isEnabled = micButton.isEnabled
     }
 
@@ -591,7 +598,7 @@ open class MainActivity : Activity() {
         surface.clearToast()
         showVoiceStatus("Working on it")
         detail.setTextColor(getColor(R.color.text_secondary))
-        orb.setState(AssistantOrbView.State.PROCESSING)
+        surface.setVoiceState(AssistantOrbView.State.PROCESSING)
         worker.execute {
             if (!isCurrent(request)) return@execute
             val result = try {
@@ -733,7 +740,7 @@ open class MainActivity : Activity() {
         } else {
             surface.showToast(message)
         }
-        orb.setState(AssistantOrbView.State.SUCCESS)
+        surface.setVoiceState(AssistantOrbView.State.SUCCESS)
         resultInteracted = false
         if (cloudSpeech != null) confirmationSpeaker.speakCloud(cloudSpeech.text) { cancelled ->
             backend.fetchConfirmationSpeech(cloudSpeech, cancelled)
@@ -747,6 +754,7 @@ open class MainActivity : Activity() {
         cancelResultDismissal()
         answerSetupOutcome = null
         unlockRequired = false
+        lastConfirmation = null
         state = VoiceState.IDLE
         permissionButton.visibility = View.GONE
         micButton.isEnabled = true
@@ -759,9 +767,10 @@ open class MainActivity : Activity() {
         showVoiceStatus(message)
         surface.showToast(message)
         if (compactSurface) micButton.contentDescription = "Retry command"
-        orb.setState(AssistantOrbView.State.ERROR)
+        surface.setVoiceState(AssistantOrbView.State.ERROR)
         releaseLauncherWakeBlock()
-        if (DebugTools.recoverAfterError(this)) setControl("Speak", WAKE_RECOVERY_CONTROL_LABEL, "Retry command")
+        if (compactSurface) scheduleErrorDismissal()
+        else if (DebugTools.recoverAfterError(this)) setControl("Speak", WAKE_RECOVERY_CONTROL_LABEL, "Retry command")
     }
 
     private fun showUnsupported() {
@@ -773,6 +782,7 @@ open class MainActivity : Activity() {
         val message = VoiceFailureCopy.forOutcome(outcome)
         showError(message)
         DebugTools.cancelErrorRecovery(this)
+        cancelResultDismissal()
         answerSetupOutcome = outcome
         if (outcome == VoiceUiOutcome.ANSWERS_DISABLED && !AnswerConsent.isAllowed(this)) {
             permissionButton.text = "Enable Short answers"
@@ -780,6 +790,9 @@ open class MainActivity : Activity() {
         }
         showAnswerSetupStatus(outcome)
         confirmationSpeaker.speak(message)
+        if (compactSurface && permissionButton.visibility == View.VISIBLE) {
+            showCompactRequiredAction("Short answers off", message, "Enable Short answers", ::enableShortAnswers)
+        } else if (compactSurface) scheduleErrorDismissal()
     }
 
     private fun showAnswerSetupStatus(outcome: VoiceUiOutcome) {
@@ -802,6 +815,7 @@ open class MainActivity : Activity() {
                 val message = if (AnswerConsent.isAllowed(this)) "Short answers on. Ask your question again." else "Short answers off."
                 showVoiceStatus(message)
                 surface.showToast(message)
+                if (compactSurface) scheduleErrorDismissal()
             }
         }
     }
@@ -938,6 +952,7 @@ open class MainActivity : Activity() {
             if (completed.isEmpty()) explanation else "$completed. $explanation",
             positive = "Manage permissions",
             negative = "Not now",
+            onCancel = { if (compactSurface) finish() },
         ) { launchSetup(resumeAfterSetup = false) }
         permissionDialog = popup
         popup.setOnDismissListener {
@@ -965,10 +980,27 @@ open class MainActivity : Activity() {
         detail.setTextColor(getColor(R.color.text_primary))
         permissionButton.setText(R.string.unlock_phone)
         permissionButton.visibility = View.VISIBLE
-        orb.setState(AssistantOrbView.State.IDLE)
+        surface.setVoiceState(AssistantOrbView.State.IDLE)
         if (speak) confirmationSpeaker.speak(getString(R.string.unlock_then_ask_again))
         releaseLauncherWakeBlock()
         DebugTools.recoverAfterResult(this, 8_000)
+        if (compactSurface) showCompactRequiredAction(getString(R.string.unlock_to_continue),
+            getString(R.string.unlock_then_ask_again), getString(R.string.unlock_phone), ::requestPhoneUnlock)
+    }
+
+    /** Required setup stays in a native dialog; the hands-free ribbon has no buttons. */
+    private fun showCompactRequiredAction(title: String, message: String, positive: String, onPositive: () -> Unit) {
+        cancelResultDismissal()
+        DebugTools.cancelErrorRecovery(this)
+        permissionDialog?.dismiss()
+        surface.visibility = View.INVISIBLE
+        val popup = FridayDialog.show(this, title, message, positive = positive, negative = "Not now",
+            onCancel = { finish() }, onPositive = onPositive)
+        permissionDialog = popup
+        popup.setOnDismissListener {
+            if (permissionDialog === popup) permissionDialog = null
+            surface.visibility = View.VISIBLE
+        }
     }
 
     private fun requestPhoneUnlock() {
@@ -1044,7 +1076,7 @@ open class MainActivity : Activity() {
         surface.clearToast()
         showVoiceStatus(IDLE_LABEL)
         detail.setTextColor(getColor(R.color.text_secondary))
-        orb.setState(AssistantOrbView.State.IDLE)
+        surface.setVoiceState(AssistantOrbView.State.IDLE)
     }
 
     private fun onSpeechState(active: Boolean) {
@@ -1059,7 +1091,7 @@ open class MainActivity : Activity() {
                 cancelAnswerDismissal()
             }
             it.setSpeaking(speaking)
-            orb.setState(if (speaking) AssistantOrbView.State.SPEAKING else AssistantOrbView.State.IDLE)
+            surface.setVoiceState(if (speaking) AssistantOrbView.State.SPEAKING else AssistantOrbView.State.IDLE)
             return
         }
         micButton.showStop(speaking)
@@ -1069,14 +1101,14 @@ open class MainActivity : Activity() {
             if (speaking) "Stop speaking" else "Start listening")
         answerSetupOutcome?.let {
             showAnswerSetupStatus(it)
-            orb.setState(if (speaking) AssistantOrbView.State.SPEAKING else AssistantOrbView.State.ERROR)
+            surface.setVoiceState(if (speaking) AssistantOrbView.State.SPEAKING else AssistantOrbView.State.ERROR)
             return
         }
         if (unlockRequired) return
         surface.cancel.visibility = View.GONE
         surface.replay.visibility = if (speaking || lastConfirmation == null || !speechAvailable) View.INVISIBLE else View.VISIBLE
         micLabel.text = if (speaking) "Speaking" else "Done"
-        orb.setState(if (speaking) AssistantOrbView.State.SPEAKING else AssistantOrbView.State.SUCCESS)
+        surface.setVoiceState(if (speaking) AssistantOrbView.State.SPEAKING else AssistantOrbView.State.SUCCESS)
         if (lastConfirmation != null) scheduleResultDismissal(speaking, waitingForSpeech = false)
     }
 
@@ -1099,6 +1131,16 @@ open class MainActivity : Activity() {
     private fun cancelResultDismissal() {
         resultDismissal?.let(surface::removeCallbacks)
         resultDismissal = null
+    }
+
+    private fun scheduleErrorDismissal() {
+        cancelResultDismissal()
+        val delay = CompletionPolicy.errorCloseDelay(compactSurface) ?: return
+        val request = generation
+        resultDismissal = Runnable {
+            resultDismissal = null
+            if (isCurrent(request) && state == VoiceState.IDLE && lastConfirmation == null && !unlockRequired) finish()
+        }.also { surface.postDelayed(it, delay) }
     }
 
     private fun scheduleResultDismissal(speaking: Boolean, waitingForSpeech: Boolean) {
@@ -1133,6 +1175,11 @@ open class MainActivity : Activity() {
         setDetail("Use your Google account to send commands.")
         permissionButton.text = "Continue with Google"
         permissionButton.visibility = View.VISIBLE
+        if (compactSurface && resumed && !signInOpen) {
+            if (DeviceLock.isLocked(this)) showUnlockRequired()
+            else showCompactRequiredAction("Sign in to Friday", "Use your Google account to send commands.",
+                "Continue with Google", ::launchSignIn)
+        }
     }
 
     @Suppress("DEPRECATION")
@@ -1157,7 +1204,7 @@ open class MainActivity : Activity() {
 
     private fun onSpeechAudio(level: PcmProcessor.Level) {
         if (speaking && resumed) {
-            orb.setAudioSignal(level.rms, level.low, level.mid, level.high)
+            surface.setAudioLevel(level)
             if (BuildConfig.DEBUG && !speechAudioSeen) {
                 speechAudioSeen = true
                 Log.i(VOICE_LOG_TAG, "ttsAudioAvailable=true")
@@ -1245,7 +1292,7 @@ open class MainActivity : Activity() {
                 setControl("Cancel", "Tap to cancel", "Cancel command")
                 surface.clearToast()
                 showVoiceStatus("Working on it")
-                orb.setState(AssistantOrbView.State.PROCESSING)
+                surface.setVoiceState(AssistantOrbView.State.PROCESSING)
             }
         }
     }
@@ -1270,21 +1317,31 @@ open class MainActivity : Activity() {
     /** ADB-only renderer check. R8 removes this path from release builds. */
     private fun startOrbVoiceDemo() {
         orbDemoRunnable?.let(orb::removeCallbacks)
-        orb.setState(AssistantOrbView.State.LISTENING)
+        surface.setVoiceState(AssistantOrbView.State.LISTENING)
+        showVoiceStatus("Preview · voice response")
+        surface.controlLabel.text = "Microphone off"
         val startedAt = SystemClock.elapsedRealtime()
         val runnable = object : Runnable {
             override fun run() {
                 val elapsed = SystemClock.elapsedRealtime() - startedAt
                 if (elapsed >= DEBUG_ORB_VOICE_DURATION_MS || !resumed || isFinishing || isDestroyed) {
-                    orb.setState(AssistantOrbView.State.IDLE)
+                    surface.setVoiceState(AssistantOrbView.State.IDLE)
+                    showVoiceStatus("Preview complete")
+                    surface.controlLabel.text = "Tap to speak"
                     orbDemoRunnable = null
                     return
                 }
                 val phase = elapsed / 1_000.0
                 val pulse = ((sin(phase * 8.4) + 1.0) * 0.5).toFloat()
                 val syllable = ((sin(phase * 17.3 + 0.8) + 1.0) * 0.5).toFloat()
+                val rms = when (elapsed) {
+                    in 0..999 -> 0f
+                    in 1_000..2_999 -> 0.017f + pulse * 0.009f
+                    in 3_000..5_499 -> 0.045f + pulse * 0.035f
+                    else -> 0f
+                }
                 orb.setAudioSignal(
-                    rms = 0.035f + pulse * 0.07f,
+                    rms = rms,
                     low = 0.25f + pulse * 0.55f,
                     mid = 0.32f + syllable * 0.62f,
                     high = 0.18f + (1f - pulse) * 0.58f,
@@ -1305,7 +1362,7 @@ open class MainActivity : Activity() {
         const val VOICE_LOG_TAG = "FridayVoice"
         const val DEBUG_ORB_VOICE_EXTRA = "debug_orb_voice"
         const val DEBUG_ANSWER_CONTEXT = "friday_debug_answer_followup_no_upload"
-        const val DEBUG_ORB_VOICE_DURATION_MS = 4_000L
+        const val DEBUG_ORB_VOICE_DURATION_MS = 8_000L
         const val DEBUG_ORB_FRAME_MS = 32L
         const val SETUP_REQUEST = 203
     }

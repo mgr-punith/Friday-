@@ -9,6 +9,7 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import com.puneet.friday.R
+import com.puneet.friday.voice.PcmProcessor
 
 /** One voice surface, shared by the launcher screen and contextual assistant panel. */
 @SuppressLint("ViewConstructor") // Created with callbacks in Kotlin, never inflated from XML.
@@ -18,15 +19,17 @@ class VoiceSurface(
     onMic: () -> Unit,
     onCancel: () -> Unit,
     onPermissions: () -> Unit,
-    onClose: () -> Unit,
     onReplay: () -> Unit,
     private val onSettings: () -> Unit = {},
 ) : FrameLayout(activity) {
-    val orb = AssistantOrbView(activity).apply {
-        contentDescription = "Orb. Start listening"
-        setOnClickListener { if (mic.isEnabled) mic.performClick() }
+    val orb = AssistantOrbView(activity, ribbon = compact).apply {
+        if (!compact) {
+            contentDescription = "Orb. Start listening"
+            setOnClickListener { if (mic.isEnabled) mic.performClick() }
+        }
     }
     val mic = MicButtonView(activity).apply {
+        setMonochrome(compact)
         contentDescription = "Start listening"
         setOnClickListener { onMic() }
     }
@@ -58,47 +61,29 @@ class VoiceSurface(
         requestPanel.visibility = View.GONE
         requestPanel.addView(AppUi.text(activity, "Understood", 11f, secondary = true), AppUi.params(activity, 4))
         requestPanel.addView(request, AppUi.params(activity, 0))
-        if (compact) buildPanel(activity, onClose) else buildHome(activity)
+        if (compact) buildPanel(activity) else buildHome(activity)
     }
 
-    private fun buildPanel(activity: Activity, onClose: () -> Unit) {
-        background = AppUi.surface(activity, 28, R.color.settings_surface, R.color.settings_divider)
+    private fun buildPanel(activity: Activity) {
+        background = AppUi.surface(activity, 24, R.color.surface, R.color.settings_divider)
         clipToOutline = true
+        elevation = dp(10).toFloat()
         val content = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(12), dp(12), dp(10))
+            setPadding(dp(12), dp(8), dp(12), dp(12))
         }
-        val summary = LinearLayout(activity).apply { gravity = Gravity.CENTER_VERTICAL }
-        summary.addView(orb, LinearLayout.LayoutParams(dp(80), dp(80)))
-        val text = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(4), dp(4), 0, dp(4))
-            addView(AppUi.text(activity, "Friday", 12f, secondary = true), AppUi.params(activity, 4))
-            addView(title, AppUi.params(activity, 0))
-            addView(detail, AppUi.params(activity, 0).apply { topMargin = dp(4) })
-        }
+        content.addView(orb, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(72)))
+        title.textSize = 13f
+        title.gravity = Gravity.CENTER
+        title.setTextColor(activity.getColor(R.color.text_secondary))
+        content.addView(title, AppUi.params(activity, 0))
+
         detail.visibility = View.GONE
-        summary.addView(text, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
-        summary.addView(AppUi.roundIconButton(activity, R.drawable.ic_x_close, "Close assistant", onClose),
-            LinearLayout.LayoutParams(dp(48), dp(48)).apply { gravity = Gravity.TOP })
-        content.addView(summary, AppUi.params(activity, 4))
-        requestPanel.setPadding(dp(12), dp(4), dp(12), dp(8))
-        content.addView(requestPanel, AppUi.params(activity, 0))
-        content.addView(permission, AppUi.params(activity, 4))
-        val actions = LinearLayout(activity).apply { gravity = Gravity.CENTER_VERTICAL }
-        actions.addView(mic, LinearLayout.LayoutParams(dp(48), dp(48)))
-        controlLabel.apply {
-            gravity = Gravity.CENTER_VERTICAL
-            minHeight = dp(48)
-            setPadding(dp(6), 0, dp(4), 0)
-            setOnClickListener { if (mic.isEnabled) mic.performClick() }
-            // The adjacent microphone exposes the same action to keyboard and TalkBack users.
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            isFocusable = false
-        }
-        actions.addView(controlLabel, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
-        actions.addView(replay, LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
-        content.addView(actions, AppUi.params(activity, 0))
+        detail.gravity = Gravity.CENTER
+        content.addView(detail, AppUi.params(activity, 4))
+        controlLabel.visibility = View.GONE
+        requestPanel.setPadding(dp(12), dp(8), dp(12), dp(8))
+        content.addView(requestPanel, AppUi.params(activity, 4))
         statusScroll.addView(content)
         addView(statusScroll, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
     }
@@ -193,6 +178,18 @@ class VoiceSurface(
     fun clearToast() {
         removeCallbacks(dismissToast)
         toast?.visibility = View.GONE
+    }
+
+    fun setVoiceState(state: AssistantOrbView.State) {
+        orb.setState(state)
+    }
+
+    fun setStatus(value: String) {
+        title.text = value
+    }
+
+    fun setAudioLevel(level: PcmProcessor.Level) {
+        orb.setAudioSignal(level.rms, level.low, level.mid, level.high)
     }
 
     override fun onDetachedFromWindow() {

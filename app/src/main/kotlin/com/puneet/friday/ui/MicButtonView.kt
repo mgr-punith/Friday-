@@ -21,9 +21,10 @@ class MicButtonView @JvmOverloads constructor(
     private var active = false
     private var stopIcon = false
     private var label: String? = null
+    private var monochrome = false
     private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textSize = 15f * resources.displayMetrics.scaledDensity
-        typeface = Typeface.create(resources.getFont(R.font.geist), Typeface.NORMAL)
+        typeface = Typeface.create(resources.getFont(R.font.friday_sans), Typeface.NORMAL)
     }
 
     init {
@@ -55,6 +56,12 @@ class MicButtonView @JvmOverloads constructor(
         invalidate()
     }
 
+    fun setMonochrome(value: Boolean) {
+        if (monochrome == value) return
+        monochrome = value
+        invalidate()
+    }
+
     override fun onInitializeAccessibilityNodeInfo(info: android.view.accessibility.AccessibilityNodeInfo) {
         super.onInitializeAccessibilityNodeInfo(info)
         info.text = label
@@ -81,13 +88,17 @@ class MicButtonView @JvmOverloads constructor(
         val radius = min(width, height) * 0.41f
         paint.style = Paint.Style.FILL
         paint.shader = null
-        paint.color = context.getColor(if (isPressed) R.color.control_pressed else if (active) R.color.control_primary else R.color.surface)
+        paint.color = if (monochrome) {
+            if (isPressed) 0x60777777 else android.graphics.Color.TRANSPARENT
+        } else context.getColor(if (isPressed) R.color.control_pressed else if (active) R.color.control_primary else R.color.surface)
         paint.alpha = if (isEnabled) 255 else 100
         canvas.drawCircle(centerX, centerY, radius, paint)
 
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = max(1f, dp(1).toFloat())
-        paint.color = context.getColor(if (active) R.color.accent else R.color.border)
+        paint.color = if (monochrome) {
+            if (active) 0xCCFFFFFF.toInt() else 0x669A9A9A
+        } else context.getColor(if (active) R.color.accent else R.color.border)
         canvas.drawCircle(centerX, centerY, radius, paint)
 
         if (stopIcon) {
@@ -101,7 +112,7 @@ class MicButtonView @JvmOverloads constructor(
         if (hasFocus()) {
             paint.style = Paint.Style.STROKE
             paint.strokeWidth = dp(2).toFloat()
-            paint.color = context.getColor(R.color.focus_ring)
+            paint.color = context.getColor(if (monochrome) R.color.text_primary else R.color.focus_ring)
             canvas.drawCircle(centerX, centerY, radius * 1.12f, paint)
         }
 
@@ -132,7 +143,7 @@ class MicButtonView @JvmOverloads constructor(
     }
 
     private fun drawMicrophone(canvas: Canvas, centerX: Float, centerY: Float, radius: Float) {
-        val color = context.getColor(if (active && label == null) R.color.mic_icon else R.color.text_primary)
+        val color = context.getColor(R.color.text_primary)
         val size = max(1, (radius * 1.08f).toInt() - dp(2))
         microphoneIcon.setTint(color)
         microphoneIcon.alpha = if (isEnabled) 255 else 100

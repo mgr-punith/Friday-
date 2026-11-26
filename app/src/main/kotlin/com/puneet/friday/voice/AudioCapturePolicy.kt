@@ -16,6 +16,9 @@ internal object AudioCapturePolicy {
 
     fun acceptsManualStop(sampleCount: Int): Boolean = sampleCount >= MIN_MANUAL_STOP_SAMPLES
 
+    fun shouldStopWaitingForSpeech(handsFree: Boolean, hasSpeech: Boolean, sampleCount: Int, answerReply: Boolean = false): Boolean =
+        handsFree && !answerReply && !hasSpeech && sampleCount >= NO_COMMAND_SAMPLES
+
     fun reviewedStartSample(samples: ShortArray, sampleCount: Int, startSample: Int, processor: PcmProcessor): Int {
         val count = sampleCount.coerceIn(0, samples.size)
         val start = startSample.coerceIn(0, count)
@@ -83,6 +86,7 @@ internal object AudioCapturePolicy {
     }
 
     private const val MIN_MANUAL_STOP_SAMPLES = WavEncoder.SAMPLE_RATE * 1_500 / 1_000
+    private const val NO_COMMAND_SAMPLES = WavEncoder.SAMPLE_RATE * 5
     private const val WAKE_SPEECH_GAIN = 1.6f
     private const val MIN_WAKE_LISTEN_SAMPLES = WavEncoder.SAMPLE_RATE * 2
     private const val MIN_REPLY_LISTEN_SAMPLES = WavEncoder.SAMPLE_RATE * 5

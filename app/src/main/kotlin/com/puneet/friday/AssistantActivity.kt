@@ -24,8 +24,8 @@ class AssistantActivity : MainActivity() {
         window.apply {
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-            setDimAmount(0.14f)
-            setGravity(Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+            setDimAmount(0.10f)
+            setGravity(Gravity.TOP or Gravity.CENTER_HORIZONTAL)
             val gutter = AppUi.dp(this@AssistantActivity, 12)
             val width = minOf(resources.displayMetrics.widthPixels - 2 * gutter, AppUi.dp(this@AssistantActivity, 440))
             attributes = attributes.apply { y = gutter }

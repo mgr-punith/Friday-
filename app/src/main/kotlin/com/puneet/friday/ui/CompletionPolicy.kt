@@ -20,6 +20,8 @@ object CompletionPolicy {
         return if (speaking || speechAvailable) 12_000 else 0
     }
 
+    fun errorCloseDelay(compact: Boolean): Long? = if (compact) 1_800L else null
+
     fun spokenConfirmation(message: String): String =
         if (message.startsWith("Calling ") || message.startsWith("Opening ") || message.startsWith("Timer request sent") ||
             message.startsWith("Alarm request sent")) message else "Done. $message"

@@ -8,6 +8,9 @@ import com.puneet.friday.actions.SettingsTarget
 import com.puneet.friday.entry.EntryPointPolicy
 import com.puneet.friday.entry.AssistantSettingsTests
 import com.puneet.friday.ui.OrbMotionMath
+import com.puneet.friday.ui.OrbMotionPolicy
+import com.puneet.friday.ui.AssistantOrbView
+import com.puneet.friday.ui.VoiceMotion
 import com.puneet.friday.ui.ActionPresentation
 import com.puneet.friday.ui.TabNavigation
 import com.puneet.friday.ui.Destination
@@ -208,6 +211,10 @@ object VoiceLogicTests {
             "Speech has a bounded completion watchdog")
         expect(CompletionPolicy.closeDelay(true, true, false, true, false) == 12_000L,
             "TTS startup does not close the result before the confirmation")
+        expect(CompletionPolicy.errorCloseDelay(compact = true) == 1_800L,
+            "A hands-free command error dismisses after a brief readable message")
+        expect(CompletionPolicy.errorCloseDelay(compact = false) == null,
+            "An error leaves launcher controls available")
         expect(CompletionPolicy.closeWhenLeaving(true, true),
             "A completed compact timer panel closes when Clock pauses it before speech finishes")
         expect(!CompletionPolicy.closeWhenLeaving(false, true),
@@ -320,6 +327,16 @@ object VoiceLogicTests {
             "Wake capture can stop on silence after two seconds")
         expect(AudioCapturePolicy.canStopAfterSilence(afterWake = false, sampleCount = 1),
             "Tap capture keeps its current silence stop")
+        expect(!AudioCapturePolicy.shouldStopWaitingForSpeech(handsFree = true, hasSpeech = false, sampleCount = 79_999),
+            "Hands-free capture gives the user five seconds to start a command")
+        expect(AudioCapturePolicy.shouldStopWaitingForSpeech(handsFree = true, hasSpeech = false, sampleCount = 80_000),
+            "Hands-free capture ends after five seconds without speech")
+        expect(!AudioCapturePolicy.shouldStopWaitingForSpeech(handsFree = true, hasSpeech = true, sampleCount = 80_000),
+            "The no-command deadline cannot cut off a command already in progress")
+        expect(!AudioCapturePolicy.shouldStopWaitingForSpeech(handsFree = false, hasSpeech = false, sampleCount = 80_000),
+            "The no-command deadline preserves Home's existing recording window")
+        expect(!AudioCapturePolicy.shouldStopWaitingForSpeech(handsFree = true, hasSpeech = false,
+            sampleCount = 80_000, answerReply = true), "Clarification replies retain their existing recording window")
         expect(!AudioCapturePolicy.canStopAfterSilence(afterWake = false, sampleCount = 79_999, answerReply = true),
             "Reply capture leaves five seconds to respond before a silence stop")
         expect(AudioCapturePolicy.canStopAfterSilence(afterWake = false, sampleCount = 80_000, answerReply = true),
@@ -415,6 +432,11 @@ object VoiceLogicTests {
         expect(OrbMotionMath.voiceEnergy(0.017f, 0.004f) > 0.08f, "Quiet speech creates visible orb motion")
         expect(OrbMotionMath.voiceEnergy(0.008f, 0.004f) == 0f, "Background hum leaves the orb still")
         expect(OrbMotionMath.voiceEnergy(0.05f, 0.004f) > 0.25f, "Speech creates visible orb motion")
+        val responsiveVoice = VoiceMotion()
+        responsiveVoice.setTarget(0.8f, 0.6f, 0.4f, 0.2f)
+        repeat(5) { responsiveVoice.advance(0.016f) }
+        expect(responsiveVoice.energy in 0.55f..0.79f,
+            "Voice visuals follow a syllable within 80 ms without jumping to full amplitude")
         expect(
             OrbMotionMath.noiseThreshold(0.014f) > OrbMotionMath.noiseThreshold(0.004f),
             "Orb motion adapts to a louder room",
@@ -423,6 +445,42 @@ object VoiceLogicTests {
             OrbMotionMath.adaptNoiseFloor(0.004f, 0.012f, 0.25f) in 0.0059f..0.0061f,
             "Orb calibration learns ambient sound",
         )
+        expect(OrbMotionPolicy.shouldRenderContinuously(AssistantOrbView.State.PREVIEW, 0f, true, true),
+            "Orb preview animates while visible and motion is enabled")
+        expect(OrbMotionPolicy.shouldRenderContinuously(AssistantOrbView.State.LISTENING, 0.08f, true, true),
+            "Orb listening motion follows gated speech")
+        expect(!OrbMotionPolicy.shouldRenderContinuously(AssistantOrbView.State.LISTENING, 0f, true, true),
+            "Orb listening motion stops during silence")
+        expect(!OrbMotionPolicy.shouldRenderContinuously(AssistantOrbView.State.PROCESSING, 0.5f, true, true),
+            "Orb rendering stays frozen while processing")
+        expect(!OrbMotionPolicy.shouldRenderContinuously(AssistantOrbView.State.LISTENING, 0.5f, false, true),
+            "Orb rendering respects disabled system animators")
+        expect(!OrbMotionPolicy.shouldRenderContinuously(AssistantOrbView.State.PREVIEW, 0f, true, false),
+            "Orb rendering stops while its host is hidden")
+        expect(responsiveVoice.low > responsiveVoice.mid && responsiveVoice.mid > responsiveVoice.high,
+            "Voice visuals retain the microphone frequency balance")
+        responsiveVoice.setTarget(0f, 0f, 0f, 0f)
+        repeat(25) { responsiveVoice.advance(0.016f) }
+        expect(responsiveVoice.energy == 0f && responsiveVoice.low == 0f,
+            "Voice visuals settle to rest within 400 ms of silence")
+        responsiveVoice.setTarget(1f, 1f, 1f, 1f)
+        repeat(10) { responsiveVoice.advance(0.016f) }
+        responsiveVoice.reset()
+        expect(responsiveVoice.energy == 0f && responsiveVoice.high == 0f,
+            "Leaving a voice surface clears its previous audio")
+        responsiveVoice.advance(0.1f)
+        expect(responsiveVoice.energy == 0f, "Reset clears both displayed and pending audio")
+        responsiveVoice.setTarget(Float.NaN, Float.POSITIVE_INFINITY, -1f, 2f)
+        repeat(10) { responsiveVoice.advance(0.016f) }
+        expect(responsiveVoice.energy == 0f && responsiveVoice.low == 0f &&
+            responsiveVoice.mid == 0f && responsiveVoice.high in 0f..1f,
+            "Malformed audio cannot produce nonfinite or unbounded visual levels")
+        expect(OrbMotionPolicy.shouldRenderContinuously(AssistantOrbView.State.LISTENING, 0f, true, true,
+            settling = true), "A voice visual can release to silence after the last syllable")
+        expect(!OrbMotionPolicy.shouldRenderContinuously(AssistantOrbView.State.LISTENING, 0f, false, true,
+            settling = true), "Reduced motion also disables release animation")
+        expect(!OrbMotionPolicy.shouldRenderContinuously(AssistantOrbView.State.SPEAKING, 0f, true, false,
+            settling = true), "A hidden voice visual cannot keep rendering its release")
 
         val detector = SpeechEndDetector(
             minimumSpeechFrames = 3,
