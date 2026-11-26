@@ -176,7 +176,10 @@ async function handleCommand(
 
   try {
     const allowed = await dependencies.usage.consumeCommand(installId, dependencies.clock.now());
-    if (!allowed) return commandError(429, "busy");
+    if (!allowed) {
+      dependencies.logger.error("command_quota_denied", requestId(event));
+      return commandError(429, "busy");
+    }
   } catch {
     dependencies.logger.error("usage_check_failed", requestId(event));
     return commandError(503, "busy");
@@ -194,12 +197,18 @@ async function handleCommand(
     if (result.usage) dependencies.logger.usage?.(safeAiUsage(result.usage));
     if (result.selection.name === ANSWER_SETUP_TOOL.name) {
       if (!answerSetup || result.answer !== undefined || !isRecord(result.selection.args) ||
-        !hasOnlyKeys(result.selection.args, [])) return commandError(503, "busy");
+        !hasOnlyKeys(result.selection.args, [])) {
+        dependencies.logger.error("assistant_invalid_answer_setup", requestId(event));
+        return commandError(503, "busy");
+      }
       return commandSuccess({ type: "unsupported", reason: answerSetup }, result.durationMs, result.timingMetric, result.stages);
     }
     if (result.answer !== undefined) {
       let answer = validateAnswer(result.answer);
-      if (!supportsAnswers || !answer || result.selection.name !== "answer_question") return commandError(503, "busy");
+      if (!supportsAnswers || !answer || result.selection.name !== "answer_question") {
+        dependencies.logger.error("assistant_invalid_answer", requestId(event));
+        return commandError(503, "busy");
+      }
       // Clarify before the one permitted search, and stop after two clarification replies.
       if (answer.kind === "clarification" && (answerContext?.remaining === 0 || result.stages?.answer !== undefined)) {
         answer = { kind: "unavailable", text: "I couldn't narrow that down. Please ask the full question with more detail.", sources: [] };
@@ -212,7 +221,10 @@ async function handleCommand(
       return commandSuccess(next ? { ...spoken, continuation: next } : spoken,
         result.durationMs, result.timingMetric, result.stages);
     }
-    if (answerContext) return commandError(503, "busy");
+    if (answerContext) {
+      dependencies.logger.error("assistant_invalid_answer_reply", requestId(event));
+      return commandError(503, "busy");
+    }
     const response = parseFunctionSelection(result.selection, actionVersion);
     const confirmationSpeech = dependencies.speech?.provider.clientVersion === "elevenlabs-v1" &&
       header(event, "x-friday-speech") === "elevenlabs-v1" && header(event, "x-friday-confirmations") === "1"

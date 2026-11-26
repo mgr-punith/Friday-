@@ -6,7 +6,8 @@ import {
 import { AssistantProviderError, type AssistantProvider, type AssistantProviderResult,
   type CommandInput, type FunctionSelection } from "../core/contracts";
 import type { FetchLike } from "./gemini";
-import { ANSWER_PROMPT, ANSWER_SETUP_TOOL, ANSWER_TOOL, needsCurrentInformation, readBrowserAnswer, readKnowledgeAnswer } from "../core/answers";
+import { ANSWER_PROMPT, ANSWER_SETUP_TOOL, ANSWER_TOOL, localClockAnswer, localWeatherClarification,
+  needsCurrentInformation, readBrowserAnswer, readKnowledgeAnswer } from "../core/answers";
 import { ParakeetTranscriber, type ParakeetConfig } from "./parakeet";
 import { TranscriptionError, type AudioInput, type AudioTranscriber } from "./transcription";
 import { turnsOffQuietMode } from "../core/ringer-command";
@@ -94,9 +95,12 @@ export class GroqProvider implements AssistantProvider {
     const tools = following ? [answerTool] : [...compactGroqTools(actionVersion).map(tool => (supportsAnswers || answerSetup) && tool.name === "unsupported"
       ? { ...tool, description: "Use for chat, essays, non-English speech or unsupported phone controls." } : tool),
       ...(supportsAnswers ? [answerTool] : answerSetup ? [ANSWER_SETUP_TOOL] : [])];
-    const requestTools = following ? tools : focusedGroqTools(text, tools);
+    const answerRequest = supportsAnswers && !following && isInformationRequest(text);
+    const answerSetupRequest = answerSetup && isInformationRequest(text);
+    const requestTools = following ? tools : answerRequest ? [answerTool] : answerSetupRequest
+      ? [ANSWER_SETUP_TOOL] : focusedGroqTools(text, tools);
     const focused = requestTools.length < tools.length;
-    const actionInstructions = focused
+    const actionInstructions = answerRequest || answerSetupRequest || following ? "" : focused
       ? " Handle one clear request. Use the matching action only; use unsupported if it does not match. Never guess a target." +
         (requestTools.some(tool => tool.name === "play_media")
           ? " Keep named song and artist words exactly in the play_media query; include a player only when spoken."
@@ -104,6 +108,8 @@ export class GroqProvider implements AssistantProvider {
       : actionInstructionsFor(actionVersion);
     const question = following ? JSON.stringify({ originalQuestion: following.question, earlierReplies: following.turns,
       clarification: following.prompt, reply: text }) : text;
+    const localClock = !following && supportsAnswers ? localClockAnswer(text, now) : null;
+    const weatherClarification = !following && supportsAnswers ? localWeatherClarification(text) : null;
     const instructions = following
       ? "You give brief factual answers for an English voice assistant. Use the original question, earlier replies and latest reply together. " +
         "Do not ask again for details already provided. Only answer questions; phone commands, chat or non-English replies use unavailable. " +
@@ -122,20 +128,24 @@ export class GroqProvider implements AssistantProvider {
         messages: [
           { role: "system", content: instructions + (supportsAnswers && !following
             ? " For intelligible factual questions, including incomplete questions about a person or match, choose answer_question. " +
-              "Missing essential details use answer_question with arguments {\"mode\":\"clarification\",\"text\":\"your short question\"}." : "") +
+              "Missing essential details use answer_question in clarification mode with one short question." : "") +
             (supportsAnswers ? " The answer modes are argument values, never function names." : "") +
             (answerSetup ? " For an English factual question choose short_answers_required with no arguments. " +
               "Use unsupported for unsupported phone controls, chat, essays or non-English speech." : "") +
-            " Return one tool call with a valid JSON object. Omit optional fields that were not spoken. Do not output prose." +
+            " Return one tool call. Omit optional fields that were not spoken. Do not output prose." +
             (repair ? ` The previous tool call was invalid. Choose one declared function name: ${requestTools.map(tool => tool.name).join(", ")}. ` +
-              "Never call json or invent a function. Put the JSON object in the function arguments." : "") },
+              "Do not invent a function. Put the selected fields in that function's arguments." : "") },
           { role: "user", content: `Current phone time: ${now}\n${following ? "Question context" : "Command"}: ${question}` }
         ],
         tools: requestTools.map((declaration) => ({ type: "function", function: {
           ...declaration,
           parameters: { ...declaration.parameters, additionalProperties: false }
         } })),
-        tool_choice: "required",
+        tool_choice: following || answerRequest
+          ? { type: "function", function: { name: ANSWER_TOOL.name } }
+          : answerSetupRequest
+            ? { type: "function", function: { name: ANSWER_SETUP_TOOL.name } }
+            : "required",
         parallel_tool_calls: false,
         temperature: 0,
         max_completion_tokens: repair
@@ -148,6 +158,10 @@ export class GroqProvider implements AssistantProvider {
     if (!selection) throw this.failure(budget, "classification", "invalid_response");
     stages.classification = this.runtime.now() - started;
     if (selection.name === ANSWER_TOOL.name) {
+      if (localClock) return { selection, answer: localClock, question: text,
+        durationMs: this.elapsed(budget), timingMetric: "groq", stages, usage: budget.usage };
+      if (weatherClarification) return { selection, answer: weatherClarification, question: text,
+        durationMs: this.elapsed(budget), timingMetric: "groq", stages, usage: budget.usage };
       let directAnswer = readKnowledgeAnswer(selection.args);
       if (directAnswer?.kind === "clarification" && following?.remaining === 0) {
         directAnswer = { kind: "unavailable", text: "I couldn't narrow that down. Please ask the full question with more detail.", sources: [] };
@@ -368,6 +382,17 @@ function focusedGroqTools<T extends { readonly name: string }>(text: string, too
   const matches = groups.filter(group => group.match.test(command));
   if (matches.length !== 1) return tools;
   return narrow(matches[0]!.names);
+}
+
+function isInformationRequest(text: string): boolean {
+  const normalized = text.toLowerCase().replace(/[’']/g, "").replace(/[.!?]+$/, "").trim();
+  const command = normalized.replace(/^(?:(?:can|could|would|will) you\s+)?(?:please\s+)?/, "");
+  if (/^(?:call|phone|dial|ring|set|start|open|launch|close|exit|go to|leave|switch|turn|put|change|mute|unmute|play|pause|resume|skip|lower|raise|increase|decrease|make)\b/.test(command)) {
+    return false;
+  }
+  return /^(?:who|what|when|where|why|how|which)(?:s|re|ve|d|ll)?\b/.test(command) ||
+    /^(?:tell me|explain)\b/.test(command) ||
+    /\b(?:weather|forecast|temperature|rain|raining|news|latest|time|date|day)\b/.test(command) || text.trim().endsWith("?");
 }
 
 // Pin common, explicit commands after the transcript check. Never match part of a compound or negated request.

@@ -229,8 +229,8 @@ test("command rejects missing auth, malformed time, and malformed audio", async 
   assert.equal(invalidAudio.assistant.calls.length, 0);
 });
 
-test("rate limiting fails closed before Gemini", async () => {
-  const { api, usage, assistant } = harness();
+test("rate limiting fails closed before the provider and logs a safe denial code", async () => {
+  const { api, usage, assistant, logger } = harness();
   usage.commandAllowed = false;
   const response = await api.handle(
     event("POST", "/v1/command", {
@@ -244,6 +244,7 @@ test("rate limiting fails closed before Gemini", async () => {
   );
   assert.equal(response.statusCode, 429);
   assert.equal(assistant.calls.length, 0);
+  assert.deepEqual(logger.entries, [{ code: "command_quota_denied", requestId: "request-1" }]);
 });
 
 test("production rejects benchmark M4A uploads before selecting an action", async () => {

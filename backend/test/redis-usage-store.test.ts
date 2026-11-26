@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { RedisUsageLimitStore, type RedisEvalSender } from "../src/redis/usage-store";
+import { createRedisClient, RedisUsageLimitStore, type RedisEvalSender } from "../src/redis/usage-store";
 import { TEST_INSTALL_ID, TEST_NOW } from "./helpers";
 
 const LIMITS = {
@@ -59,6 +59,33 @@ test("Redis limit responses fail closed", async () => {
     new RedisUsageLimitStore(malformed, LIMITS).consumeRegistration("identity-hash", TEST_NOW),
     /invalid_redis_limit_result/
   );
+});
+
+test("a lost Redis response cannot reserve command quota twice", async (context) => {
+  let reserved = 0;
+  let loseResponse = true;
+  context.mock.method(globalThis, "fetch", async (url: string | URL | Request, init?: RequestInit) => {
+    assert.equal(new URL(String(url)).origin, "https://friday-redis.example.test");
+    const payload = JSON.parse(String(init?.body)) as unknown[];
+    const allowed = reserved < 2;
+    if (allowed) reserved++;
+    if (loseResponse) {
+      loseResponse = false;
+      throw new TypeError("test_response_lost_after_reservation");
+    }
+    const response = { result: allowed ? 1 : 0 };
+    return Response.json(Array.isArray(payload[0]) ? [response] : response);
+  });
+  const store = new RedisUsageLimitStore(
+    createRedisClient("https://friday-redis.example.test", "test-redis-token-do-not-use"),
+    { ...LIMITS, commandPerInstallMinute: 2 },
+  );
+
+  await assert.rejects(store.consumeCommand(TEST_INSTALL_ID, TEST_NOW));
+  assert.equal(await store.consumeCommand(TEST_INSTALL_ID, TEST_NOW), true,
+    "A separate command can use the remaining slot after an unconfirmed reservation");
+  assert.equal(await store.consumeCommand(TEST_INSTALL_ID, TEST_NOW), false,
+    "The real command limit still applies");
 });
 
 test("live search has separate atomic counters but shares blocked-account checks", async () => {

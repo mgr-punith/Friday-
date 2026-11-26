@@ -107,7 +107,9 @@ export function createRedisClient(url: string, token: string): RedisEvalSender {
     automaticDeserialization: false,
     keepAlive: true,
     readYourWrites: true,
-    retry: { retries: 1, backoff: () => 50 }
+    // An EVAL may already have committed when its HTTP response is lost.
+    // Retrying could reserve quota twice or replay an auth update. Fail closed.
+    retry: { retries: 0, backoff: () => 50 }
   });
   return {
     eval<TData>(script: string, keys: string[], args: Array<string | number>): Promise<TData> {

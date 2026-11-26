@@ -44,15 +44,69 @@ test("stable answers reuse classification without a second completion or search 
     assert.equal(body.reasoning_effort, "low");
     assert.equal(body.include_reasoning, false);
     assert.equal(body.tools.some((t: any) => t.function?.name === "answer_question"), true);
-    assert.deepEqual(body.tools.map((t: any) => t.function.name), ["unclear_command", "unsupported", "answer_question"]);
+    assert.deepEqual(body.tools.map((t: any) => t.function.name), ["answer_question"]);
     assert.equal(body.messages[0].content.includes("Never answer questions"), false);
-    assert.equal(body.tools.find((t: any) => t.function?.name === "unsupported").function.description.includes("questions"), false);
     return tool();
   }, new Runtime());
   const result = await provider.select(INPUT, NOW, { async authorizeAnswer() { throw new Error("unexpected_search"); } });
   assert.equal(calls, 1);
   assert.equal(result.answer?.kind, "knowledge");
   assert.deepEqual(result.usage, { classification: { inputTokens: 800, outputTokens: 60, cachedTokens: 200 } });
+});
+
+test("time and date answers use the phone clock after one forced selector call", async () => {
+  let calls = 0;
+  const bodies: any[] = [];
+  const provider = new GroqProvider(CONFIG, async (_url, init) => {
+    calls++;
+    bodies.push(JSON.parse(String(init?.body)));
+    return tool({ mode: "knowledge", text: "The model's clock answer is ignored." });
+  }, new Runtime());
+  for (const [text, expected] of [
+    ["What time is it right now?", "It's 2:00 PM."],
+    ["What's the time right now", "It's 2:00 PM."],
+    ["What is the current date?", "Today is Wednesday, November 25, 2026."],
+    ["Tell me today's date", "Today is Wednesday, November 25, 2026."],
+    ["What day is today?", "Today is Wednesday, November 25, 2026."],
+    ["What's today's date?", "Today is Wednesday, November 25, 2026."]
+  ] as const) {
+    const result = await provider.select({ ...INPUT, text }, NOW, {
+      async authorizeAnswer() { throw new Error("unexpected_search"); }
+    });
+    assert.equal(result.selection.name, "answer_question");
+    assert.equal(result.answer?.kind, "knowledge");
+    assert.equal(result.answer?.text, expected);
+  }
+  assert.equal(calls, 6);
+  for (const body of bodies) {
+    assert.deepEqual(body.tools.map((entry: any) => entry.function.name), ["answer_question"]);
+    assert.deepEqual(body.tool_choice, { type: "function", function: { name: "answer_question" } });
+    assert.doesNotMatch(body.messages[0].content, /\bjson\b/i);
+  }
+});
+
+test("weather without a city asks before search", async () => {
+  let calls = 0;
+  const bodies: any[] = [];
+  const provider = new GroqProvider(CONFIG, async (_url, init) => {
+    calls++;
+    bodies.push(JSON.parse(String(init?.body)));
+    return tool({ mode: "lookup", text: "" });
+  }, new Runtime());
+  const result = await provider.select({ ...INPUT, text: "What is the weather today?" }, NOW, {
+    async authorizeAnswer() { return true; }
+  });
+  assert.equal(result.answer?.kind, "clarification");
+  assert.equal(result.answer?.text, "Which city should I check?");
+  assert.equal(result.question, "What is the weather today?");
+  assert.equal(calls, 1);
+  assert.deepEqual(bodies[0].tools.map((entry: any) => entry.function.name), ["answer_question"]);
+  assert.deepEqual(bodies[0].tool_choice, { type: "function", function: { name: "answer_question" } });
+  const contracted = await provider.select({ ...INPUT, text: "What's the weather today" }, NOW, {
+    async authorizeAnswer() { throw new Error("unexpected_search"); }
+  });
+  assert.equal(contracted.answer?.text, "Which city should I check?");
+  assert.equal(calls, 2);
 });
 
 test("clarification replies use the original question and a small answer-only tool set", async () => {
@@ -148,7 +202,7 @@ test("live questions use one bounded browser completion after the search quota",
 });
 
 test("server freshness guard sends a mistaken memory answer for current facts through search", async () => {
-  for (const text of ["India match result today", "What is the weather?", "Who is the current prime minister?"]) {
+  for (const text of ["India match result today", "What is the weather today in Mumbai?", "Who is the current prime minister?"]) {
     let calls = 0;
     const provider = new GroqProvider(CONFIG, async () => ++calls === 1 ? tool() : searched(), new Runtime());
     assert.equal((await provider.select({ ...INPUT, text }, NOW, ALLOWED)).answer?.kind, "information");
@@ -244,7 +298,12 @@ test("answer setup uses the existing selection without an answer or search", asy
 
 test("exact commands skip the selector but never bypass action version, negation or whole-request checks", async () => {
   let calls = 0;
-  const provider = new GroqProvider(CONFIG, async () => { calls++; return tool({}, "unsupported"); }, new Runtime());
+  const provider = new GroqProvider(CONFIG, async (_url, init) => {
+    calls++;
+    const body = JSON.parse(String(init?.body));
+    return body.tools.some((entry: any) => entry.function.name === "answer_question")
+      ? tool() : tool({}, "unsupported");
+  }, new Runtime());
   for (const text of ["Pause music", "Next song", "Turn on the torch", "Play music"]) {
     const result = await provider.select({ ...INPUT, text }, NOW, ALLOWED);
     assert.equal(result.answer, undefined);

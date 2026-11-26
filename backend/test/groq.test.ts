@@ -316,7 +316,7 @@ test("an undeclared json tool failure retries with explicit allowed names and no
   }, new Runtime());
   const result = await provider.select({ kind: "audio", bytes: createPcmWav(), mimeType: "audio/wav" }, NOW);
   const instructions = bodies[1]?.messages[0].content;
-  assert.match(instructions, /Never call json/);
+  assert.match(instructions, /Do not invent a function/);
   assert.match(instructions, /declared function name:.*set_timer/);
   assert.equal(instructions.includes("private"), false);
   assert.deepEqual(result.selection, { name: "set_timer", args: { seconds: 120 } });
