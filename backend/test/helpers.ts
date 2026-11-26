@@ -3,6 +3,7 @@ import type {
   AssistantProviderResult,
   Clock,
   CommandInput,
+  QuotaDecision,
   SafeLogger,
   SecretBundle,
   SecretProvider,
@@ -49,6 +50,10 @@ export class MockUsage implements UsageLimitStore {
   async consumeCommand(installId: string, at: Date): Promise<boolean> {
     this.commandCalls.push({ installId, at });
     return this.commandAllowed;
+  }
+
+  async reserveCommand(installId: string, at: Date): Promise<QuotaDecision> {
+    return await this.consumeCommand(installId, at) ? { allowed: true } : { allowed: false, scope: "blocked" };
   }
 }
 

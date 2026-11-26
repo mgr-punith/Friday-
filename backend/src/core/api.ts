@@ -5,6 +5,7 @@ import {
   type AssistantProvider,
   type Clock,
   type CommandInput,
+  type QuotaDecision,
   type SafeLogger,
   type SecretProvider,
   type UsageLimitStore
@@ -57,7 +58,7 @@ export interface ApiDependencies {
   readonly clock: Clock;
   readonly logger: SafeLogger;
   readonly accounts?: AccountGateway;
-  readonly answers?: { readonly usage: UsageLimitStore; readonly reports: AnswerReportStore };
+  readonly answers?: { readonly usage: { reserveCommand(account: string, at: Date): Promise<QuotaDecision> }; readonly reports: AnswerReportStore };
   readonly speech?: SpeechServices;
   readonly transcriptionClient?: "nvidia-v1";
 }
@@ -192,7 +193,7 @@ async function handleCommand(
         ...(answerSetup ? { answerSetup } : {}),
         ...(answerContext ? { answerContext } : {}) },
       now,
-      ...(supportsAnswers ? [{ authorizeAnswer: () => dependencies.answers!.usage.consumeCommand(installId, dependencies.clock.now()) }] : []),
+      ...(supportsAnswers ? [{ authorizeAnswer: () => dependencies.answers!.usage.reserveCommand(installId, dependencies.clock.now()) }] : []),
     );
     if (result.usage) dependencies.logger.usage?.(safeAiUsage(result.usage));
     if (result.selection.name === ANSWER_SETUP_TOOL.name) {

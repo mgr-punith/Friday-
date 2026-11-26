@@ -4,7 +4,7 @@ import {
   functionDeclarationsFor
 } from "../core/action-schema";
 import { AssistantProviderError, type AssistantProvider, type AssistantProviderResult,
-  type CommandInput, type FunctionSelection } from "../core/contracts";
+  type CommandInput, type FunctionSelection, type SearchAuthorization } from "../core/contracts";
 import type { FetchLike } from "./gemini";
 import { ANSWER_PROMPT, ANSWER_SETUP_TOOL, ANSWER_TOOL, localClockAnswer, localWeatherClarification,
   needsCurrentInformation, readBrowserAnswer, readKnowledgeAnswer } from "../core/answers";
@@ -56,7 +56,7 @@ export class GroqProvider implements AssistantProvider {
     this.transcriber = transcriber ?? (config.transcription ? new ParakeetTranscriber(config.transcription) : undefined);
   }
 
-  async select(input: CommandInput, now: string, context?: { authorizeAnswer(): Promise<boolean> }): Promise<AssistantProviderResult> {
+  async select(input: CommandInput, now: string, context?: SearchAuthorization): Promise<AssistantProviderResult> {
     const startedAt = this.runtime.now();
     const budget: RequestBudget = { startedAt, deadline: startedAt + this.config.timeoutMs, retries: 1, usage: {} };
     const stages: Record<string, number> = {};
@@ -173,8 +173,12 @@ export class GroqProvider implements AssistantProvider {
       if (!forceLookup && (!isRecord(selection.args) || selection.args.mode !== "lookup" ||
         (selection.args.text !== undefined && (typeof selection.args.text !== "string" || selection.args.text.length > 600)) ||
         Object.keys(selection.args).some(key => !["mode", "text"].includes(key)))) throw this.failure(budget, "answer", "invalid_response");
-      if (!await context?.authorizeAnswer()) {
-        throw this.failure(budget, "answer", "quota_denied");
+      if (!context) throw this.failure(budget, "answer", "invalid_context");
+      const quota = await context.authorizeAnswer().catch(() => {
+        throw this.failure(budget, "answer", "quota_store_failed");
+      });
+      if (!quota.allowed) {
+        throw this.failure(budget, "answer", `quota_${quota.scope}`, 429, quota.retryAfterSeconds);
       }
       budget.deadline = startedAt + (this.config.answerTimeoutMs ?? 18_000);
       const answerStarted = this.runtime.now();

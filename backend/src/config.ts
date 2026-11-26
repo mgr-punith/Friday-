@@ -78,8 +78,8 @@ export function loadVercelConfig(environment: NodeJS.ProcessEnv = process.env): 
     assistant: loadAssistantConfig(environment),
     ...loadSpeechConfig(environment),
     ...(environment.ANSWERS_ENABLED === "true" ? { answerLimits: {
-      perAccountMinute: integer(environment, "ANSWER_PER_ACCOUNT_MINUTE", 3, 1, 12),
-      perAccountDaily: integer(environment, "ANSWER_PER_ACCOUNT_DAILY", 20, 1, 100),
+      perAccountMinute: integer(environment, "ANSWER_PER_ACCOUNT_MINUTE", 12, 1, 12),
+      perAccountDaily: integer(environment, "ANSWER_PER_ACCOUNT_DAILY", 100, 1, 100),
       globalDaily: integer(environment, "ANSWER_GLOBAL_DAILY", 1_000, 1, 100_000)
     } } : {}),
     jwtSigningKey: secret(environment, "JWT_SIGNING_KEY", 32),

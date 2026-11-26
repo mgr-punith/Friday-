@@ -1,6 +1,6 @@
 import { Redis } from "@upstash/redis";
 import type { UsageLimits } from "../config";
-import type { UsageLimitStore } from "../core/contracts";
+import type { QuotaDecision, UsageLimitStore } from "../core/contracts";
 
 const DAY_SECONDS = 86_400;
 const KEY_PREFIX = "friday:v1";
@@ -25,12 +25,13 @@ const CONSUME_COMMAND_SCRIPT = `
 if redis.call("EXISTS", KEYS[1]) == 1 then
   return 0
 end
-for index = 2, #KEYS do
+-- Check daily buckets first so a simultaneous minute limit cannot shorten Retry-After.
+for index = #KEYS, 2, -1 do
   local argument = (index - 2) * 2 + 1
   local limit = tonumber(ARGV[argument])
   local current = tonumber(redis.call("GET", KEYS[index]) or "0")
   if current >= limit then
-    return 0
+    return -index
   end
 end
 for index = 2, #KEYS do
@@ -73,6 +74,10 @@ export class RedisUsageLimitStore implements UsageLimitStore {
   }
 
   async consumeCommand(installId: string, at: Date): Promise<boolean> {
+    return (await this.reserveCommand(installId, at)).allowed;
+  }
+
+  async reserveCommand(installId: string, at: Date): Promise<QuotaDecision> {
     const minute = utcMinute(at);
     const day = utcDay(at);
     const dayTtl = secondsUntil(endOfUtcDayEpochSeconds(at) + 2 * DAY_SECONDS, at);
@@ -93,7 +98,14 @@ export class RedisUsageLimitStore implements UsageLimitStore {
         dayTtl
       ]
     );
-    return allowResult(result);
+    switch (result) {
+      case 1: case "1": return { allowed: true };
+      case 0: case "0": return { allowed: false, scope: "blocked" };
+      case -2: case "-2": return { allowed: false, scope: "account_minute", retryAfterSeconds: 60 - at.getUTCSeconds() };
+      case -3: case "-3": return { allowed: false, scope: "account_daily", retryAfterSeconds: secondsUntil(endOfUtcDayEpochSeconds(at), at) };
+      case -4: case "-4": return { allowed: false, scope: "global_daily", retryAfterSeconds: secondsUntil(endOfUtcDayEpochSeconds(at), at) };
+      default: throw new Error("invalid_redis_limit_result");
+    }
   }
 }
 
