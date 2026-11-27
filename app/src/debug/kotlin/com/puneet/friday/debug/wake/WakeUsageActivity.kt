@@ -21,6 +21,7 @@ import android.widget.TextView
 import com.puneet.friday.R
 import com.puneet.friday.entry.AssistantSettings
 import com.puneet.friday.entry.ReadyNotification
+import com.puneet.friday.debug.wake.WakeUsagePolicy.AssistantSetup
 import com.puneet.friday.ui.AppUi
 import com.puneet.friday.ui.FridayDialog
 import com.puneet.friday.ui.AnchoredPopup
@@ -40,12 +41,14 @@ class WakeUsageActivity : Activity() {
     private val help by lazy { AnchoredPopup(this) }
     private var pendingPermission = false
     private var pendingAssistantSettings = false
+    private var waitingForAssistant = false
     private var assistantSelected = false
     private var showAssistantFallback = false
     private var message: String? = null
     private data class RenderState(val mode: WakeUsagePolicy.Mode, val phase: WakeTrialSession.Phase,
         val message: String?,
-        val assistantSelected: Boolean, val assistantFallback: Boolean, val higherSensitivity: Boolean,
+        val assistantSetup: AssistantSetup, val waitingForAssistant: Boolean,
+        val assistantFallback: Boolean, val higherSensitivity: Boolean,
         val tracking: Boolean)
     private val modelAvailable by lazy { FridayKeywordModel.available(assets) }
     private var rendered: RenderState? = null
@@ -120,7 +123,12 @@ class WakeUsageActivity : Activity() {
             buttonTintList = ColorStateList.valueOf(getColor(R.color.accent))
             minHeight = AppUi.dp(context, 48)
             setPadding(AppUi.dp(context, 4), AppUi.dp(context, 8), AppUi.dp(context, 8), AppUi.dp(context, 8))
-            setOnClickListener { selected = mode; message = null; render() }
+            setOnClickListener {
+                selected = mode
+                waitingForAssistant = false
+                message = null
+                render()
+            }
         }
         row.addView(radio, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
             marginEnd = AppUi.dp(this@WakeUsageActivity, 8)
@@ -164,6 +172,7 @@ class WakeUsageActivity : Activity() {
     }
 
     private fun checkAssistant() {
+        if (selected != WakeUsagePolicy.Mode.HEY_FRIDAY) return
         val manager = getSystemService(NotificationManager::class.java)
         if (manager?.areNotificationsEnabled() != true ||
             manager.getNotificationChannel(WakeTrialService.CHANNEL_ID)?.importance == NotificationManager.IMPORTANCE_NONE) {
@@ -171,12 +180,16 @@ class WakeUsageActivity : Activity() {
             return
         }
         assistantSelected = AssistantSettings.isSelected(this)
-        if (!assistantSelected) {
-            openAssistantSettings()
-            return
+        when (assistantSetup()) {
+            AssistantSetup.SELECT -> openAssistantSettings()
+            AssistantSetup.RECONNECT -> FridayDialog.show(this, "Reconnect Friday",
+                "In Android’s Digital assistant settings, select None, then select Friday again.",
+                positive = "Open settings", negative = "Cancel") { openAssistantSettings() }
+            AssistantSetup.READY -> startHeyFriday()
         }
-        startHeyFriday()
     }
+
+    private fun assistantSetup() = WakeUsagePolicy.assistantSetup(assistantSelected, WakeAssistantBridge.isReady(this))
 
     private fun openAssistantSettings(from: AssistantSettings.Destination = AssistantSettings.Destination.ASSISTANT) {
         pendingAssistantSettings = true
@@ -256,14 +269,40 @@ class WakeUsageActivity : Activity() {
             pendingAssistantSettings = false
             if (selected != WakeUsagePolicy.Mode.HEY_FRIDAY) return
             assistantSelected = AssistantSettings.isSelected(this)
-            if (assistantSelected) checkPermissions()
+            if (assistantSelected) resumeWhenAssistantConnects()
             else {
                 showAssistantFallback = true
                 showError("Friday isn't selected. Choose Friday under Default assistant.")
             }
         }
     }
-    override fun onPause() { help.dismiss(); main.removeCallbacks(refresh); super.onPause() }
+
+    private fun resumeWhenAssistantConnects() {
+        waitingForAssistant = true
+        val deadline = android.os.SystemClock.elapsedRealtime() + 1_500L
+        fun checkReady() {
+            if (!waitingForAssistant || selected != WakeUsagePolicy.Mode.HEY_FRIDAY) return
+            when {
+                WakeAssistantBridge.isReady(this) -> {
+                    waitingForAssistant = false
+                    checkPermissions()
+                }
+                android.os.SystemClock.elapsedRealtime() < deadline -> main.postDelayed({ checkReady() }, 100L)
+                else -> {
+                    waitingForAssistant = false
+                    showError("Select None, then Friday in Android’s Digital assistant settings.")
+                }
+            }
+        }
+        checkReady()
+    }
+
+    override fun onPause() {
+        waitingForAssistant = false
+        help.dismiss()
+        main.removeCallbacksAndMessages(null)
+        super.onPause()
+    }
     override fun onStop() { WakeTrialService.assistantHidden(this); super.onStop() }
     override fun onDestroy() {
         main.removeCallbacksAndMessages(null)
@@ -287,7 +326,9 @@ class WakeUsageActivity : Activity() {
         val state = WakeTrialService.session.snapshot()
         val higherSensitivity = WakeUsageStore.higherSensitivity(this)
         val tracking = WakeAudioTrace.isActive()
-        val key = RenderState(selected, state.phase, message, assistantSelected, showAssistantFallback, higherSensitivity, tracking)
+        val assistantSetup = assistantSetup()
+        val key = RenderState(selected, state.phase, message, assistantSetup, waitingForAssistant, showAssistantFallback,
+            higherSensitivity, tracking)
         if (key == rendered) return
         rendered = key
         for ((mode, radio) in options) radio.isChecked = selected == mode
@@ -295,6 +336,8 @@ class WakeUsageActivity : Activity() {
         val value = message ?: when {
             !hey -> ""
             !modelAvailable -> FridayKeywordModel.MISSING
+            waitingForAssistant -> "Connecting to Android’s assistant"
+            assistantSetup == AssistantSetup.RECONNECT -> "Reconnect Friday to use Hey Friday."
             WakeUsageStore.mode(this) == selected -> WakeUsagePolicy.status(state)
             else -> ""
         }
@@ -308,13 +351,14 @@ class WakeUsageActivity : Activity() {
         apply.text = when {
             selected == WakeUsagePolicy.Mode.TAP -> "Use Tap to speak"
             state.phase == WakeTrialSession.Phase.STOPPING -> "Stopping…"
-            modelAvailable && !assistantSelected -> "Set default assistant"
+            modelAvailable && assistantSetup == AssistantSetup.SELECT -> "Set default assistant"
+            modelAvailable && assistantSetup == AssistantSetup.RECONNECT -> "Reconnect Friday"
             WakeUsageStore.mode(this) == selected && WakeUsagePolicy.canAdopt(state, WakeUsageStore.threshold(this)) -> "Use Hey Friday"
             WakeUsageStore.mode(this) == selected -> "Resume Hey Friday"
             else -> "Use Hey Friday"
         }
         apply.isEnabled = state.phase != WakeTrialSession.Phase.STOPPING &&
-            (!hey || modelAvailable)
+            (!hey || modelAvailable && !waitingForAssistant)
         apply.alpha = if (apply.isEnabled) 1f else 0.5f
     }
 

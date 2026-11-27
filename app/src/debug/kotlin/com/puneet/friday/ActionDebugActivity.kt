@@ -190,7 +190,7 @@ class ActionDebugActivity : Activity() {
                 actionButton("Request playback") {
                     PhoneAction.PlayMedia(query.text.toString(), player.text.toString().trim().ifEmpty { null })
                 }
-                actionButton("Find music apps") { PhoneAction.OpenMusic }
+                actionButton("Find music apps") { PhoneAction.OpenMusic() }
                 MediaOperation.entries.forEach { operation ->
                     actionButton(operation.label) { PhoneAction.ControlMedia(operation) }
                 }
@@ -303,8 +303,12 @@ class ActionDebugActivity : Activity() {
         setBusy(true)
         val generation = ++requestGeneration
         showFeedback("Checking this phone…")
+        prepareOnWorker(generation) { executor.prepare(action) }
+    }
+
+    private fun prepareOnWorker(generation: Int, prepare: () -> AndroidActionExecutor.Preparation) {
         worker.execute {
-            val prepared = executor.prepare(action)
+            val prepared = prepare()
             runOnUiThread {
                 if (!resumed || isFinishing || isDestroyed || generation != requestGeneration) return@runOnUiThread
                 when (prepared) {
@@ -317,7 +321,9 @@ class ActionDebugActivity : Activity() {
                             onCancel = { showCancelled() },
                         ) { index ->
                             activeDialog = null
-                            if (resumed) finishPreparation(prepared.options[index].ready)
+                            if (resumed && generation == requestGeneration) {
+                                prepareOnWorker(generation, prepared.options[index]::prepare)
+                            }
                         }
                     }
                 }

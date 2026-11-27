@@ -3,7 +3,6 @@ package com.puneet.friday.debug.wake
 import android.Manifest
 import android.app.Activity
 import android.app.Notification
-import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
@@ -92,6 +91,15 @@ class WakeTrialService : Service() {
         }
         val threshold = if (controlRequest) WakeUsageStore.threshold(this)
             else intent.getFloatExtra(THRESHOLD, WakeTrialSession.DEFAULT_THRESHOLD)
+        if (controlRequest && !WakeAssistantBridge.isReady(this)) {
+            if (session.snapshot().active) {
+                if (usageControlled) stopTest("Reconnect Friday to use Hey Friday.")
+            } else {
+                WakeUsageNotification.showPaused(this, openSetup = true)
+                stopSelf()
+            }
+            return START_NOT_STICKY
+        }
         if (session.snapshot().active) {
             if (controlRequest && WakeUsagePolicy.canAdopt(session.snapshot(), threshold)) {
                 usageControlled = true
@@ -141,12 +149,7 @@ class WakeTrialService : Service() {
 
     private fun permissionsAllowed(): Boolean {
         val manager = getSystemService(NotificationManager::class.java) ?: return false
-        manager.createNotificationChannel(NotificationChannel(CHANNEL_ID, "Hey Friday", NotificationManager.IMPORTANCE_LOW).apply {
-            description = "Pause or resume local wake listening"
-            setSound(null, null)
-            enableVibration(false)
-            setShowBadge(false)
-        })
+        WakeUsageNotification.ensureChannel(manager)
         return checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED &&
             (Build.VERSION.SDK_INT < 33 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) &&
             manager.areNotificationsEnabled() && manager.getNotificationChannel(CHANNEL_ID)?.importance != NotificationManager.IMPORTANCE_NONE
@@ -243,7 +246,9 @@ class WakeTrialService : Service() {
                 main.postDelayed({
                     if (session.expireWake(generation, token)) {
                         Log.i(TAG, "event=handoff_expired run=$generation")
-                        startCaptureIfReady()
+                        if (usageControlled && !WakeAssistantBridge.isReady(this)) {
+                            finishRun("Reconnect Friday to use Hey Friday.")
+                        } else startCaptureIfReady()
                     }
                 }, HANDOFF_TIMEOUT_MS)
             }

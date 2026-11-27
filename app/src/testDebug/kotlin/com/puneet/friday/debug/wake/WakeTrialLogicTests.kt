@@ -253,6 +253,24 @@ object WakeTrialLogicTests {
             "Pause retains a separate normal notification after removing the foreground notification")
         expect(!WakeUsagePolicy.retainsNotification(true, WakeUsagePolicy.Mode.TAP),
             "Tap mode removes the wake notification after cleanup")
+        val heyFriday = WakeUsagePolicy.Mode.HEY_FRIDAY
+        val tapToSpeak = WakeUsagePolicy.Mode.TAP
+        expect(WakeUsagePolicy.assistantSetup(selected = true, connected = false) == WakeUsagePolicy.AssistantSetup.RECONNECT,
+            "A stale default assistant selection requires reconnection after an update")
+        expect(WakeUsagePolicy.assistantSetup(selected = true, connected = true) == WakeUsagePolicy.AssistantSetup.READY,
+            "Only the selected and connected assistant can resume Hey Friday")
+        expect(WakeUsagePolicy.assistantSetup(selected = false, connected = true) == WakeUsagePolicy.AssistantSetup.SELECT,
+            "A callback from the old binding cannot substitute for current assistant selection")
+        expect(WakeUsagePolicy.showResumeAfterUpdate(heyFriday, consented = true, modelAvailable = true, listening = false),
+            "An update restores the resume control for an opted-in and paused listener")
+        expect(!WakeUsagePolicy.showResumeAfterUpdate(tapToSpeak, consented = true, modelAvailable = true, listening = false),
+            "An update respects Tap to speak even if Hey Friday was previously enabled")
+        expect(!WakeUsagePolicy.showResumeAfterUpdate(heyFriday, consented = false, modelAvailable = true, listening = false),
+            "An update does not offer background listening without consent")
+        expect(!WakeUsagePolicy.showResumeAfterUpdate(heyFriday, consented = true, modelAvailable = false, listening = false),
+            "An APK without a wake model does not offer the update resume control")
+        expect(!WakeUsagePolicy.showResumeAfterUpdate(heyFriday, consented = true, modelAvailable = true, listening = true),
+            "A late update broadcast cannot replace an active listener's notification")
         for (mode in WakeUsagePolicy.Mode.entries) {
             expect(!WakeUsagePolicy.retainsNotification(false, mode), "An advanced trial retains its original Stop behavior")
         }

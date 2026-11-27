@@ -5,11 +5,12 @@ Friday is a native Android voice assistant for quick phone tasks. It sends one s
 ## What Friday can do
 
 - Call an exact saved contact directly when the phone is unlocked and the contact has one number. Choose between similar contacts and confirm when Friday needs help.
-- Set an alarm or timer using the phone's clock app.
+- Request an alarm or timer through the phone’s Clock app, including from the lock screen in a wake-enabled debug build.
 - Open an installed app or go to the Home screen.
-- Say “Play some music” to choose an installed music app. Say “Open Spotify” to open Spotify when it’s installed.
-- Say “Play Believer” or “Play Believer in Spotify” to request a song. With a v4 backend, Friday sends the title to a compatible player. The player controls playback.
-- Say “Pause music,” “Resume music,” “Next track,” or “Previous track,” including while the phone is locked. Friday sends media controls without opening the player. For Previous, Friday seeks to the start, then skips back through one identified player session. If the player does not expose a suitable session, Friday sends one Previous button press, which can restart the current song. Opening a music app or requesting a named song still needs unlock.
+- Choose **Settings → Default music app** or pick a player the first time you ask for music while unlocked. Naming another player overrides the default for that request.
+- Say “Play some music” to send Play to the chosen app. On the Vivo, Spotify resumed its paused queue with the phone locked. A named request such as “Play Starboy” needs a player that accepts Android's background title search. The installed Spotify app declined that connection. Friday leaves the phone locked.
+- When the phone is unlocked, Friday sends the recognized title directly to a player that supports Android media-session playback by title. If the player needs its own screen, Friday opens it. On the Vivo, Spotify opens search and you can tap the song. Artist and album requests open browsing or search.
+- Say “Pause music,” “Resume music,” “Next track,” or “Previous track,” including while the phone is locked. Friday sends media controls without opening the player. For Previous, Friday seeks to the start, then skips back through one identified player session. If the player does not expose a suitable session, Friday sends one Previous button press, which can restart the current song.
 - Switch the ringer between silent, vibrate, and normal.
 - Turn the flashlight on or off and set media, ring, or alarm volume.
 - Open Airplane mode settings and tell you which switch to change. Android requires this final tap.
@@ -104,7 +105,7 @@ Vercel production setup and backend variables are documented in [the backend dep
 
 ## Try a command
 
-Invoke Friday from the assistant shortcut, tile, widget or notification to open a floating card above the current app. The orb moves with your voice. If Friday cannot hear a command, tap the microphone to retry. Tap ×, tap outside the card or press Back to dismiss it.
+Open Friday to see the Home orb drift. It wiggles as you speak. The assistant shortcut, tile, widget and notification open a compact glass orb above the current app. After you speak, the panel shows “Working on it” and “Looking into it”. One-line answers appear in the center. The panel grows for longer answers and scrolls when they exceed the available space. Tap the arrow to see sources, stop reading aloud or report the answer in the same panel. Tap it again to collapse the controls. Press Back or tap outside to close the panel. Phone actions run as soon as they’re ready.
 
 Friday requests exclusive audio focus while recording a command. Music players that honor Android audio focus pause for the recording and resume when it ends. The background Hey Friday detector does not pause playback. Friday releases audio focus before running a command, so a requested music pause stays in effect.
 
@@ -116,7 +117,9 @@ Set a timer for two minutes
 
 Friday should send the timer request to your clock app and speak a short confirmation. On Home, Friday shows command feedback in a brief toast at the top center. Speech can finish after Clock takes focus from either Home or the compact assistant. The compact assistant closes after one completed command; Home retains the result, and an enabled Hey Friday listener resumes when speech ends. Exact results depend on the installed clock app and Android permissions.
 
-In a wake-enabled debug build, select **Settings → Start Friday → Hey Friday** and tap **Use Hey Friday**. The model is already in the APK. Allow the requested permissions and choose Friday as Android’s default assistant. Say your command after the short tone. Friday accepts quieter speech for the command that follows a wake. If a wake doesn’t open the assistant, Friday resumes detection after eight seconds.
+In a wake-enabled debug build, select **Settings → Start Friday → Hey Friday** and tap **Use Hey Friday**. Allow microphone and notification access and choose Friday as Android’s default assistant. Say your command after the short tone. Friday accepts quieter speech for the command that follows a wake.
+
+After an app update, tap the **Resume Hey Friday** notification to open **Start Friday** and resume listening. If Android loses the assistant connection, tap **Reconnect Friday**, select **None** in Android’s Digital assistant settings, then select **Friday** again.
 
 Pause Hey Friday before changing **Settings → Start Friday → Wake sensitivity**. Standard uses the model’s calibrated cutoff. Higher sensitivity lowers it and can wake Friday during other speech.
 

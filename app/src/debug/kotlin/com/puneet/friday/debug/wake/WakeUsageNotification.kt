@@ -1,6 +1,7 @@
 package com.puneet.friday.debug.wake
 
 import android.app.Notification
+import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
@@ -14,7 +15,7 @@ import com.puneet.friday.entry.FridayEntryPoints
 internal object WakeUsageNotification {
     // A foreground-service cancellation must never target the paused control.
     const val PAUSED_NOTIFICATION_ID = 63
-    fun build(context: Context, state: WakeTrialSession.Snapshot): Notification {
+    fun build(context: Context, state: WakeTrialSession.Snapshot, openSetup: Boolean = false): Notification {
         val active = state.active
         val stopping = state.phase == WakeTrialSession.Phase.STOPPING
         val intent = Intent(context, WakeTrialService::class.java)
@@ -22,11 +23,14 @@ internal object WakeUsageNotification {
             .putExtra(WakeTrialService.USAGE_REVISION, WakeUsageStore.revision(context))
             .putExtra(WakeTrialService.COMMAND_MODE, true)
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        val toggle = if (active) PendingIntent.getService(context, 71, intent, flags)
-            else PendingIntent.getForegroundService(context, 72, intent, flags)
         val openIntent = state.pendingWake?.let { WakeAssistantBridge.tag(FridayEntryPoints.listenIntent(context), it) }
             ?: Intent(context, WakeUsageActivity::class.java)
         val open = PendingIntent.getActivity(context, 73, openIntent, flags)
+        val toggle = when {
+            active -> PendingIntent.getService(context, 71, intent, flags)
+            openSetup || !WakeAssistantBridge.isReady(context) -> open
+            else -> PendingIntent.getForegroundService(context, 72, intent, flags)
+        }
         val label = if (active) "Pause Hey Friday" else "Resume Hey Friday"
         val icon = if (active) R.drawable.ic_pause_circle else R.drawable.ic_play_circle
         val status = WakeUsagePolicy.status(state)
@@ -57,11 +61,21 @@ internal object WakeUsageNotification {
             .build()
     }
 
-    fun showPaused(context: Context) {
+    fun ensureChannel(manager: NotificationManager) {
+        manager.createNotificationChannel(NotificationChannel(WakeTrialService.CHANNEL_ID, "Hey Friday", NotificationManager.IMPORTANCE_LOW).apply {
+            description = "Pause or resume local wake listening"
+            setSound(null, null)
+            enableVibration(false)
+            setShowBadge(false)
+        })
+    }
+
+    fun showPaused(context: Context, openSetup: Boolean = false) {
         if (WakeUsageStore.mode(context) != WakeUsagePolicy.Mode.HEY_FRIDAY) return
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         try {
-            manager.notify(PAUSED_NOTIFICATION_ID, build(context, WakeTrialSession.Snapshot()))
+            ensureChannel(manager)
+            manager.notify(PAUSED_NOTIFICATION_ID, build(context, WakeTrialSession.Snapshot(), openSetup))
         } catch (_: SecurityException) { /* The user can revoke notifications while stopping. */ }
     }
 

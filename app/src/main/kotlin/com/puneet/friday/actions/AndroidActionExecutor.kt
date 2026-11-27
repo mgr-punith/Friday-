@@ -14,11 +14,13 @@ import android.media.AudioManager
 import android.media.session.MediaController
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.AlarmClock
 import android.provider.ContactsContract.CommonDataKinds.Phone
 import android.provider.MediaStore
+import android.service.media.MediaBrowserService
 import android.view.KeyEvent
 import android.view.View
 import java.util.Locale
@@ -38,7 +40,16 @@ class AndroidActionExecutor(private val activity: Activity) {
         data class Finished(val result: ActionResult) : Preparation
     }
 
-    data class ChoiceOption(val label: String, val ready: Preparation.Ready, val spokenLabel: String = label)
+    class ChoiceOption(val label: String, val spokenLabel: String = label, private val resolve: () -> Preparation) {
+        constructor(label: String, ready: Preparation.Ready, spokenLabel: String = label) : this(label, spokenLabel, { ready })
+
+        /** Run on the action worker after the user picks this option. */
+        fun prepare(): Preparation = try {
+            resolve()
+        } catch (_: RuntimeException) {
+            Preparation.Finished(ActionResult.Failed("That choice is unavailable"))
+        }
+    }
 
     /** Worker-safe. Reads local providers and builds intents; never starts an action. */
     fun prepare(action: PhoneAction): Preparation {
@@ -48,7 +59,7 @@ class AndroidActionExecutor(private val activity: Activity) {
             when (action) {
                 is PhoneAction.CallContact -> prepareContact(action)
                 is PhoneAction.OpenApp -> prepareApp(action)
-                PhoneAction.OpenMusic -> prepareMusic()
+                is PhoneAction.OpenMusic -> prepareMusic(action)
                 is PhoneAction.PlayMedia -> prepareNamedMusic(action)
                 is PhoneAction.OpenSettings -> Preparation.Ready(action) { runAction(action) }
                 is PhoneAction.CallNumber -> Preparation.Ready(action, confirmationTarget = action.number) { runAction(action) }
@@ -162,90 +173,145 @@ class AndroidActionExecutor(private val activity: Activity) {
         }
     }
 
-    private fun prepareMusic(): Preparation {
-        val available = musicApps()
-        return when (available.size) {
-            0 -> Preparation.Finished(ActionResult.Failed("I couldn't find a music app"))
-            1 -> readyApp(PhoneAction.OpenMusic, available.single())
-            else -> chooseApp(PhoneAction.OpenMusic, available, "Which music app?")
-        }
+    private val musicPrefs = activity.getSharedPreferences(MusicApps.PREFS, Activity.MODE_PRIVATE)
+
+    internal fun setPreferredPlayer(app: LauncherApp?) {
+        musicPrefs.edit().putString(MusicApps.PREFERRED, app?.packageName).apply()
     }
 
-    private fun musicApps(): List<LauncherApp> {
+    private fun prepareMusic(action: PhoneAction.OpenMusic): Preparation =
+        selectPlayer(action, action.appName) { app ->
+            { if (action.play) requestPlayerPlayback(app) else readyApp(action, app).run() }
+        }
+
+    private fun requestPlayerPlayback(app: LauncherApp): ActionResult {
+        val manager = activity.packageManager
+        val button = Intent(Intent.ACTION_MEDIA_BUTTON).setPackage(app.packageName)
+        val receiver = manager.queryBroadcastReceivers(button, 0).map { it.activityInfo }.firstOrNull {
+            it.exported && (it.permission == null || hasPermission(it.permission))
+        }
+        if (receiver != null) {
+            button.setClassName(app.packageName, receiver.name)
+            val now = SystemClock.uptimeMillis()
+            for (direction in listOf(KeyEvent.ACTION_DOWN, KeyEvent.ACTION_UP)) {
+                val key = KeyEvent(now, SystemClock.uptimeMillis(), direction, KeyEvent.KEYCODE_MEDIA_PLAY, 0)
+                activity.sendBroadcast(Intent(button).putExtra(Intent.EXTRA_KEY_EVENT, key))
+            }
+            return ActionResult.MediaRequest("Playback requested in ${app.label}")
+        }
+        if (DeviceLock.isLocked(activity)) return ActionResult.Failed("${app.label} can't resume music while locked.")
+        val play = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH).setPackage(app.packageName)
+            .putExtra(android.app.SearchManager.QUERY, "")
+        if (!canHandle(play)) return ActionResult.Failed("${app.label} doesn't support voice playback")
+        return startMusicActivity(play, "Playback requested in ${app.label}")
+    }
+
+    private fun selectPlayer(action: PhoneAction, name: String?,
+        preparePlayback: (LauncherApp) -> () -> ActionResult): Preparation {
+        val choice = MusicApps.select(name, musicApps(), musicPrefs.getString(MusicApps.PREFERRED, null))
+        if (choice.apps.isEmpty()) return Preparation.Finished(ActionResult.Failed("I couldn't find a music app"))
+        val needsChoice = choice.question != null
+        val unavailableChoice = ActionResult.Failed(if (name == null) "Choose a default music app in Friday Settings."
+            else "Choose a music app while your phone is unlocked.")
+        if (needsChoice && DeviceLock.isLocked(activity)) return Preparation.Finished(unavailableChoice)
+        fun ready(app: LauncherApp): Preparation {
+            if (needsChoice && DeviceLock.isLocked(activity)) return Preparation.Finished(unavailableChoice)
+            val run = preparePlayback(app)
+            return Preparation.Ready(action) {
+                guarded(action) {
+                    if (needsChoice && DeviceLock.isLocked(activity)) return@guarded unavailableChoice
+                    if (name == null) {
+                        if (needsChoice) setPreferredPlayer(app)
+                        else if (musicPrefs.getString(MusicApps.PREFERRED, null) != app.packageName) {
+                            return@guarded ActionResult.Failed("Your default music app changed. Ask again.")
+                        }
+                    }
+                    run()
+                }
+            }
+        }
+        return choice.question?.let { chooseApp(action, choice.apps, it, ::ready) } ?: ready(choice.apps.single())
+    }
+
+    internal fun musicApps(): List<LauncherApp> {
         val manager = activity.packageManager
         val launchers = launcherActivities()
         val musicPackages = launchers.filter { it.activityInfo.applicationInfo.category == ApplicationInfo.CATEGORY_AUDIO }
             .mapTo(mutableSetOf()) { it.activityInfo.packageName }
-        val musicIntents = listOf(
-            Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_MUSIC),
-            Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH),
-        )
-        for (intent in musicIntents) {
-            manager.queryIntentActivities(intent, 0).mapTo(musicPackages) { it.activityInfo.packageName }
-        }
+        manager.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_MUSIC), 0)
+            .mapTo(musicPackages) { it.activityInfo.packageName }
+        val playbackApps = manager.queryIntentActivities(Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH),
+            PackageManager.MATCH_DEFAULT_ONLY).filter {
+                it.activityInfo.exported && (it.activityInfo.permission == null || hasPermission(it.activityInfo.permission))
+            }.map { LauncherApp(it.activityInfo.applicationInfo.loadLabel(manager).toString(), it.activityInfo.packageName) }
+        val browsers = manager.queryIntentServices(Intent(MediaBrowserService.SERVICE_INTERFACE), 0)
+            .map { it.serviceInfo }.filter {
+                it.exported && (it.permission == null || hasPermission(it.permission))
+            }.map { LauncherApp(it.applicationInfo.loadLabel(manager).toString(), it.packageName) }
+        val mediaApps = playbackApps + browsers
+        mediaApps.mapTo(musicPackages) { it.packageName }
         // The query declares an audio type. Friday neither opens media here nor scans the user's files.
         val audio = Intent(Intent.ACTION_VIEW).setDataAndType(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, "audio/mpeg")
         val audioHandlers = manager.queryIntentActivities(audio, PackageManager.MATCH_DEFAULT_ONLY)
             .mapTo(mutableSetOf()) { it.activityInfo.packageName }
-        return MusicApps.find(launchers.map(::launcherApp), musicPackages, audioHandlers)
+        return MusicApps.find(launchers.map(::launcherApp) + mediaApps, musicPackages, audioHandlers)
     }
 
-    private fun prepareNamedMusic(action: PhoneAction.PlayMedia): Preparation {
-        val intent = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
-            .putExtra(android.app.SearchManager.QUERY, action.query)
-            .putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
-        val manager = activity.packageManager
-        val players = manager.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY)
-            .filter { it.activityInfo.exported && (it.activityInfo.permission == null || hasPermission(it.activityInfo.permission)) }
-            .map { LauncherApp(it.activityInfo.applicationInfo.loadLabel(manager).toString(), it.activityInfo.packageName) }
-            .distinctBy { it.packageName }.sortedBy { it.label.lowercase(Locale.ROOT) }
-        val prefs = activity.getSharedPreferences("music_player", Activity.MODE_PRIVATE)
-        val available = if (action.appName != null || players.isEmpty()) {
-            (players + musicApps()).distinctBy { it.packageName }
-        } else players
-        val choice = MusicApps.select(action.appName, available, players, prefs.getString("preferred", null))
-        if (choice.apps.isEmpty()) return Preparation.Finished(ActionResult.Failed("I couldn't find a music app"))
-        fun ready(app: LauncherApp): Preparation.Ready = Preparation.Ready(action) {
-            guarded(action) {
-                val playback = Intent(intent).setPackage(app.packageName)
-                val results = if (MusicApps.namedRequestRoute(app.packageName) == MusicApps.NamedRequestRoute.SEARCH_RESULTS) {
-                    Intent(
-                        Intent.ACTION_VIEW,
-                        Uri.Builder()
-                            .scheme("https")
-                            .authority("www.youtube.com")
-                            .appendPath("results")
-                            .appendQueryParameter("search_query", action.query)
-                            .build(),
-                    ).setPackage(app.packageName)
-                } else null
-                val search = Intent(Intent.ACTION_SEARCH).setPackage(app.packageName)
-                    .putExtra(android.app.SearchManager.QUERY, action.query)
-                val result = when {
-                    results != null -> {
-                        activity.startActivity(results)
-                        ActionResult.Handoff("Opened search in ${app.label}", music = true)
+    private fun prepareNamedMusic(action: PhoneAction.PlayMedia): Preparation =
+        selectPlayer(action, action.appName) { app ->
+            val session = if (PhoneCapabilityRegistry.requiresUnlock(action)) null else try {
+                MusicPlaybackSession(activity.applicationContext).find(app.packageName)
+            } catch (_: RuntimeException) { null }
+            val playback = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH).setPackage(app.packageName)
+                .putExtra(android.app.SearchManager.QUERY, action.query)
+            if (action.mediaType == MusicItemType.TRACK) {
+                playback.putExtra(MediaStore.EXTRA_MEDIA_FOCUS, MediaStore.Audio.Media.ENTRY_CONTENT_TYPE)
+                playback.putExtra(MediaStore.EXTRA_MEDIA_TITLE, action.query)
+            } else playback.putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
+            val run = {
+                try {
+                    when {
+                        session?.playTitle(action.query, playback.extras ?: Bundle.EMPTY) == true ->
+                            ActionResult.MediaRequest("Playback requested in ${app.label}")
+                        !DeviceLock.isLocked(activity) -> openNamedMusic(action, app, playback)
+                        app.packageName == MusicApps.SPOTIFY ->
+                            ActionResult.Failed("Spotify can resume music here, but can't start a new title while locked.")
+                        else -> ActionResult.Failed("${app.label} can't start a new title while locked.")
                     }
-                    playback.resolveActivity(manager) != null -> {
-                        activity.startActivity(playback)
-                        ActionResult.Handoff("Playback requested in ${app.label}", music = true)
-                    }
-                    search.resolveActivity(manager) != null -> {
-                        activity.startActivity(search)
-                        ActionResult.Handoff("Opened search in ${app.label}", music = true)
-                    }
-                    else -> {
-                        val launch = manager.getLaunchIntentForPackage(app.packageName)
-                            ?: return@guarded ActionResult.Failed("That player is unavailable")
-                        activity.startActivity(launch)
-                        ActionResult.Handoff("Opened ${app.label}. Search for ${action.query} there.", music = true)
-                    }
+                } finally {
+                    session?.close()
                 }
-                if (choice.question != null && action.appName == null) prefs.edit().putString("preferred", app.packageName).apply()
-                result
             }
+            run
         }
-        return choice.question?.let { chooseApp(action, choice.apps, it, ::ready) } ?: ready(choice.apps.single())
+
+    private fun openNamedMusic(action: PhoneAction.PlayMedia, app: LauncherApp, playback: Intent): ActionResult {
+        val mayPlay = !PhoneCapabilityRegistry.requiresUnlock(action)
+        val youtube = MusicApps.namedRequestRoute(app.packageName) == MusicApps.NamedRequestRoute.SEARCH_RESULTS
+        val spotify = app.packageName == MusicApps.SPOTIFY
+        if (mayPlay && !youtube && !spotify && canHandle(playback)) {
+            return startMusicActivity(playback, "Playback requested in ${app.label}")
+        }
+        val search = when {
+            spotify -> Intent(Intent.ACTION_VIEW,
+                Uri.parse("spotify:search:" + Uri.encode(action.query)))
+            youtube -> Intent(Intent.ACTION_VIEW, Uri.Builder().scheme("https").authority("www.youtube.com")
+                .appendPath("results").appendQueryParameter("search_query", action.query).build())
+            else -> Intent(Intent.ACTION_SEARCH).putExtra(android.app.SearchManager.QUERY, action.query)
+        }.setPackage(app.packageName)
+        if (canHandle(search)) return startMusicActivity(search, "Opened search in ${app.label}")
+        if (mayPlay && (youtube || spotify) && canHandle(playback)) {
+            return startMusicActivity(playback, "Playback requested in ${app.label}")
+        }
+        val launch = activity.packageManager.getLaunchIntentForPackage(app.packageName)
+            ?: return ActionResult.Failed("That player is unavailable")
+        return startMusicActivity(launch, "Opened ${app.label}. Search for ${action.query} there.")
+    }
+
+    private fun startMusicActivity(intent: Intent, message: String): ActionResult {
+        if (DeviceLock.isLocked(activity)) return ActionResult.Failed("Your phone locked before the music app opened.")
+        activity.startActivity(intent)
+        return ActionResult.Handoff(message, music = true)
     }
 
     private fun launcherActivities() = activity.packageManager
@@ -256,13 +322,13 @@ class AndroidActionExecutor(private val activity: Activity) {
         LauncherApp(info.loadLabel(activity.packageManager).toString(), info.activityInfo.packageName)
 
     private fun chooseApp(action: PhoneAction, apps: List<LauncherApp>, question: String,
-        prepare: (LauncherApp) -> Preparation.Ready = { readyApp(action, it) }): Preparation.Choice {
+        prepare: (LauncherApp) -> Preparation = { readyApp(action, it) }): Preparation.Choice {
         val duplicateNames = apps.groupingBy { NameMatcher.normalize(it.label) }.eachCount()
         return Preparation.Choice(action, question, apps.map { app ->
             val label = if (duplicateNames[NameMatcher.normalize(app.label)] != 1) {
                 "${app.label} · ${app.packageName}"
             } else app.label
-            ChoiceOption(label, prepare(app))
+            ChoiceOption(label) { prepare(app) }
         })
     }
 
@@ -274,7 +340,7 @@ class AndroidActionExecutor(private val activity: Activity) {
                     ActionResult.Failed("That app can't be opened")
                 } else {
                     activity.startActivity(intent)
-                    ActionResult.Success("Opened ${app.label}")
+                    ActionResult.Success("Opened ${app.label}", openedActivity = true)
                 }
             }
         }
@@ -290,7 +356,7 @@ class AndroidActionExecutor(private val activity: Activity) {
             is PhoneAction.SetVolume -> setVolume(action)
             is PhoneAction.ControlMedia -> controlMedia(action.operation, null)
             is PhoneAction.OpenSettings -> openSettings(action)
-            is PhoneAction.CallContact, is PhoneAction.OpenApp, is PhoneAction.Sequence, PhoneAction.OpenMusic, is PhoneAction.PlayMedia ->
+            is PhoneAction.CallContact, is PhoneAction.OpenApp, is PhoneAction.Sequence, is PhoneAction.OpenMusic, is PhoneAction.PlayMedia ->
                 ActionResult.Failed("Try again")
         }
     }
@@ -364,7 +430,7 @@ class AndroidActionExecutor(private val activity: Activity) {
         if (!canHandle(intent)) return ActionResult.Failed("No calling app available")
         activity.startActivity(intent)
         // ACTION_CALL starts the call UI; connection to the other person is not promised.
-        return ActionResult.Success("Calling $label")
+        return ActionResult.Success("Calling $label", openedActivity = true)
     }
 
     private fun readContacts(): List<Contact>? {
@@ -407,7 +473,7 @@ class AndroidActionExecutor(private val activity: Activity) {
         val minute = String.format(Locale.US, "%02d", action.minute)
         val period = if (action.hour < 12) "AM" else "PM"
         // Clock intents provide no result confirming that the other app created the alarm.
-        return ActionResult.Success("Alarm request sent for $hour:$minute $period")
+        return ActionResult.Success("Alarm request sent for $hour:$minute $period", openedActivity = true)
     }
 
     private fun setTimer(seconds: Int): ActionResult {
@@ -422,7 +488,7 @@ class AndroidActionExecutor(private val activity: Activity) {
         } else {
             "$seconds ${if (seconds == 1) "second" else "seconds"}"
         }
-        return ActionResult.Success("Timer request sent for $duration")
+        return ActionResult.Success("Timer request sent for $duration", openedActivity = true)
     }
 
     private fun goHome(): ActionResult {
@@ -431,7 +497,7 @@ class AndroidActionExecutor(private val activity: Activity) {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         if (!canHandle(intent)) return ActionResult.Failed("Home screen unavailable")
         activity.startActivity(intent)
-        return ActionResult.Success("Went to home screen")
+        return ActionResult.Success("Went to home screen", openedActivity = true)
     }
 
     private fun setRingerMode(mode: RingerMode): ActionResult {

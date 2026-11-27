@@ -3,7 +3,7 @@ package com.puneet.friday.ui
 import kotlin.math.abs
 import kotlin.math.exp
 
-/** Audio envelope shared by the sphere and ribbon renderers; time never rotates the geometry. */
+/** Audio envelope shared by the sphere and ribbon renderers. */
 internal class VoiceMotion {
     var energy = 0f
         private set

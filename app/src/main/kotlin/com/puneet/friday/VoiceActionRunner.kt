@@ -18,11 +18,17 @@ class VoiceActionRunner(
     private var activeDialog: Dialog? = null
     private var speakingChoices = false
 
-    fun handle(prepared: AndroidActionExecutor.Preparation) {
+    fun handle(prepared: AndroidActionExecutor.Preparation, onChoice: (AndroidActionExecutor.ChoiceOption) -> Unit) {
         val action = when (prepared) {
             is AndroidActionExecutor.Preparation.Ready -> prepared.action
             is AndroidActionExecutor.Preparation.Choice -> prepared.action
             is AndroidActionExecutor.Preparation.Finished -> null
+        }
+        val lockedMusicChoice = prepared is AndroidActionExecutor.Preparation.Choice &&
+            (action is PhoneAction.OpenMusic || action is PhoneAction.PlayMedia) && DeviceLock.isLocked(activity)
+        if (lockedMusicChoice) {
+            onResult(ActionResult.Failed("Choose a default music app in Friday Settings"), 0L)
+            return
         }
         if (action != null && DeviceLock.requiresUnlock(activity, action)) {
             onResult(ActionResult.NeedsUnlock, 0L)
@@ -40,8 +46,8 @@ class VoiceActionRunner(
                 ) { index ->
                     activeDialog = null
                     stopChoiceSpeech()
-                    prepared.options.getOrNull(index)?.ready?.let(::finish)
-                        ?: onResult(ActionResult.Failed("Try again"), 0L)
+                    val option = prepared.options.getOrNull(index)
+                    if (option == null) onResult(ActionResult.Failed("Try again"), 0L) else onChoice(option)
                 }
                 if (prepared.action is PhoneAction.CallContact && !DeviceLock.isLocked(activity)) {
                     val labels = prepared.options.take(5).map { it.spokenLabel }
