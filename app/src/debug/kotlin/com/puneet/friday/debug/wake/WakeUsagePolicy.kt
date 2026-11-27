@@ -10,6 +10,17 @@ internal object WakeUsagePolicy {
         }
     }
 
+    enum class AssistantSetup { SELECT, RECONNECT, READY }
+
+    fun assistantSetup(selected: Boolean, connected: Boolean): AssistantSetup = when {
+        !selected -> AssistantSetup.SELECT
+        !connected -> AssistantSetup.RECONNECT
+        else -> AssistantSetup.READY
+    }
+
+    fun showResumeAfterUpdate(mode: Mode, consented: Boolean, modelAvailable: Boolean, listening: Boolean): Boolean =
+        mode == Mode.HEY_FRIDAY && consented && modelAvailable && !listening
+
     fun accepts(mode: Mode, currentRevision: Long, requestedRevision: Long): Boolean =
         mode == Mode.HEY_FRIDAY && currentRevision > 0 && requestedRevision == currentRevision
 

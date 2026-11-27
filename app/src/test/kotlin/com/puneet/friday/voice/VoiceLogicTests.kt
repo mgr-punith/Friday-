@@ -1,6 +1,7 @@
 package com.puneet.friday.voice
 
 import com.puneet.friday.actions.MediaOperation
+import com.puneet.friday.actions.MusicItemType
 import com.puneet.friday.actions.PhoneAction
 import com.puneet.friday.actions.RingerMode
 import com.puneet.friday.actions.SettingState
@@ -15,6 +16,7 @@ import com.puneet.friday.ui.ActionPresentation
 import com.puneet.friday.ui.TabNavigation
 import com.puneet.friday.ui.Destination
 import com.puneet.friday.ui.CompletionPolicy
+import com.puneet.friday.ui.CompactProgress
 import com.puneet.friday.ui.PopupPlacementTests
 import com.puneet.friday.auth.AuthPolicy
 import java.nio.ByteBuffer
@@ -72,8 +74,19 @@ object VoiceLogicTests {
             "Wrong speech metadata cannot change or block a valid phone action")
         val volume = parsedAction("set_volume", mapOf("stream" to "media", "percent" to 50))
         val launch = parsedAction("open_app", mapOf("name" to "Clock"))
-        expect(parsedAction("open_music", emptyMap()).action == PhoneAction.OpenMusic, "Find installed music apps locally")
+        expect(parsedAction("open_music", emptyMap()).action == PhoneAction.OpenMusic(), "Find installed music apps locally")
         rejects("open_music", mapOf("package" to "com.spotify.music"))
+        expect(parsedAction("open_music", mapOf("play" to true)).action == PhoneAction.OpenMusic(play = true),
+            "Play music uses the preferred player without opening it")
+        expect(parsedAction("open_music", mapOf("play" to true, "appName" to "Spotify")).action ==
+            PhoneAction.OpenMusic(play = true, appName = "Spotify"), "Honor an explicitly named player")
+        rejects("open_music", mapOf("play" to "true"))
+        rejects("open_music", mapOf("appName" to "Spotify"))
+        val artist = mapOf("query" to "The Weeknd", "appName" to "Spotify", "mediaType" to "artist")
+        expect(parsedAction("play_media", artist).action == PhoneAction.PlayMedia("The Weeknd", "Spotify",
+            MusicItemType.ARTIST), "An artist request stays distinct from a track request")
+        rejects("play_media", artist + ("mediaType" to "playlist"))
+        rejects("play_media", artist + ("spotifyId" to "a".repeat(22)))
         for (operation in MediaOperation.entries) {
             expect(parsedAction("control_media", mapOf("operation" to operation.wireName)).action ==
                 PhoneAction.ControlMedia(operation), "Parse the media operation")
@@ -199,6 +212,33 @@ object VoiceLogicTests {
             "A replacement Activity's first confirmation has a different shared-engine identity")
         expect(!nextSpeaker.finish(originalSpeakerId) && nextSpeaker.accepts(nextSpeakerId),
             "The old Activity's stop callback cannot finish the replacement's confirmation")
+        val callbacks = mutableListOf<Runnable>()
+        val progress = CompactProgress(
+            post = { callback, delay ->
+                expect(delay == 780L, "Each progress label gets a readable interval")
+                callbacks.add(callback)
+            },
+            remove = { callbacks.remove(it) },
+        )
+        val stages = mutableListOf<String>()
+        progress.start { stages.add("expanded") }
+        progress.present { stages.add("answer") }
+        expect(stages.isEmpty(), "An immediate answer leaves the first label visible")
+        callbacks.removeAt(0).run()
+        expect(stages == listOf("expanded"), "The second label remains visible before a fast answer")
+        callbacks.removeAt(0).run()
+        expect(stages == listOf("expanded", "answer") && callbacks.isEmpty(), "The result appears once after both labels")
+        progress.start { stages.add("new") }
+        progress.present { error("A replaced result cannot appear") }
+        progress.start { stages.add("replacement") }
+        callbacks.removeAt(0).run()
+        progress.present { error("A dismissed result cannot appear") }
+        progress.cancel()
+        expect(callbacks.isEmpty() && stages.last() == "replacement", "Replacement and dismissal clear pending stages and results")
+        progress.start { stages.add("slow") }
+        repeat(2) { callbacks.removeAt(0).run() }
+        progress.present { stages.add("ready") }
+        expect(stages.takeLast(2) == listOf("slow", "ready") && callbacks.isEmpty(), "A slow answer appears as soon as it arrives")
         expect(CompletionPolicy.closeDelay(true, true, false, false, false) == 0L,
             "A compact successful result closes when its confirmation finishes without a display delay")
         expect(CompletionPolicy.closeDelay(false, true, false, false, false) == null,
@@ -447,12 +487,20 @@ object VoiceLogicTests {
         )
         expect(OrbMotionPolicy.shouldRenderContinuously(AssistantOrbView.State.PREVIEW, 0f, true, true),
             "Orb preview animates while visible and motion is enabled")
+        expect(OrbMotionPolicy.shouldRenderContinuously(AssistantOrbView.State.IDLE, 0f, true, true),
+            "Home orb drifts while idle and visible")
+        expect(OrbMotionPolicy.shouldRenderContinuously(AssistantOrbView.State.LISTENING, 0f, true, true),
+            "Home orb keeps drifting between syllables")
         expect(OrbMotionPolicy.shouldRenderContinuously(AssistantOrbView.State.LISTENING, 0.08f, true, true),
             "Orb listening motion follows gated speech")
-        expect(!OrbMotionPolicy.shouldRenderContinuously(AssistantOrbView.State.LISTENING, 0f, true, true),
-            "Orb listening motion stops during silence")
-        expect(!OrbMotionPolicy.shouldRenderContinuously(AssistantOrbView.State.PROCESSING, 0.5f, true, true),
-            "Orb rendering stays frozen while processing")
+        expect(!OrbMotionPolicy.shouldRenderContinuously(AssistantOrbView.State.IDLE, 0f, false, true),
+            "Home orb is still while reduced motion is active")
+        expect(!OrbMotionPolicy.shouldRenderContinuously(AssistantOrbView.State.IDLE, 0f, true, false),
+            "Home orb does not animate when hidden")
+        expect(!OrbMotionPolicy.shouldRenderContinuously(AssistantOrbView.State.LISTENING, 0f, true, true,
+            ambientMotion = false), "The compact ribbon stays still during silence")
+        expect(OrbMotionPolicy.shouldRenderContinuously(AssistantOrbView.State.LISTENING, 0.08f, true, true,
+            ambientMotion = false), "The compact ribbon animates during speech")
         expect(!OrbMotionPolicy.shouldRenderContinuously(AssistantOrbView.State.LISTENING, 0.5f, false, true),
             "Orb rendering respects disabled system animators")
         expect(!OrbMotionPolicy.shouldRenderContinuously(AssistantOrbView.State.PREVIEW, 0f, true, false),

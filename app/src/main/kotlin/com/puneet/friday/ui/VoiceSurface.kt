@@ -2,13 +2,17 @@ package com.puneet.friday.ui
 
 import android.app.Activity
 import android.annotation.SuppressLint
+import android.animation.ValueAnimator
+import android.graphics.Rect
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.view.animation.PathInterpolator
 import com.puneet.friday.R
+import com.puneet.friday.voice.InformationAnswer
 import com.puneet.friday.voice.PcmProcessor
 
 /** One voice surface, shared by the launcher screen and contextual assistant panel. */
@@ -39,9 +43,15 @@ class VoiceSurface(
     val permission = AppUi.button(activity, "Manage permissions", AppUi.ButtonTone.SECONDARY, onClick = onPermissions)
     val cancel = AppUi.iconButton(activity, R.drawable.ic_x_close, "Close command", onCancel)
     val replay = AppUi.button(activity, "Speak again", AppUi.ButtonTone.QUIET, onClick = onReplay)
-    private val request = AppUi.text(activity, "", 12f, secondary = true)
-    private val requestPanel = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
     private val statusScroll = ScrollView(activity)
+    private var panelText: LinearLayout? = null
+    private var answerView: CompactAnswerView? = null
+    private var pillHeight = 0
+    private var targetHeight = 0
+    private var sizeTransition: ValueAnimator? = null
+    private val clip = Rect()
+    private var voiceState = AssistantOrbView.State.IDLE
+    private var expandedProgress = false
 
     private val toast = if (compact) null else AppUi.text(activity, "", 14f).apply {
         gravity = Gravity.CENTER
@@ -58,34 +68,85 @@ class VoiceSurface(
         detail.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
         permission.visibility = View.GONE
         replay.visibility = View.GONE
-        requestPanel.visibility = View.GONE
-        requestPanel.addView(AppUi.text(activity, "Understood", 11f, secondary = true), AppUi.params(activity, 4))
-        requestPanel.addView(request, AppUi.params(activity, 0))
         if (compact) buildPanel(activity) else buildHome(activity)
     }
 
     private fun buildPanel(activity: Activity) {
-        background = AppUi.surface(activity, 24, R.color.surface, R.color.settings_divider)
-        clipToOutline = true
-        elevation = dp(10).toFloat()
         val content = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(8), dp(12), dp(12))
+            gravity = Gravity.CENTER_VERTICAL
         }
-        content.addView(orb, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(72)))
+        addView(orb, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         title.textSize = 13f
-        title.gravity = Gravity.CENTER
-        title.setTextColor(activity.getColor(R.color.text_secondary))
+        title.gravity = Gravity.START
+        title.setTextColor(activity.getColor(R.color.text_primary))
         content.addView(title, AppUi.params(activity, 0))
-
         detail.visibility = View.GONE
-        detail.gravity = Gravity.CENTER
-        content.addView(detail, AppUi.params(activity, 4))
-        controlLabel.visibility = View.GONE
-        requestPanel.setPadding(dp(12), dp(8), dp(12), dp(8))
-        content.addView(requestPanel, AppUi.params(activity, 4))
-        statusScroll.addView(content)
-        addView(statusScroll, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        detail.gravity = Gravity.START
+        content.addView(detail, AppUi.params(activity, 0))
+        val row = LinearLayout(activity).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            alpha = 0f
+            addView(content, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
+        }
+        addView(row, panelParams())
+        panelText = row
+        orb.onWakePillReveal {
+            row.alpha = it
+            answerView?.alpha = it
+        }
+        updatePanel()
+    }
+
+    private fun panelParams() = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.TOP).apply {
+        topMargin = dp(2)
+        bottomMargin = topMargin
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val label = answerView ?: panelText
+        if (label == null) {
+            super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+            return
+        }
+        measureChildWithMargins(label, widthMeasureSpec, 0, heightMeasureSpec, 0)
+        val width = resolveSize(label.measuredWidth + (label.layoutParams as LayoutParams).let {
+            it.leftMargin + it.rightMargin
+        }, widthMeasureSpec)
+        resizePill(label.measuredHeight)
+        applyPillHeight(label)
+        // Leave room for the listening dome while it morphs into the first progress pill.
+        val minimum = if (answerView == null) dp(128) else 0
+        val height = resolveSize(maxOf(minimum, maxOf(pillHeight, targetHeight) + 2 * dp(2)), heightMeasureSpec)
+        orb.measure(MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY))
+        setMeasuredDimension(width, height)
+    }
+
+    private fun resizePill(height: Int) {
+        if (height == targetHeight) return
+        sizeTransition?.cancel()
+        targetHeight = height
+        if (pillHeight == 0 || answerView == null || !isShown || !ValueAnimator.areAnimatorsEnabled()) {
+            pillHeight = height
+            return
+        }
+        sizeTransition = ValueAnimator.ofInt(pillHeight, height).apply {
+            duration = 220
+            interpolator = PathInterpolator(.2f, .8f, .2f, 1f)
+            addUpdateListener {
+                pillHeight = it.animatedValue as Int
+                answerView?.let(::applyPillHeight)
+                if (pillHeight == targetHeight) post { requestLayout() }
+            }
+            start()
+        }
+    }
+
+    private fun applyPillHeight(label: View) {
+        clip.set(0, 0, label.measuredWidth, pillHeight)
+        label.clipBounds = clip
+        orb.setWakeLabelHeight(pillHeight)
     }
 
     private fun buildHome(activity: Activity) {
@@ -181,11 +242,76 @@ class VoiceSurface(
     }
 
     fun setVoiceState(state: AssistantOrbView.State) {
+        voiceState = state
+        if (state != AssistantOrbView.State.PROCESSING) expandedProgress = false
         orb.setState(state)
+        updatePanel()
+    }
+
+    fun expandProgress() {
+        if (voiceState != AssistantOrbView.State.PROCESSING || expandedProgress) return
+        expandedProgress = true
+        updatePanel()
     }
 
     fun setStatus(value: String) {
         title.text = value
+        if (compact && orb.importantForAccessibility == IMPORTANT_FOR_ACCESSIBILITY_YES) orb.contentDescription = value
+    }
+
+    fun showCompactAnswer(answer: InformationAnswer, onToggle: (Boolean) -> Unit,
+                          onSource: (String) -> Unit, onReport: () -> Unit, onStop: () -> Unit) {
+        clearCompactAnswer()
+        val view = CompactAnswerView(context as Activity, answer, onToggle, onSource, onReport, onStop)
+        view.alpha = panelText?.alpha ?: 1f
+        answerView = view
+        addView(view, panelParams())
+        setVoiceState(AssistantOrbView.State.SUCCESS)
+    }
+
+    fun expandAnswerDetails(open: Boolean) { answerView?.setExpanded(open) }
+
+    fun setAnswerSpeaking(active: Boolean) { answerView?.setSpeaking(active) }
+
+    fun clearCompactAnswer() {
+        val answer = answerView ?: return
+        sizeTransition?.cancel()
+        sizeTransition = null
+        targetHeight = pillHeight
+        answerView = null
+        removeView(answer)
+        updatePanel()
+    }
+
+    private fun updatePanel() {
+        val text = panelText ?: return
+        val shape = when (voiceState) {
+            AssistantOrbView.State.IDLE, AssistantOrbView.State.PREVIEW, AssistantOrbView.State.LISTENING -> WakeOrbView.Shape.GLASS
+            AssistantOrbView.State.PROCESSING ->
+                if (expandedProgress) WakeOrbView.Shape.EXPANDED_PROGRESS else WakeOrbView.Shape.PROCESSING
+            else -> WakeOrbView.Shape.STATUS
+        }
+        orb.setWakeShape(shape)
+        val processing = voiceState == AssistantOrbView.State.PROCESSING
+        val listening = shape == WakeOrbView.Shape.GLASS
+        text.visibility = when {
+            answerView != null -> View.GONE
+            listening -> View.INVISIBLE
+            else -> View.VISIBLE
+        }
+        orb.importantForAccessibility = if (listening) IMPORTANT_FOR_ACCESSIBILITY_YES else IMPORTANT_FOR_ACCESSIBILITY_NO
+        orb.accessibilityLiveRegion = if (listening) ACCESSIBILITY_LIVE_REGION_POLITE else ACCESSIBILITY_LIVE_REGION_NONE
+        orb.contentDescription = if (listening) title.text else null
+        if (shape == WakeOrbView.Shape.STATUS && detail.visibility == View.VISIBLE) title.visibility = View.GONE
+        val stageWidth = minOf(resources.displayMetrics.widthPixels - dp(24), dp(440))
+        val side = if (listening) 0 else (stageWidth * (1f - shape.widthFraction) / 2f).toInt()
+        text.minimumHeight = (stageWidth * .23f).toInt().coerceIn(dp(56), dp(90))
+        val labelStart = if (processing) dp(64) - side else dp(26)
+        text.setPadding(labelStart, dp(8), dp(22), dp(14))
+        text.layoutParams = (text.layoutParams as LayoutParams).apply {
+            marginStart = side
+            marginEnd = side
+        }
     }
 
     fun setAudioLevel(level: PcmProcessor.Level) {
@@ -194,16 +320,9 @@ class VoiceSurface(
 
     override fun onDetachedFromWindow() {
         clearToast()
+        sizeTransition?.end()
+        sizeTransition = null
         super.onDetachedFromWindow()
-    }
-
-    fun showRequest(value: String?) {
-        if (!compact) return
-        request.text = value.orEmpty()
-        requestPanel.visibility = if (value.isNullOrBlank()) View.GONE else View.VISIBLE
-        statusScroll.post {
-            statusScroll.fullScroll(View.FOCUS_UP)
-        }
     }
 
     private fun dp(value: Int): Int = AppUi.dp(context, value)

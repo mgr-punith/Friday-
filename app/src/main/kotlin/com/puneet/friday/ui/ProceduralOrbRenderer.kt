@@ -14,19 +14,7 @@ import kotlin.math.exp
 import kotlin.math.min
 import kotlin.math.sin
 
-/**
- * Native OpenGL ES 2 port of the website's procedural Live renderer.
- * Every frame is generated from shaders and geometry. No media decoder or video is used.
- *
- * This is renderer source for integration, not a replacement for Friday's view/lifecycle API.
- * A GLSurfaceView can host it directly. An EGL-backed TextureView can call the same GL
- * callbacks, which may fit Friday's clipped compact overlay and overlapping mic better.
- *
- * Set the host's render mode to WHEN_DIRTY while motion is disabled. Pause the host when
- * hidden; resetFrameClock() before resuming. Call release() only on its current GL thread.
- * Apply Friday's existing audio noise gate before setAudioSignal().
- * onError runs on the GL thread; post any UI response to the main thread.
- */
+/** Draws the Home orb's particle shell, spiral and orbital streaks in OpenGL ES 2. */
 class ProceduralOrbRenderer(
     density: Float,
     private val particleCount: Int = 22_000,
@@ -139,11 +127,11 @@ class ProceduralOrbRenderer(
             upload(bufferIds[1], floatArrayOf(-1f, -1f, 1f, -1f, -1f, 1f, -1f, 1f, 1f, -1f, 1f, 1f))
 
             // Independent line segments allow all twenty arcs to render in one draw call.
-            val arcs = FloatArray(20 * 25 * 2 * 3)
+            val arcs = FloatArray(20 * 25 * 2 * 4)
             var offset = 0
-            repeat(20) {
+            repeat(20) { index ->
                 val angle = random.next() * TWO_PI
-                val length = .035f + random.next() * .15f
+                val length = .057f + random.next() * .22f
                 val radius = .94f + random.next() * .04f
                 for (segment in 0 until 25) {
                     for (endpoint in 0..1) {
@@ -152,10 +140,11 @@ class ProceduralOrbRenderer(
                         arcs[offset++] = cos(theta) * radius
                         arcs[offset++] = sin(theta) * radius
                         arcs[offset++] = sin(PI.toFloat() * fraction) * .55f
+                        arcs[offset++] = (index % 5).toFloat()
                     }
                 }
             }
-            arcVertexCount = offset / 3
+            arcVertexCount = offset / 4
             upload(bufferIds[2], arcs)
             GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, 0)
             GLES20.glDisable(GLES20.GL_DEPTH_TEST)
@@ -204,6 +193,7 @@ class ProceduralOrbRenderer(
         val particles = particleProgram ?: return
         bind(particles, bufferIds[0], 4)
         GLES20.glUniform1f(particles.dpr, pointScale)
+        GLES20.glUniform1f(particles.resolution, viewportSize.toFloat())
         GLES20.glDrawArrays(GLES20.GL_POINTS, 0, particleCount)
         GLES20.glDisableVertexAttribArray(particles.attribute)
 
@@ -214,7 +204,7 @@ class ProceduralOrbRenderer(
         GLES20.glDisableVertexAttribArray(core.attribute)
 
         val arcs = arcProgram ?: return
-        bind(arcs, bufferIds[2], 3)
+        bind(arcs, bufferIds[2], 4)
         GLES20.glDrawArrays(GLES20.GL_LINES, 0, arcVertexCount)
         GLES20.glDisableVertexAttribArray(arcs.attribute)
         GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, 0)
@@ -318,6 +308,7 @@ class ProceduralOrbRenderer(
         val PARTICLE_VERTEX = """
             attribute vec4 a_particle;
             uniform float u_time;
+            uniform float u_resolution;
             uniform float u_dpr;
             uniform vec2 u_rotation;
             uniform float u_scale;
@@ -333,23 +324,36 @@ class ProceduralOrbRenderer(
             float azimuth = a_particle.x;
             float elevation = a_particle.y;
             float seed = a_particle.w;
-            float t = u_time * .16;
-            float wave = sin(azimuth * 3. + elevation * 4. + t * 1.4);
-            float radius = .875 + u_audio.x * (.045 * wave + .028 * sin(elevation * 9. - t));
-            vec3 p = vec3(cos(azimuth) * sin(elevation), cos(elevation), sin(azimuth) * sin(elevation));
-            p *= radius * a_particle.z;
-            p.x += u_audio.y * .075 * sin(p.y * 6. + t * 1.3);
-            p.y += u_audio.z * .055 * sin(p.x * 7. - t * .8);
-            p.z += u_audio.w * .045 * cos(p.y * 7. - t);
-            p = rotateX(u_rotation.y) * rotateY(u_rotation.x) * p;
-            float perspective = 2.9 / (2.9 - p.z * .28);
+            float roll = u_time * .52;
+            float y = cos(elevation);
+            float ridgeShare = fract(seed * 13.);
+            float ripple = .086 * sin(azimuth * 2. + roll) + .06 * sin(azimuth * 4. - roll);
+            float wiggle = u_time * (6.2831853 * 2.4);
+            ripple += (.12 * u_audio.x + .32 * u_audio.y) * sin(azimuth * 3. - wiggle);
+            float band = (y > 0. ? .57 : -.51) + ripple;
+            // Put a subset of points on narrow folds, with the rest spread across the shell.
+            if (ridgeShare < .24) {
+                float offset = 2. * abs(y) - 1.;
+                y = clamp(band + offset * (.029 + .20 * offset * offset + .12 * u_audio.z), -1., 1.);
+            }
+            float horizontal = sqrt(max(0., 1. - y * y));
+            vec3 direction = vec3(cos(azimuth) * horizontal, y, sin(azimuth) * horizontal);
+            float ridgeDistance = min(abs(y - .57 - ripple), abs(y + .51 - ripple));
+            float ridge = 1. - smoothstep(.008, .057 + .06 * u_audio.z, ridgeDistance);
+            float wave = sin(azimuth * 3. + elevation * 5. - wiggle);
+            float radius = .875 * (a_particle.z + .025 * ridge + .10 * u_audio.x * wave);
+            vec3 p = direction * radius;
+            p.z += u_audio.w * .048 * cos(p.y * 9. - wiggle);
+            p = rotateX(.69 + .57 * sin(roll) + u_rotation.y) * rotateY(roll + u_rotation.x) * p;
+            p.xy = mat2(.94, .34, -.34, .94) * p.xy;
+            float perspective = 1. / (1. - p.z * .092);
             gl_Position = vec4(p.xy * u_scale * perspective, 0., 1.);
-            float bands = pow(.5 + .5 * sin(elevation * 6. + 2.8 * sin(azimuth * 2.)
-                + u_audio.x * .9 * sin(t + elevation * 4.)), 5.);
-            float front = .48 + .52 * smoothstep(-.7, .8, p.z);
-            float shimmer = .82 + u_audio.x * .18 * sin(seed * 90. + u_time * .5);
-            v_alpha = (.14 + 1.05 * bands) * front * shimmer * (.7 + seed * .7);
-            gl_PointSize = u_dpr * (.7 + seed * 1.1);
+            float front = .41 + .59 * smoothstep(-.49, .56, p.z);
+            float grain = mix(.21, .76, seed * seed);
+            float ridgeLight = .45 + .55 * smoothstep(-.8, .4, cos(azimuth * 2. - roll * 2. + band));
+            v_alpha = (grain + ridge * (.77 + u_audio.x * .57) * ridgeLight) * front;
+            float radiusPixels = .4375 * u_scale * u_resolution;
+            gl_PointSize = max(.83 * u_dpr, radiusPixels * .0056) * (.72 + .55 * seed + .19 * ridge);
             }
         """.trimIndent()
 
@@ -359,8 +363,8 @@ class ProceduralOrbRenderer(
             uniform float u_brightness;
             void main() {
             float d = length(gl_PointCoord - .5) * 2.;
-            float alpha = (1. - smoothstep(.35, 1., d)) * v_alpha;
-            gl_FragColor = vec4(vec3(.95), alpha * u_brightness);
+            float alpha = (1. - smoothstep(.13, 1., d)) * v_alpha;
+            gl_FragColor = vec4(vec3(.99), alpha * u_brightness);
             }
         """.trimIndent()
 
@@ -387,42 +391,60 @@ class ProceduralOrbRenderer(
             uniform float u_brightness;
             uniform vec4 u_audio;
             void main() {
-            vec2 p = v_position * (.82 / u_scale);
+            vec2 p = v_position / (.875 * u_scale);
             p.x += u_rotation.x * .012;
             p.y += u_rotation.y * .012;
-            p.x += u_audio.y * .025 * sin(p.y * 12. + u_time * .6);
-            p.y += u_audio.z * .025 * sin(p.x * 10. - u_time * .5);
+            float wiggle = u_time * (6.2831853 * 2.4);
+            p.x += (.021 * u_audio.x + .021 * u_audio.y) * sin(p.y * 9. + wiggle);
+            p.y += (.017 * u_audio.x + .028 * u_audio.z) * sin(p.x * 11. - wiggle);
             float r = length(p);
-            float angle = atan(p.y, p.x);
-            float phase = 35. * pow(r + .001, .65) - angle / 6.2831853
-                + u_audio.x * .35 * sin(r * 14. - u_time * .8);
-            float line = abs(fract(phase) - .5);
-            float derivative = 22.75 * pow(r + .001, -.35);
-            float aa = derivative * (.82 / u_scale) / u_resolution * 1.1;
-            float width = .07 + .13 * exp(-r * 10.);
-            float spiral = 1. - smoothstep(width, width + aa, line);
-            float innerGlow = exp(-pow(r / .17, 3.)) * .90;
-            float outerGlow = (1. - smoothstep(.18, .57, r)) * .36;
-            float strength = (innerGlow + outerGlow) * (1. + u_audio.x * .25);
-            float centralLight = .12 * exp(-r * 32.);
-            float alpha = spiral * strength + centralLight;
-            gl_FragColor = vec4(vec3(.96), alpha * u_brightness);
+            if (r >= .755) discard;
+            float turn = atan(p.y + .000001, p.x) / 6.2831853;
+            float aa = 1. / (.875 * u_scale * u_resolution);
+
+            // The white center has regular, close turns and thin dark gaps.
+            float rotation = turn - .139 * u_time;
+            float innerPhase = 49. * r + rotation + .946;
+            float innerLine = abs(fract(innerPhase) - .5);
+            float innerAa = min(.21, 49. * aa * .62);
+            float spiral = 1. - smoothstep(.34 - innerAa, .34 + innerAa, innerLine);
+            spiral *= 1. - smoothstep(.163, .248, r);
+
+            // The outer turns start after a gap and draw closer together at the edge.
+            float outerPhase = ((46.17 * r - 43.03) * r + 27.79) * r + .67 + rotation;
+            float slope = (138.51 * r - 86.06) * r + 27.79;
+            float lineDistance = abs(fract(outerPhase) - .5) / slope;
+            float rings = 1. - smoothstep(max(.0005, .0062 - aa), .0062 + aa, lineDistance);
+            rings *= smoothstep(.223, .251, r) * (1. - smoothstep(.385, .755, r));
+            float glow = .15 * (1. - smoothstep(.145, .248, r));
+            float sheen = .91 + .09 * sin(turn * 6.2831853 - u_time * .5);
+            float alpha = (spiral * .84 + glow + rings * .56 * sheen) * (1. + u_audio.x * .18);
+            gl_FragColor = vec4(vec3(1.), alpha * u_brightness);
             }
         """.trimIndent()
 
         val LINE_VERTEX = """
-            attribute vec3 a_position;
+            attribute vec4 a_position;
             uniform float u_time;
             uniform vec2 u_rotation;
             uniform float u_scale;
             uniform vec4 u_audio;
             varying float v_alpha;
+            mat2 rotate(float a) { return mat2(cos(a), sin(a), -sin(a), cos(a)); }
             void main() {
-            vec2 p = a_position.xy * (1. + u_audio.x * .018 * sin(u_time * .8 + a_position.x * 4.));
-            p.x += u_rotation.x * .014;
+            float orbit = a_position.w;
+            float direction = 1. - 2. * mod(orbit, 2.);
+            vec2 p = rotate(direction * u_time * (.20 + .045 * orbit)) * a_position.xy;
+            // Tilt each circle in 3D so some dashes cross the face of the shell.
+            float tilt = orbit * .39 + .18 * sin(u_time * .45 + orbit) + .30 * u_audio.z;
+            float depth = p.y * sin(tilt);
+            p.y *= cos(tilt);
+            p = rotate(orbit * 1.28 + u_time * .11 + u_rotation.x * .08) * p;
+            p *= (1. + .04 * u_audio.x * sin(orbit + u_time * (6.2831853 * 2.4))) / (1. - .085 * depth);
             p.y += u_rotation.y * .014;
             gl_Position = vec4(p * u_scale, 0., 1.);
-            v_alpha = a_position.z * (.65 + u_audio.x * .35);
+            v_alpha = a_position.z * (1.73 + .17 * smoothstep(-.4, .3, depth) + .28 * u_audio.w);
+            v_alpha *= smoothstep(.13, .27, length(p));
             }
         """.trimIndent()
 
@@ -430,7 +452,7 @@ class ProceduralOrbRenderer(
             precision mediump float;
             varying float v_alpha;
             uniform float u_brightness;
-            void main() { gl_FragColor = vec4(vec3(.9), v_alpha * u_brightness); }
+            void main() { gl_FragColor = vec4(vec3(.98), v_alpha * u_brightness); }
         """.trimIndent()
     }
 }

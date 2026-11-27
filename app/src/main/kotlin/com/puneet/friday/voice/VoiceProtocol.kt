@@ -1,6 +1,7 @@
 package com.puneet.friday.voice
 
 import com.puneet.friday.actions.MediaOperation
+import com.puneet.friday.actions.MusicItemType
 import com.puneet.friday.actions.PhoneAction
 import com.puneet.friday.actions.RingerMode
 import com.puneet.friday.actions.SettingState
@@ -153,17 +154,27 @@ object VoiceResponseParser {
             "open_app" -> if (hasOnlyKeys(args, "name")) {
                 requiredString(args, "name", MAX_NAME_LENGTH)?.let(PhoneAction::OpenApp)
             } else null
-            "open_music" -> if (args.isEmpty()) PhoneAction.OpenMusic else null
+            "open_music" -> when {
+                args.isEmpty() -> PhoneAction.OpenMusic()
+                args["play"] == true && hasOnlyKeys(args, "play", "appName") -> {
+                    val app = optionalString(args, "appName", MAX_NAME_LENGTH) ?: return badResponse()
+                    PhoneAction.OpenMusic(play = true, appName = app.value).takeIf { it.validationError() == null }
+                }
+                else -> null
+            }
             "control_media" -> if (hasOnlyKeys(args, "operation")) {
                 MediaOperation.entries.firstOrNull { it.wireName == args["operation"] }
                     ?.let(PhoneAction::ControlMedia)
             } else null
             "play_media" -> {
-                if (!hasOnlyKeys(args, "query", "appName") ||
+                if (!hasOnlyKeys(args, "query", "appName", "mediaType") ||
                     args.values.any { it !is String || it.any(Char::isISOControl) }) return badResponse()
                 val query = requiredString(args, "query", 160) ?: return badResponse()
                 val app = optionalString(args, "appName", MAX_NAME_LENGTH) ?: return badResponse()
-                PhoneAction.PlayMedia(query, app.value)
+                val kind = if ("mediaType" in args) MusicItemType.entries.find { it.wireName == args["mediaType"] }
+                    ?: return badResponse() else null
+                PhoneAction.PlayMedia(query, app.value, kind)
+                    .takeIf { it.validationError() == null }
             }
             "close_app" -> {
                 if (!hasOnlyKeys(args, "name")) return badResponse()

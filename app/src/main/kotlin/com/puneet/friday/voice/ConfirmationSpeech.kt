@@ -31,7 +31,7 @@ object ConfirmationSpeechPayload {
         is PhoneAction.SetTimer -> "Timer requested"
         is PhoneAction.OpenApp -> "Opening app"
         is PhoneAction.OpenSettings -> "Check settings"
-        PhoneAction.OpenMusic -> "Music app opened"
+        is PhoneAction.OpenMusic -> if (action.play) "Music requested" else "Music app opened"
         is PhoneAction.PlayMedia -> "Music requested"
         is PhoneAction.ControlMedia -> action.operation.requested
         is PhoneAction.Sequence -> {

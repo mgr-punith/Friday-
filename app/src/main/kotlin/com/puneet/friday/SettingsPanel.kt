@@ -9,6 +9,9 @@ import android.provider.Settings
 import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
+import com.puneet.friday.actions.AndroidActionExecutor
+import com.puneet.friday.actions.MusicApps
+import com.puneet.friday.actions.DeviceLock
 import com.puneet.friday.entry.AssistantSettings
 import com.puneet.friday.entry.EntryPointPolicy
 import com.puneet.friday.entry.ReadyNotification
@@ -29,6 +32,10 @@ class SettingsPanel(private val activity: Activity, onAccount: () -> Unit, onBac
     private val assistantButton: SettingsRow
     private val assistantFallback: SettingsRow
     private val assistantFallbackGroup: SettingsGroup
+    private val playerExecutor = AndroidActionExecutor(activity)
+    private val musicButton: SettingsRow
+    private var musicDialog: android.app.Dialog? = null
+    private var playerLookup = 0
     private val answersButton: SettingsRow
     private var answerConsentDialog: android.app.Dialog? = null
     private var pendingAssistantSettings = false
@@ -66,6 +73,8 @@ class SettingsPanel(private val activity: Activity, onAccount: () -> Unit, onBac
                 answerConsentDialog = AnswerConsent.show(activity) { answerConsentDialog = null; refresh() }
             }
         }
+        musicButton = SettingsRow(activity, "Default music app", icon = R.drawable.ic_sound) { chooseMusicApp() }
+        phone.addRow(musicButton)
         phone.addRow(answersButton)
         content.addView(phone, AppUi.params(activity, 16))
         val debug = SettingsGroup(activity)
@@ -79,12 +88,46 @@ class SettingsPanel(private val activity: Activity, onAccount: () -> Unit, onBac
         accountButton.setValue(account?.let { it.displayName.ifBlank { it.email }.ifBlank { "Signed in" } } ?: "Signed out")
         accountButton.isEnabled = account != null
         startFriday?.setValue(DebugTools.startMode(activity))
+        val preferred = activity.getSharedPreferences(MusicApps.PREFS, Activity.MODE_PRIVATE).getString(MusicApps.PREFERRED, null)
+        val playerLabel = preferred?.let { pkg ->
+            try { activity.packageManager.getApplicationLabel(activity.packageManager.getApplicationInfo(pkg, 0)) }
+            catch (_: PackageManager.NameNotFoundException) { null }
+        }
+        musicButton.setValue(playerLabel?.toString() ?: "Choose an app")
         updateReadyNotificationButton()
         updateAssistantButton()
         answersButton.setValue(if (AnswerConsent.isAllowed(activity)) "On" else "Off")
     }
 
+    private fun chooseMusicApp() {
+        if (DeviceLock.isLocked(activity)) return
+        val request = ++playerLookup
+        Thread {
+            val apps = try { playerExecutor.musicApps() } catch (_: RuntimeException) { emptyList() }
+            activity.runOnUiThread {
+                if (request != playerLookup || activity.isFinishing || activity.isDestroyed || !view.isShown ||
+                    DeviceLock.isLocked(activity)) return@runOnUiThread
+                if (apps.isEmpty()) {
+                    musicDialog = FridayDialog.show(activity, "Default music app", "Friday couldn't find an installed music player.")
+                } else {
+                    val labels = apps.map { app ->
+                        if (apps.count { it.label == app.label } > 1) "${app.label} · ${app.packageName}" else app.label
+                    }
+                    musicDialog = FridayDialog.choices(activity, "Default music app", labels + "Clear default") { index ->
+                        if (!DeviceLock.isLocked(activity)) {
+                            playerExecutor.setPreferredPlayer(apps.getOrNull(index))
+                            refresh()
+                        }
+                    }
+                }
+            }
+        }.start()
+    }
+
     fun dismissPopups() {
+        playerLookup++
+        musicDialog?.dismiss()
+        musicDialog = null
         popup.dismiss()
         answerConsentDialog?.dismiss()
         answerConsentDialog = null

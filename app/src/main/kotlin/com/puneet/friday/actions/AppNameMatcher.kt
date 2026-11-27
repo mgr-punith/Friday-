@@ -57,6 +57,9 @@ internal object AppNameMatcher {
 }
 
 internal object MusicApps {
+    const val SPOTIFY = "com.spotify.music"
+    const val PREFS = "music_player"
+    const val PREFERRED = "preferred"
     data class Selection(val apps: List<LauncherApp>, val question: String? = null)
 
     enum class NamedRequestRoute {
@@ -68,17 +71,20 @@ internal object MusicApps {
         if (packageName == "com.google.android.youtube") NamedRequestRoute.SEARCH_RESULTS
         else NamedRequestRoute.PLAY_FROM_SEARCH
 
-    fun select(name: String?, available: List<LauncherApp>, playback: List<LauncherApp>, preferred: String?): Selection {
-        val candidates = playback.ifEmpty { available }
+    fun select(name: String?, available: List<LauncherApp>, preferred: String?): Selection {
+        val candidates = available
         if (name != null) {
-            return when (val match = AppNameMatcher.match(name, available)) {
+            val match = if (name.equals("Spotify", ignoreCase = true)) {
+                NameMatcher.resultFor(available.indices.filter { available[it].packageName == SPOTIFY })
+            } else AppNameMatcher.match(name, available)
+            return when (match) {
                 is MatchResult.Matched -> Selection(listOf(available[match.index]))
                 is MatchResult.Ambiguous -> Selection(match.indices.map { available[it] }, "Which music app?")
                 MatchResult.NotFound -> Selection(candidates, "Couldn't find $name. Which player should I use?")
             }
         }
         candidates.find { it.packageName == preferred }?.let { return Selection(listOf(it)) }
-        return Selection(candidates, if (candidates.size > 1) "Which music app should I use by default?" else null)
+        return Selection(candidates, "Choose your default music app")
     }
 
     private val supportedServices = setOf(

@@ -5,6 +5,7 @@ import android.app.Dialog
 import android.graphics.Color
 import android.graphics.Rect
 import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.view.Gravity
 import android.view.View
@@ -14,6 +15,7 @@ import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import com.puneet.friday.R
+import java.util.function.Consumer
 
 /** Shared Settings-style card for confirmations, disclosures and choices. */
 object FridayDialog {
@@ -89,9 +91,10 @@ object FridayDialog {
         onCancel: () -> Unit,
         gravity: Int = Gravity.CENTER,
         trailing: View? = null,
+        glass: Boolean = false,
         actions: (Dialog, LinearLayout, LinearLayout, Int) -> Unit,
     ): Dialog {
-        val dialog = Dialog(activity)
+        val dialog = if (glass) Dialog(activity, R.style.Theme_Friday_GlassDialog) else Dialog(activity)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
 
         val visible = Rect()
@@ -105,7 +108,7 @@ object FridayDialog {
         val content = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(padding, padding, padding, padding)
-            background = AppUi.surface(context, 24, R.color.settings_surface, R.color.settings_divider)
+            if (!glass) background = AppUi.surface(context, 24, R.color.settings_surface, R.color.settings_divider)
         }
         val heading = AppUi.text(activity, title, 18f, bold = true).apply {
             if (Build.VERSION.SDK_INT >= 28) isAccessibilityHeading = true
@@ -116,7 +119,7 @@ object FridayDialog {
             this.gravity = Gravity.CENTER_VERTICAL
             addView(heading, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             addView(trailing, LinearLayout.LayoutParams(AppUi.dp(activity, 48), AppUi.dp(activity, 48)))
-        }, AppUi.params(activity, 10))
+        }, AppUi.params(activity, if (glass) 5 else 10))
         val body = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         val scroller = ScrollView(activity).apply {
             overScrollMode = ScrollView.OVER_SCROLL_IF_CONTENT_SCROLLS
@@ -134,10 +137,11 @@ object FridayDialog {
         dialog.window?.apply {
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-            setDimAmount(0.6f)
+            setDimAmount(if (glass) .13f else .6f)
             setGravity(gravity)
             if (gravity and Gravity.TOP == Gravity.TOP) attributes = attributes.apply { y = margin }
         }
+        if (glass) dialog.window?.let { styleGlass(activity, content, it) }
         dialog.show()
         content.measure(
             View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
@@ -153,5 +157,35 @@ object FridayDialog {
             dialog.window?.setLayout(width, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
         return dialog
+    }
+
+    private fun styleGlass(activity: Activity, content: View, window: Window) {
+        val radius = AppUi.dp(activity, 30).toFloat()
+        fun apply(blurred: Boolean) {
+            window.setBackgroundDrawable(GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                if (blurred) intArrayOf(0xD13F454A.toInt(), 0xE3181C20.toInt(), 0xDC33393E.toInt())
+                else intArrayOf(0xF033393F.toInt(), 0xF8181C20.toInt(), 0xF1272D33.toInt()),
+            ).apply {
+                cornerRadius = radius
+                setStroke(AppUi.dp(activity, 1), 0x66DDE3E7)
+            })
+            if (Build.VERSION.SDK_INT >= 31) window.setBackgroundBlurRadius(if (blurred) AppUi.dp(activity, 26) else 0)
+        }
+
+        apply(false)
+        if (Build.VERSION.SDK_INT >= 31) {
+            val manager = activity.getSystemService(WindowManager::class.java) ?: return
+            val listener = Consumer<Boolean> { apply(it) }
+            content.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                override fun onViewAttachedToWindow(view: View) {
+                    manager.addCrossWindowBlurEnabledListener(activity.mainExecutor, listener)
+                }
+
+                override fun onViewDetachedFromWindow(view: View) {
+                    manager.removeCrossWindowBlurEnabledListener(listener)
+                }
+            })
+        }
     }
 }

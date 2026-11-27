@@ -94,6 +94,21 @@ class WakeTrialTests(unittest.TestCase):
         paused = re.search(r"const val PAUSED_NOTIFICATION_ID = (\d+)", notification).group(1)
         self.assertNotEqual(foreground, paused)
 
+    def test_app_update_restores_the_resume_control_without_starting_the_microphone(self):
+        root = Path(__file__).resolve().parents[1]
+        android = "{http://schemas.android.com/apk/res/android}"
+        debug = ElementTree.parse(root / "app/src/debug/AndroidManifest.xml").getroot()
+        receiver = next(row for row in debug.iter("receiver")
+                        if row.get(android + "name", "").endswith(".WakeUpdateReceiver"))
+        self.assertEqual(receiver.get(android + "exported"), "false")
+        self.assertEqual([row.get(android + "name") for row in receiver.iter("action")],
+                         ["android.intent.action.MY_PACKAGE_REPLACED"])
+        main = ElementTree.parse(root / "app/src/main/AndroidManifest.xml").getroot()
+        self.assertFalse(any("WakeUpdateReceiver" in row.get(android + "name", "") for row in main.iter("receiver")))
+        source = (root / "app/src/debug/kotlin/com/puneet/friday/debug/wake/WakeUpdateReceiver.kt").read_text()
+        self.assertIn("WakeUsageNotification.showPaused(context, openSetup = true)", source)
+        self.assertNotRegex(source, r"\bstart(?:Foreground)?Service\s*\(")
+
 
     def test_debug_microphone_service_declares_all_prerequisites(self):
         root = Path(__file__).resolve().parents[1]

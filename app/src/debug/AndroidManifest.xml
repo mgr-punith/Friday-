@@ -10,6 +10,11 @@
         <activity android:name=".debug.wake.WakeTrialActivity" android:exported="true" android:label="Friday wake test" />
         <service android:name=".debug.wake.WakeTrialService" android:exported="false" android:foregroundServiceType="microphone" android:stopWithTask="false" />
         <activity android:name=".debug.wake.WakeBackgroundActivity" android:exported="false" android:label="Background listening" />
+        <receiver android:name=".debug.wake.WakeUpdateReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
         <receiver
             android:name=".debug.wake.WakeTrialTestReceiver"
             android:exported="true"

@@ -12,7 +12,7 @@ object ActionPresentation {
         is PhoneAction.SetAlarm -> "Set alarm · ${String.format(Locale.ENGLISH, "%02d:%02d", action.hour, action.minute)}"
         is PhoneAction.SetTimer -> "Set timer · ${duration(action.seconds)}"
         is PhoneAction.OpenApp -> "Open ${action.name}"
-        PhoneAction.OpenMusic -> "Open a music app"
+        is PhoneAction.OpenMusic -> if (action.play) "Play music" else "Open a music app"
         is PhoneAction.PlayMedia -> "Play ${action.query}"
         is PhoneAction.ControlMedia -> action.operation.label
         is PhoneAction.CloseApp -> "Go to home screen"
