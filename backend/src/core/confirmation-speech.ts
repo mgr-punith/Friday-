@@ -54,7 +54,7 @@ function confirmationText(response: CommandResponse): string | null {
     case "set_timer": return "Timer requested";
     case "open_app": return "Opening app";
     case "open_settings": return "Check settings";
-    case "open_music": return "Music app opened";
+    case "open_music": return response.args.play === true ? "Music requested" : "Music app opened";
     case "play_media": return "Music requested";
     case "control_media": return { pause: "Pause requested", resume: "Resume requested", next: "Next track requested",
       previous: "Previous track requested" }[String(response.args.operation)] ?? null;

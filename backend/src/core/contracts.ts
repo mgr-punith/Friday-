@@ -7,7 +7,7 @@ export type AudioMimeType = "audio/wav" | "audio/mp4";
 export type CommandInput = (
   | { readonly kind: "audio"; readonly bytes: Uint8Array; readonly mimeType: AudioMimeType }
   | { readonly kind: "text"; readonly text: string }
-) & { readonly actionVersion?: ActionProtocolVersion; readonly supportsAnswers?: boolean; readonly answerContext?: AnswerContext;
+) & { readonly actionVersion?: ActionProtocolVersion; readonly musicPlayer?: boolean; readonly supportsAnswers?: boolean; readonly answerContext?: AnswerContext;
   readonly answerSetup?: "answers_disabled" | "answers_unavailable" };
 
 export interface FunctionSelection {
@@ -27,6 +27,14 @@ export interface AssistantProviderResult {
 }
 
 export type AssistantProviderErrorCode = "busy" | "timeout";
+
+export type QuotaDecision = { readonly allowed: true } |
+  { readonly allowed: false; readonly scope: "account_minute" | "account_daily" | "global_daily" | "blocked";
+    readonly retryAfterSeconds?: number };
+
+export interface SearchAuthorization {
+  authorizeAnswer(): Promise<QuotaDecision>;
+}
 
 export interface ProviderFailure {
   readonly diagnosticCode: string;
@@ -48,7 +56,7 @@ export class AssistantProviderError extends Error {
 }
 
 export interface AssistantProvider {
-  select(input: CommandInput, now: string, context?: { authorizeAnswer(): Promise<boolean> }): Promise<AssistantProviderResult>;
+  select(input: CommandInput, now: string, context?: SearchAuthorization): Promise<AssistantProviderResult>;
 }
 
 export interface SecretBundle {

@@ -5,6 +5,7 @@ import {
   type AssistantProvider,
   type Clock,
   type CommandInput,
+  type QuotaDecision,
   type SafeLogger,
   type SecretProvider,
   type UsageLimitStore
@@ -57,7 +58,7 @@ export interface ApiDependencies {
   readonly clock: Clock;
   readonly logger: SafeLogger;
   readonly accounts?: AccountGateway;
-  readonly answers?: { readonly usage: UsageLimitStore; readonly reports: AnswerReportStore };
+  readonly answers?: { readonly usage: { reserveCommand(account: string, at: Date): Promise<QuotaDecision> }; readonly reports: AnswerReportStore };
   readonly speech?: SpeechServices;
   readonly transcriptionClient?: "nvidia-v1";
 }
@@ -187,12 +188,14 @@ async function handleCommand(
 
   try {
     const actionVersion = actionProtocolVersion(header(event, "x-friday-actions"), header(event, "x-friday-media-controls"));
+    const musicPlayer = actionVersion >= 4 && header(event, "x-friday-music-player") === "1";
     const result = await dependencies.assistant.select(
       { ...input, ...(actionVersion === 1 ? {} : { actionVersion }), ...(supportsAnswers ? { supportsAnswers: true } : {}),
+        ...(musicPlayer ? { musicPlayer: true } : {}),
         ...(answerSetup ? { answerSetup } : {}),
         ...(answerContext ? { answerContext } : {}) },
       now,
-      ...(supportsAnswers ? [{ authorizeAnswer: () => dependencies.answers!.usage.consumeCommand(installId, dependencies.clock.now()) }] : []),
+      ...(supportsAnswers ? [{ authorizeAnswer: () => dependencies.answers!.usage.reserveCommand(installId, dependencies.clock.now()) }] : []),
     );
     if (result.usage) dependencies.logger.usage?.(safeAiUsage(result.usage));
     if (result.selection.name === ANSWER_SETUP_TOOL.name) {
@@ -225,7 +228,7 @@ async function handleCommand(
       dependencies.logger.error("assistant_invalid_answer_reply", requestId(event));
       return commandError(503, "busy");
     }
-    const response = parseFunctionSelection(result.selection, actionVersion);
+    const response = parseFunctionSelection(result.selection, actionVersion, musicPlayer);
     const confirmationSpeech = dependencies.speech?.provider.clientVersion === "elevenlabs-v1" &&
       header(event, "x-friday-speech") === "elevenlabs-v1" && header(event, "x-friday-confirmations") === "1"
       ? signConfirmation(response, installId, secrets.jwtSigningKey, dependencies.clock.now()) : null;

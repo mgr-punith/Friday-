@@ -172,11 +172,8 @@ const CONTROL_MEDIA = {
 } as const;
 const baseActions = FUNCTION_DECLARATIONS.filter(tool => tool.name !== "unsupported" && tool.name !== "unclear_command");
 const versionedActions = [...DEVICE_CONTROLS, ...SETTINGS_HANDOFFS, PLAY_MEDIA, CONTROL_MEDIA];
-const actionDeclarations = [...baseActions, ...versionedActions];
 
-function actionSequence(version: ActionProtocolVersion) {
-  const supported = actionDeclarations.filter(tool =>
-    supportsAction(tool.name as ActionName, version));
+function actionSequence(supported: readonly { readonly name: string; readonly parameters: object }[]) {
   return {
     name: "run_actions",
     description: "Run two or three supported, explicitly requested actions in spoken order. Only flashlight, volume, and ringer changes can precede another action. A call, clock request, app launch, Settings handoff, or Home must be last. If any part is unsupported, use unsupported for the whole request.",
@@ -203,10 +200,24 @@ function actionSequence(version: ActionProtocolVersion) {
   } as const;
 }
 
-export function functionDeclarationsFor(version: ActionProtocolVersion) {
+export function functionDeclarationsFor(version: ActionProtocolVersion, musicPlayer = false) {
   if (version === 1) return FUNCTION_DECLARATIONS;
-  const additions = versionedActions.filter(tool => supportsAction(tool.name, version));
-  return [...FUNCTION_DECLARATIONS, ...additions, actionSequence(version)] as const;
+  const additions = versionedActions.filter(tool => supportsAction(tool.name, version)).map(tool => {
+    if (musicPlayer && version >= 4 && tool.name === "open_music") {
+      return { ...tool, parameters: { ...tool.parameters, properties: {
+        play: { type: "boolean", description: "True for playing music without a title. Omit when opening a music player." },
+        appName: { type: "string", description: "Player explicitly named for playback." }
+      } } };
+    }
+    if (musicPlayer && version >= 4 && tool.name === "play_media") {
+      return { ...tool, parameters: { ...tool.parameters, properties: { ...tool.parameters.properties,
+        mediaType: { type: "string", enum: ["track", "artist", "album"],
+          description: "artist for an artist name or profile, track for a song title, album for an album. Omit when uncertain." }
+      } } };
+    }
+    return tool;
+  });
+  return [...FUNCTION_DECLARATIONS, ...additions, actionSequence([...baseActions, ...additions])] as const;
 }
 
 export function functionNamesFor(version: ActionProtocolVersion): readonly string[] {
@@ -234,6 +245,10 @@ export type { ActionName, ActionProtocolVersion } from "./capabilities";
 
 type ActionResponse = { readonly type: "action"; readonly action: ActionName; readonly args: Record<string, unknown> };
 
+export function isMusicItemType(value: unknown): value is "artist" | "track" | "album" {
+  return value === "artist" || value === "track" || value === "album";
+}
+
 export type CommandResponse =
   | ActionResponse
   | { readonly type: "actions"; readonly actions: readonly ActionResponse[] }
@@ -242,7 +257,8 @@ export type CommandResponse =
 
 export function parseFunctionSelection(
   selection: FunctionSelection,
-  version: ActionProtocolVersion = 1
+  version: ActionProtocolVersion = 1,
+  musicPlayer = false
 ): CommandResponse {
   const args = isRecord(selection.args) ? selection.args : {};
 
@@ -300,15 +316,23 @@ export function parseFunctionSelection(
         : badAudio();
     case "open_music":
       if (!supportsAction("open_music", version)) return unsupported();
+      if (!isRecord(selection.args)) return badAudio();
+      if (musicPlayer && args.play === true && hasOnlyKeys(args, ["play", "appName"])) {
+        const appName = readOptionalShortString(args, "appName");
+        if (appName === null || typeof args.appName === "string" && /[\u0000-\u001f\u007f-\u009f]/u.test(args.appName)) return badAudio();
+        return action("open_music", { play: true, ...(appName === undefined ? {} : { appName }) });
+      }
       return hasOnlyKeys(args, []) ? action("open_music", {}) : badAudio();
     case "play_media": {
       if (!supportsAction("play_media", version)) return unsupported();
-      if (!hasOnlyKeys(args, ["query", "appName"]) || Object.values(args).some(value =>
+      if (!hasOnlyKeys(args, musicPlayer ? ["query", "appName", "mediaType"] : ["query", "appName"]) || Object.values(args).some(value =>
         typeof value !== "string" || /[\u0000-\u001f\u007f-\u009f]/u.test(value))) return badAudio();
       const query = readShortString(args, "query", 160);
       const appName = readOptionalShortString(args, "appName");
       if (!query || appName === null) return badAudio();
-      return action("play_media", appName === undefined ? { query } : { query, appName });
+      if (args.mediaType !== undefined && !isMusicItemType(args.mediaType)) return badAudio();
+      return action("play_media", { query, ...(appName === undefined ? {} : { appName }),
+        ...(args.mediaType === undefined ? {} : { mediaType: args.mediaType }) });
     }
     case "control_media": {
       if (!supportsAction("control_media", version)) return unsupported();
@@ -334,7 +358,7 @@ export function parseFunctionSelection(
       return action("open_settings", state === undefined ? { setting } : { setting, state });
     }
     case "run_actions":
-      return version >= 2 ? parseSequence(args, version) : unsupported();
+      return version >= 2 ? parseSequence(args, version, musicPlayer) : unsupported();
     case "unclear_command":
       return badAudio();
     case "unsupported":
@@ -354,14 +378,14 @@ export function parseExpectedAction(name: string, args: unknown): CommandRespons
   return parseFunctionSelection({ name, args }, LATEST_ACTION_PROTOCOL_VERSION);
 }
 
-function parseSequence(args: Record<string, unknown>, version: ActionProtocolVersion): CommandResponse {
+function parseSequence(args: Record<string, unknown>, version: ActionProtocolVersion, musicPlayer: boolean): CommandResponse {
   const requested = args.actions;
   if (!hasOnlyKeys(args, ["actions"]) || !Array.isArray(requested) || requested.length < 2 || requested.length > MAX_ACTIONS) return badAudio();
   const actions: ActionResponse[] = [];
   for (const step of requested) {
     if (!isRecord(step) || !hasOnlyKeys(step, ["action", "args"]) ||
         typeof step.action !== "string" || step.action === "run_actions" || !isRecord(step.args)) return badAudio();
-    const result = parseFunctionSelection({ name: step.action, args: step.args }, version);
+    const result = parseFunctionSelection({ name: step.action, args: step.args }, version, musicPlayer);
     if (result.type !== "action") return result;
     if (actions.length < requested.length - 1 && !canPrecedeAnotherAction(result.action)) return unsupported();
     actions.push(result);

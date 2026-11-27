@@ -92,7 +92,7 @@ function buildRequest(
       : { inlineData: { mimeType: input.mimeType, data: Buffer.from(input.bytes).toString("base64") } }
   ];
   const actionVersion = input.actionVersion ?? 1;
-  const declarations = functionDeclarationsFor(actionVersion);
+  const declarations = functionDeclarationsFor(actionVersion, input.musicPlayer);
 
   return {
     systemInstruction: { parts: [{ text: SYSTEM_PROMPT + actionInstructionsFor(actionVersion) }] },

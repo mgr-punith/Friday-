@@ -140,6 +140,28 @@ test("command header negotiates the action protocol version", async () => {
   assert.equal(assistant.calls[0]?.input.actionVersion, 5);
 });
 
+test("only phones with the music-player capability receive the new music action arguments", async () => {
+  const { api, assistant } = harness();
+  const headers = { authorization: `Bearer ${token()}`, "content-type": "application/json",
+    "x-now": "2026-11-17T14:00:00+05:30", "x-friday-actions": "4" };
+  for (const [name, args] of [
+    ["open_music", { play: true }],
+    ["open_music", { play: true, appName: "VLC" }],
+    ["play_media", { query: "The Weeknd", appName: "Music", mediaType: "artist" }]
+  ] as const) {
+    assistant.result = { selection: { name, args }, durationMs: 1 };
+    for (const capable of [true, false]) {
+      const response = await api.handle(event("POST", "/v1/command", {
+        headers: { ...headers, ...(capable ? { "x-friday-music-player": "1" } : {}) },
+        body: JSON.stringify({ text: "Play music" })
+      }));
+      assert.equal(assistant.calls.at(-1)?.input.musicPlayer, capable ? true : undefined);
+      assert.equal(response.statusCode, capable ? 200 : 400);
+      assert.deepEqual(body(response), capable ? { type: "action", action: name, args } : { type: "error", reason: "bad_audio" });
+    }
+  }
+});
+
 test("v3 validates settings handoffs while v2 keeps them unsupported", async () => {
   const old = harness();
   old.assistant.result = {
