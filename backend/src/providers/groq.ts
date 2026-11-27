@@ -1,7 +1,8 @@
 import {
   TRANSCRIPT_SYSTEM_PROMPT,
   actionInstructionsFor,
-  functionDeclarationsFor
+  functionDeclarationsFor,
+  isMusicItemType
 } from "../core/action-schema";
 import { AssistantProviderError, type AssistantProvider, type AssistantProviderResult,
   type CommandInput, type FunctionSelection, type SearchAuthorization } from "../core/contracts";
@@ -87,12 +88,13 @@ export class GroqProvider implements AssistantProvider {
     const following = input.answerContext;
     if (following && !supportsAnswers) throw this.failure(budget, "classification", "invalid_context");
     // Clarification replies are answer-only, including replies that look like exact phone commands.
-    const exact = !following && actionVersion >= 2 ? exactDeviceRequest(text, actionVersion) : null;
-    if (exact) return { selection: exact, durationMs: this.elapsed(budget), timingMetric: "groq", stages, usage: budget.usage };
+    const exact = !following && actionVersion >= 2 ? exactDeviceRequest(text, actionVersion, input.musicPlayer) : null;
+    const needsMusicType = exact?.name === "play_media" && input.musicPlayer && isRecord(exact.args) && exact.args.mediaType === undefined;
+    if (exact && !needsMusicType) return { selection: exact, durationMs: this.elapsed(budget), timingMetric: "groq", stages, usage: budget.usage };
     const started = this.runtime.now();
     const answerTool = following?.remaining === 0 ? { ...ANSWER_TOOL, parameters: { ...ANSWER_TOOL.parameters,
       properties: { ...ANSWER_TOOL.parameters.properties, mode: { type: "string", enum: ["knowledge", "lookup", "unavailable"] } } } } : ANSWER_TOOL;
-    const tools = following ? [answerTool] : [...compactGroqTools(actionVersion).map(tool => (supportsAnswers || answerSetup) && tool.name === "unsupported"
+    const tools = following ? [answerTool] : [...compactGroqTools(actionVersion, input.musicPlayer).map(tool => (supportsAnswers || answerSetup) && tool.name === "unsupported"
       ? { ...tool, description: "Use for chat, essays, non-English speech or unsupported phone controls." } : tool),
       ...(supportsAnswers ? [answerTool] : answerSetup ? [ANSWER_SETUP_TOOL] : [])];
     const answerRequest = supportsAnswers && !following && isInformationRequest(text);
@@ -154,7 +156,13 @@ export class GroqProvider implements AssistantProvider {
         ...(this.config.actionModel.startsWith("openai/gpt-oss-") ? { reasoning_effort: "low", include_reasoning: false } : {})
       })
     }), budget);
-    const selection = readToolCall(value, requestTools.map(tool => tool.name));
+    let selection = readToolCall(value, requestTools.map(tool => tool.name));
+    if (needsMusicType && exact && isRecord(exact.args)) {
+      const hinted = selection?.name === "play_media" && isRecord(selection.args) ? selection.args : undefined;
+      const sameTitle = typeof hinted?.query === "string" && typeof exact.args.query === "string" &&
+        hinted.query.trim().toLowerCase() === exact.args.query.toLowerCase();
+      selection = { ...exact, args: { ...exact.args, ...(sameTitle && isMusicItemType(hinted?.mediaType) ? { mediaType: hinted.mediaType } : {}) } };
+    }
     if (!selection) throw this.failure(budget, "classification", "invalid_response");
     stages.classification = this.runtime.now() - started;
     if (selection.name === ANSWER_TOOL.name) {
@@ -326,8 +334,8 @@ export class GroqProvider implements AssistantProvider {
 }
 
 /** Refer to the existing action tools instead of repeating every schema inside a sequence. */
-export function compactGroqTools(version: NonNullable<CommandInput["actionVersion"]>) {
-  const declarations = functionDeclarationsFor(version);
+export function compactGroqTools(version: NonNullable<CommandInput["actionVersion"]>, musicPlayer = false) {
+  const declarations = functionDeclarationsFor(version, musicPlayer);
   const actions = declarations.filter(tool => !["run_actions", "unsupported", "unclear_command"].includes(tool.name)).map(tool => tool.name);
   return declarations.map(tool => tool.name === "unclear_command"
     ? { ...tool, description: "Use only when the transcript has no intelligible request. Unfamiliar song and artist names can be valid music requests." }
@@ -400,7 +408,7 @@ function isInformationRequest(text: string): boolean {
 }
 
 // Pin common, explicit commands after the transcript check. Never match part of a compound or negated request.
-function exactDeviceRequest(text: string, version: NonNullable<CommandInput["actionVersion"]>): FunctionSelection | null {
+function exactDeviceRequest(text: string, version: NonNullable<CommandInput["actionVersion"]>, musicPlayer = false): FunctionSelection | null {
   if (/[\u0000-\u001f\u007f-\u009f]/.test(text)) return null;
   if (turnsOffQuietMode(text)) return { name: "set_ringer_mode", args: { mode: "normal", utterance: text } };
   const command = text.replace(/[.!?]+$/, "").replace(/\s+/g, " ").trim()
@@ -414,21 +422,32 @@ function exactDeviceRequest(text: string, version: NonNullable<CommandInput["act
   const torch = /^(?:turn|switch) (on|off) (?:(?:the|my) )?(?:flashlight|flash light|torch)$/.exec(words)
     ?? /^(?:turn|switch|put) (?:(?:the|my) )?(?:flashlight|flash light|torch) (on|off)$/.exec(words);
   if (torch) return { name: "flashlight", args: { on: torch[1] === "on" } };
+  if (musicPlayer) {
+    const generic = /^play (?:music|the music|my music|a music|some music|a song)(?: (?:in|on|from|using) (spotify|youtube(?: music)?))?$/.exec(words);
+    if (generic) return { name: "open_music", args: { play: true, ...(generic[1] ? { appName: generic[1] } : {}) } };
+  }
   if (/^(?:play (?:music|a music|some music|a song)|open (?:the |a |my )?music (?:app|player))$/.test(words)) {
     return { name: "open_music", args: {} };
   }
-  const musicApp = /^(?:play (?:music|a music|some music|a song) (?:in|on|using)|open) (spotify|youtube(?: music)?)$/.exec(words);
+  const musicApp = /^(?:play (?:music|a music|some music|a song) (?:in|on|from|using)|open) (spotify|youtube(?: music)?)$/.exec(words);
   if (musicApp) return { name: "open_app", args: { name: musicApp[1] } };
   if (version >= 4) {
-    const named = /^play (?:the song )?(.+?) (?:on|in|using) (spotify|you ?tube(?: music)?)$/i.exec(command);
-    if (named) {
-      const query = named[1]!.trim();
-      if (query.length <= 160 && !/[.!?;,&]|\b(?:and|or|then|but|if|unless|before|after|also|instead|plus|not|except|without|never)\b/i.test(query)) {
-        const appName = /^spotify$/i.test(named[2]!) ? "Spotify"
-          : /music$/i.test(named[2]!) ? "YouTube Music" : "YouTube";
-        return { name: "play_media", args: { query, appName } };
+    const simpleTitle = (query: string) => query.length <= 160 &&
+      !/[.!?;,&]|\b(?:and|or|then|but|if|unless|before|after|also|instead|plus|not|except|without|never|dont|cannot|cant|wont)\b/i.test(query.replace(/[’']/g, ""));
+    const player = / (?:on|in|from|using) (spotify|you ?tube(?: music)?)$/i.exec(command);
+    const request = player ? command.slice(0, player.index) : command;
+    const appName = !player ? undefined : /^spotify$/i.test(player[1]!) ? "Spotify"
+      : /music$/i.test(player[1]!) ? "YouTube Music" : "YouTube";
+    if (musicPlayer) {
+      const qualified = /^(?:play|open|show) (?:(?:(?:a|the|some) )?(?:songs?|music) by |(?:the )?artist profile (?:for |of )?|(?:the )?(artist|song|track|album) )(.+)$/i.exec(request);
+      if (qualified && simpleTitle(qualified[2]!) && (appName || !/\s(?:on|in|from|using)\s/i.test(qualified[2]!))) {
+        const kind = qualified[1]?.toLowerCase();
+        return { name: "play_media", args: { query: qualified[2]!, ...(appName ? { appName } : {}),
+          mediaType: kind === "album" ? "album" : kind === "song" || kind === "track" ? "track" : "artist" } };
       }
     }
+    const query = /^play (?:the song )?(.+)$/i.exec(request)?.[1];
+    if (appName && query && simpleTitle(query)) return { name: "play_media", args: { query, appName } };
   }
   return null;
 }

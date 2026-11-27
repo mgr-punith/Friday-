@@ -188,8 +188,10 @@ async function handleCommand(
 
   try {
     const actionVersion = actionProtocolVersion(header(event, "x-friday-actions"), header(event, "x-friday-media-controls"));
+    const musicPlayer = actionVersion >= 4 && header(event, "x-friday-music-player") === "1";
     const result = await dependencies.assistant.select(
       { ...input, ...(actionVersion === 1 ? {} : { actionVersion }), ...(supportsAnswers ? { supportsAnswers: true } : {}),
+        ...(musicPlayer ? { musicPlayer: true } : {}),
         ...(answerSetup ? { answerSetup } : {}),
         ...(answerContext ? { answerContext } : {}) },
       now,
@@ -226,7 +228,7 @@ async function handleCommand(
       dependencies.logger.error("assistant_invalid_answer_reply", requestId(event));
       return commandError(503, "busy");
     }
-    const response = parseFunctionSelection(result.selection, actionVersion);
+    const response = parseFunctionSelection(result.selection, actionVersion, musicPlayer);
     const confirmationSpeech = dependencies.speech?.provider.clientVersion === "elevenlabs-v1" &&
       header(event, "x-friday-speech") === "elevenlabs-v1" && header(event, "x-friday-confirmations") === "1"
       ? signConfirmation(response, installId, secrets.jwtSigningKey, dependencies.clock.now()) : null;

@@ -30,6 +30,7 @@ test("explicit named-player requests preserve the song or artist when the select
     ["Play Believer using You Tube", "Believer", "YouTube"],
     ["Play Believer on YouTube Music", "Believer", "YouTube Music"],
     ["Play Believer on Spotify", "Believer", "Spotify"],
+    ["Play Starboy from Spotify", "Starboy", "Spotify"],
     ["Play the song Believer on YouTube", "Believer", "YouTube"],
     ["Play Summer of '69 on YouTube", "Summer of '69", "YouTube"],
     [`Play ${"x".repeat(160)} on YouTube`, "x".repeat(160), "YouTube"]
@@ -49,6 +50,70 @@ test("explicit named-player requests preserve the song or artist when the select
       }, `${version}: ${kind}: ${text}`);
       assert.equal(calls, kind === "audio" ? 1 : 0);
     }
+  }
+});
+
+test("a capable phone receives a playback request for generic music and a browse request for an app", async () => {
+  const provider = new GroqProvider(CONFIG, async () => { throw new Error("unexpected_classification"); });
+  const input = { kind: "text" as const, actionVersion: 5 as const, musicPlayer: true };
+  for (const [text, action, args] of [
+    ["Play the music", "open_music", { play: true }],
+    ["Play some music on Spotify", "open_music", { play: true, appName: "spotify" }],
+    ["Play music from Spotify", "open_music", { play: true, appName: "spotify" }],
+    ["Open my music player", "open_music", {}],
+    ["Open Spotify", "open_app", { name: "spotify" }],
+    ["Resume music", "control_media", { operation: "resume" }]
+  ] as const) {
+    const result = await provider.select({ ...input, text }, NOW);
+    assert.deepEqual(parseFunctionSelection(result.selection, 5, true), { type: "action", action, args }, text);
+  }
+  const selection = { name: "open_music", args: { play: true, appName: "Spotify" } };
+  assert.equal(parseFunctionSelection(selection, 5).type, "error");
+  for (const args of [null, [], { play: "true" }, { play: false }, { appName: "Spotify" },
+    { play: true, appName: ["Spotify"] }, { play: true, appName: "Spot\nify" }, { play: true, query: "Starboy" }]) {
+    assert.equal(parseFunctionSelection({ name: "open_music", args }, 5, true).type, "error");
+  }
+});
+
+test("explicit artist profiles, music by an artist, and song titles retain their requested kind", async () => {
+  const provider = new GroqProvider(CONFIG, async () => { throw new Error("unexpected_classification"); });
+  for (const [text, query, mediaType, player] of [
+    ["Open the artist profile for The Weeknd on Spotify", "The Weeknd", "artist", "Spotify"],
+    ["Show the artist profile of The Weeknd", "The Weeknd", "artist", undefined],
+    ["Play music by The Weeknd", "The Weeknd", "artist", undefined],
+    ["Play a song by The Weeknd on Spotify", "The Weeknd", "artist", "Spotify"],
+    ["Play the artist The Weeknd in YouTube Music", "The Weeknd", "artist", "YouTube Music"],
+    ["Play the song Starboy by The Weeknd on Spotify", "Starboy by The Weeknd", "track", "Spotify"],
+    ["Play the song In Your Eyes on Spotify", "In Your Eyes", "track", "Spotify"],
+    ["Play the album Starboy", "Starboy", "album", undefined]
+  ] as const) {
+    const result = await provider.select({ kind: "text", text, actionVersion: 5, musicPlayer: true }, NOW);
+    assert.deepEqual(result.selection, { name: "play_media", args: { query, mediaType, ...(player ? { appName: player } : {}) } }, text);
+  }
+});
+
+test("a bare media request preserves the spoken title and player when classifying its type", async () => {
+  for (const [query, hint, kind] of [
+    ["Starboy", { query: "Starboy", mediaType: "track" }, "track"],
+    ["The Weeknd", { query: "the weeknd", mediaType: "artist", appName: "YouTube" }, "artist"],
+    ["Starboy", { query: "Changed by model", mediaType: "artist" }, undefined],
+    ["Starboy", { query: "Starboy", mediaType: "playlist" }, undefined]
+  ] as const) {
+    const provider = new GroqProvider(CONFIG, async () => Response.json({ choices: [{ message: { tool_calls: [
+      { type: "function", function: { name: "play_media", arguments: JSON.stringify(hint) } }
+    ] } }] }));
+    const result = await provider.select({ kind: "text", text: `Play ${query} on Spotify`, actionVersion: 5, musicPlayer: true }, NOW);
+    assert.deepEqual(result.selection, { name: "play_media", args: { query, appName: "Spotify", ...(kind ? { mediaType: kind } : {}) } });
+  }
+  const provider = new GroqProvider(CONFIG, async () => unsupported());
+  const ambiguous = await provider.select({ kind: "text", text: "Play Starboy from Spotify", actionVersion: 5, musicPlayer: true }, NOW);
+  assert.deepEqual(ambiguous.selection, { name: "play_media", args: { query: "Starboy", appName: "Spotify" } });
+  for (const text of ["Open the artist profile for The Weeknd and call Mom on Spotify",
+    "Do not show the artist The Weeknd on Spotify", "Play the song Starboy if I am home on Spotify",
+    "Play Starboy from Spotify and call Mom", "Don't play Starboy from Spotify",
+    "Play the song Starboy don't use YouTube on Spotify"]) {
+    const result = await provider.select({ kind: "text", text, actionVersion: 5, musicPlayer: true }, NOW);
+    assert.equal(result.selection.name, "unsupported", text);
   }
 });
 

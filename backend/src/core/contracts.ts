@@ -7,7 +7,7 @@ export type AudioMimeType = "audio/wav" | "audio/mp4";
 export type CommandInput = (
   | { readonly kind: "audio"; readonly bytes: Uint8Array; readonly mimeType: AudioMimeType }
   | { readonly kind: "text"; readonly text: string }
-) & { readonly actionVersion?: ActionProtocolVersion; readonly supportsAnswers?: boolean; readonly answerContext?: AnswerContext;
+) & { readonly actionVersion?: ActionProtocolVersion; readonly musicPlayer?: boolean; readonly supportsAnswers?: boolean; readonly answerContext?: AnswerContext;
   readonly answerSetup?: "answers_disabled" | "answers_unavailable" };
 
 export interface FunctionSelection {
