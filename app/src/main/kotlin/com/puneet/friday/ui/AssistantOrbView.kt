@@ -14,7 +14,7 @@ import com.puneet.friday.BuildConfig
 import com.puneet.friday.R
 import kotlin.math.min
 
-/** Shared voice/lifecycle host for the Home sphere and the compact ribbon waveform. */
+/** Shared voice and lifecycle host for the Home and compact orbs. */
 class AssistantOrbView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
@@ -22,7 +22,7 @@ class AssistantOrbView @JvmOverloads constructor(
 ) : FrameLayout(context, attrs) {
     enum class State { IDLE, PREVIEW, LISTENING, PROCESSING, SPEAKING, SUCCESS, ERROR }
 
-    private val waveform = if (ribbon) VoiceWaveformView(context) else null
+    private val wakeOrb = if (ribbon) WakeOrbView(context) else null
     private val renderer = if (ribbon) null else ProceduralOrbRenderer(resources.displayMetrics.density) { message ->
         post {
             renderUnavailable = true
@@ -48,9 +48,11 @@ class AssistantOrbView @JvmOverloads constructor(
         isSoundEffectsEnabled = false
         clipChildren = true
         clipToPadding = true
-        minimumWidth = dp(96f).toInt()
-        minimumHeight = dp(96f).toInt()
-        val visual = waveform ?: requireNotNull(glView)
+        if (!ribbon) {
+            minimumWidth = dp(96f).toInt()
+            minimumHeight = dp(96f).toInt()
+        }
+        val visual = wakeOrb ?: requireNotNull(glView)
         visual.isClickable = false
         visual.isFocusable = false
         addView(visual, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
@@ -59,7 +61,20 @@ class AssistantOrbView @JvmOverloads constructor(
         setWillNotDraw(false)
     }
 
-    override fun getAccessibilityClassName(): CharSequence = android.widget.Button::class.java.name
+    internal fun setWakeShape(shape: WakeOrbView.Shape) {
+        wakeOrb?.setShape(shape)
+    }
+
+    internal fun setWakeLabelHeight(height: Int) {
+        wakeOrb?.setLabelHeight(height)
+    }
+
+    internal fun onWakePillReveal(update: (Float) -> Unit) {
+        wakeOrb?.onPillReveal = update
+    }
+
+    override fun getAccessibilityClassName(): CharSequence =
+        if (wakeOrb == null) android.widget.Button::class.java.name else super.getAccessibilityClassName()
 
     override fun drawableStateChanged() {
         super.drawableStateChanged()
@@ -76,7 +91,7 @@ class AssistantOrbView @JvmOverloads constructor(
         staleSignal = null
         settlingUntilMs = 0L
         renderer?.clearAudioSignal()
-        waveform?.setAudioSignal(0f, 0f, 0f, 0f)
+        wakeOrb?.setAudioSignal(0f, 0f, 0f, 0f)
         updateMotionPolicy()
         if (nextState == State.LISTENING || nextState == State.SPEAKING) {
             visualNoiseFloor = OrbMotionMath.DEFAULT_NOISE_FLOOR
@@ -90,11 +105,13 @@ class AssistantOrbView @JvmOverloads constructor(
     fun setAudioSignal(rms: Float, low: Float, mid: Float, high: Float) {
         if (!acceptsAudio()) return
         if (!ValueAnimator.areAnimatorsEnabled()) {
+            val hadSignal = targetVoiceEnergy > MOTION_EPSILON || settlingUntilMs != 0L
             targetVoiceEnergy = 0f
-            renderer?.clearAudioSignal()
-            waveform?.setAudioSignal(0f, 0f, 0f, 0f)
+            if (hadSignal) {
+                renderer?.clearAudioSignal()
+                wakeOrb?.setAudioSignal(0f, 0f, 0f, 0f)
+            }
             updateMotionPolicy()
-            requestFrame()
             return
         }
         val safeRms = normalized(rms)
@@ -132,12 +149,11 @@ class AssistantOrbView @JvmOverloads constructor(
             settleMotion()
         }
         updateMotionPolicy()
-        requestFrame()
     }
 
     private fun setVisualSignal(energy: Float, low: Float, mid: Float, high: Float) {
         renderer?.setAudioSignal(energy, low, mid, high)
-        waveform?.setAudioSignal(energy, low, mid, high)
+        wakeOrb?.setAudioSignal(energy, low, mid, high)
     }
 
     private fun settleMotion() {
@@ -182,7 +198,6 @@ class AssistantOrbView @JvmOverloads constructor(
 
     override fun onVisibilityChanged(changedView: View, visibility: Int) {
         super.onVisibilityChanged(changedView, visibility)
-        if (changedView !== this) return
         if (visibility != VISIBLE) {
             setRenderMode(false)
             renderer?.setMotionEnabled(false)
@@ -239,28 +254,29 @@ class AssistantOrbView @JvmOverloads constructor(
         renderer?.setRadiusRatio(if (compactBounds) COMPACT_RADIUS_RATIO else HOME_RADIUS_RATIO)
     }
 
-    private fun setRenderMode(continuous: Boolean) {
+    private fun setRenderMode(continuous: Boolean, responding: Boolean = false) {
         val active = continuous && hostResumed && isAttachedToWindow && isShown && windowVisibility == VISIBLE
-        glView?.setContinuous(active)
-        waveform?.setAnimating(active)
-        requestFrame()
+        glView?.setFrameRate(if (!active) 0 else if (responding) 60 else 30)
+        wakeOrb?.setAnimating(active)
     }
 
     private fun requestFrame() {
         glView?.requestFrame()
-        waveform?.invalidate()
+        wakeOrb?.invalidate()
     }
 
     private fun updateMotionPolicy() {
+        val settling = SystemClock.elapsedRealtime() < settlingUntilMs
         val continuous = OrbMotionPolicy.shouldRenderContinuously(
             state = state,
             gatedEnergy = targetVoiceEnergy,
             animatorsEnabled = ValueAnimator.areAnimatorsEnabled(),
             visible = !renderUnavailable && isAttachedToWindow && isShown && windowVisibility == VISIBLE,
-            settling = SystemClock.elapsedRealtime() < settlingUntilMs,
+            settling = settling,
+            ambientMotion = renderer != null,
         )
         renderer?.setMotionEnabled(continuous && hostResumed)
-        setRenderMode(continuous)
+        setRenderMode(continuous, settling || targetVoiceEnergy > MOTION_EPSILON)
     }
 
     private fun acceptsAudio(): Boolean = state == State.LISTENING || state == State.SPEAKING
@@ -289,14 +305,16 @@ object OrbMotionPolicy {
         animatorsEnabled: Boolean,
         visible: Boolean,
         settling: Boolean = false,
+        ambientMotion: Boolean = true,
     ): Boolean {
         if (!animatorsEnabled || !visible) return false
+        if (ambientMotion) return true
         return when (state) {
             AssistantOrbView.State.PREVIEW -> true
             AssistantOrbView.State.LISTENING, AssistantOrbView.State.SPEAKING ->
                 settling || gatedEnergy.isFinite() && gatedEnergy > 0.006f
-            AssistantOrbView.State.IDLE,
             AssistantOrbView.State.PROCESSING,
+            AssistantOrbView.State.IDLE,
             AssistantOrbView.State.SUCCESS,
             AssistantOrbView.State.ERROR -> false
         }

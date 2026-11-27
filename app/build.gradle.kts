@@ -1,6 +1,12 @@
+import com.android.build.api.artifact.SingleArtifact
+import java.util.zip.ZipFile
+
 plugins {
   alias(libs.plugins.android.application)
 }
+
+val wakeModelOverride = providers.gradleProperty("fridayWakeModelDir")
+val debugWakeAssets = rootProject.file(wakeModelOverride.orElse(".local/wake/active").get())
 
 android {
   namespace = "com.puneet.friday"
@@ -22,9 +28,7 @@ android {
     }
   }
   // The owner's local wake model enters only the debug APK.
-  providers.gradleProperty("fridayWakeModelDir").orNull?.let { modelDir ->
-    sourceSets.getByName("debug").assets.srcDir(rootProject.file(modelDir))
-  }
+  sourceSets.getByName("debug").assets.srcDir(debugWakeAssets)
   // Legacy native trial artifacts for comparison builds.
   providers.gradleProperty("wakeTrialNativeDir").orNull?.let { nativeDir ->
     sourceSets.getByName("debug").jniLibs.srcDir(file(nativeDir))
@@ -46,6 +50,32 @@ android {
   lint {
     fatal += "CredentialManagerMisuse"
   }
+}
+
+androidComponents.onVariants(androidComponents.selector().withBuildType("debug")) { variant ->
+  val apkDirectory = variant.artifacts.get(SingleArtifact.APK)
+  val selectedModel = debugWakeAssets.resolve("friday-keyword.bin")
+  val explicitSelection = wakeModelOverride.isPresent
+  val checkModel = tasks.register("checkDebugWakeModel") {
+    group = "verification"
+    description = "Checks that the debug APK contains the selected local wake model."
+    inputs.dir(apkDirectory)
+    doLast {
+      check(!explicitSelection || selectedModel.isFile) { "Missing selected wake model: $selectedModel" }
+      val apk = apkDirectory.get().asFile.listFiles().orEmpty().single { it.extension == "apk" }
+      ZipFile(apk).use { archive ->
+        val entry = archive.getEntry("assets/friday-keyword.bin")
+        if (selectedModel.isFile) {
+          check(entry != null && archive.getInputStream(entry).use { it.readBytes() }.contentEquals(selectedModel.readBytes())) {
+            "Debug APK does not contain the selected wake model: $selectedModel"
+          }
+        } else {
+          check(entry == null) { "Debug APK contains a wake model with no local selection" }
+        }
+      }
+    }
+  }
+  tasks.matching { it.name == "assembleDebug" || it.name == "installDebug" }.configureEach { dependsOn(checkModel) }
 }
 
 dependencies {

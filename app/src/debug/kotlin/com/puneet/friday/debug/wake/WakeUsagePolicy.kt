@@ -10,6 +10,27 @@ internal object WakeUsagePolicy {
         }
     }
 
+    enum class AssistantSetup { SELECT, WAIT, RECONNECT, READY }
+
+    /** Android can deliver a permission or sign-in result before or after the Activity resumes. */
+    class Continuation(var pending: Boolean = false) {
+        fun takeIfResumed(resumed: Boolean): Boolean {
+            if (!pending || !resumed) return false
+            pending = false
+            return true
+        }
+    }
+
+    fun assistantSetup(selected: Boolean, connected: Boolean, waitExpired: Boolean): AssistantSetup = when {
+        !selected -> AssistantSetup.SELECT
+        connected -> AssistantSetup.READY
+        waitExpired -> AssistantSetup.RECONNECT
+        else -> AssistantSetup.WAIT
+    }
+
+    fun showResumeAfterUpdate(mode: Mode, consented: Boolean, modelAvailable: Boolean, listening: Boolean): Boolean =
+        mode == Mode.HEY_FRIDAY && consented && modelAvailable && !listening
+
     fun accepts(mode: Mode, currentRevision: Long, requestedRevision: Long): Boolean =
         mode == Mode.HEY_FRIDAY && currentRevision > 0 && requestedRevision == currentRevision
 

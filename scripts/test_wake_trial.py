@@ -11,6 +11,19 @@ from wake_trial_checks import FRIDAY_WAKE_ASSET, JNI_SYMBOL_PREFIX, check_apk, c
 
 
 class WakeTrialTests(unittest.TestCase):
+    def test_only_private_settings_switch_can_apply_wake_mode_on_entry(self):
+        root = Path(__file__).resolve().parents[1] / "app/src"
+        android = "{http://schemas.android.com/apk/res/android}"
+        debug = ElementTree.parse(root / "debug/AndroidManifest.xml")
+        switch = next(item for item in debug.iter("activity")
+                      if item.get(android + "name", "").endswith(".WakeSwitchActivity"))
+        self.assertEqual(switch.get(android + "exported"), "false")
+        self.assertIsNone(switch.find("intent-filter"))
+        setup = (root / "debug/kotlin/com/puneet/friday/debug/wake/WakeUsageActivity.kt").read_text()
+        self.assertIn("protected open val fromModeSwitch = false", setup)
+        self.assertIn("fromModeSwitch && savedInstanceState == null", setup)
+        self.assertRegex(setup, r"class WakeSwitchActivity : WakeUsageActivity\(\) \{\s*override val fromModeSwitch = true")
+
     def test_signing_check_accepts_current_and_older_android_tool_output(self):
         digest = "a1" * 20
         expected = ":".join(["A1"] * 20)
@@ -93,6 +106,21 @@ class WakeTrialTests(unittest.TestCase):
         foreground = re.search(r"const val NOTIFICATION_ID = (\d+)", service).group(1)
         paused = re.search(r"const val PAUSED_NOTIFICATION_ID = (\d+)", notification).group(1)
         self.assertNotEqual(foreground, paused)
+
+    def test_app_update_restores_the_resume_control_without_starting_the_microphone(self):
+        root = Path(__file__).resolve().parents[1]
+        android = "{http://schemas.android.com/apk/res/android}"
+        debug = ElementTree.parse(root / "app/src/debug/AndroidManifest.xml").getroot()
+        receiver = next(row for row in debug.iter("receiver")
+                        if row.get(android + "name", "").endswith(".WakeUpdateReceiver"))
+        self.assertEqual(receiver.get(android + "exported"), "false")
+        self.assertEqual([row.get(android + "name") for row in receiver.iter("action")],
+                         ["android.intent.action.MY_PACKAGE_REPLACED"])
+        main = ElementTree.parse(root / "app/src/main/AndroidManifest.xml").getroot()
+        self.assertFalse(any("WakeUpdateReceiver" in row.get(android + "name", "") for row in main.iter("receiver")))
+        source = (root / "app/src/debug/kotlin/com/puneet/friday/debug/wake/WakeUpdateReceiver.kt").read_text()
+        self.assertIn("WakeUsageNotification.showPaused(context, openSetup = true)", source)
+        self.assertNotRegex(source, r"\bstart(?:Foreground)?Service\s*\(")
 
 
     def test_debug_microphone_service_declares_all_prerequisites(self):

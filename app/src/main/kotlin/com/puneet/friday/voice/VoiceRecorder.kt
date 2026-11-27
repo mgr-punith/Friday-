@@ -7,25 +7,19 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Process
+import android.os.SystemClock
 import com.puneet.friday.DebugTools
 import kotlin.math.max
 
 class VoiceRecorder(
     private val context: Context,
-    private val afterWake: Boolean = false,
     private val answerReply: Boolean = false,
     private val handsFree: Boolean = false,
 ) {
     @Volatile private var stopRequested = false
-    @Volatile private var activeRecorder: AudioRecord? = null
 
     fun stop() {
         stopRequested = true
-        try {
-            activeRecorder?.stop()
-        } catch (_: IllegalStateException) {
-            Unit
-        }
     }
 
     @Throws(SecurityException::class, IllegalStateException::class)
@@ -72,37 +66,33 @@ class VoiceRecorder(
         }
         val processor = PcmProcessor()
         val samples = ShortArray(WavEncoder.SAMPLE_RATE * MAX_SECONDS)
-        val frame = ShortArray(FRAME_SAMPLES)
-        val stopDetector = AudioCapturePolicy.commandDetector(afterWake)
+        val stopDetector = CommandSpeechDetector()
         var readySent = false
         var count = 0
         try {
-            activeRecorder = recorder
-            recorder.startRecording()
             if (stopRequested) return CaptureResult.NoClearCommand
-            while (!stopRequested && count < samples.size) {
-                val read = try {
-                    recorder.read(frame, 0, frame.size, AudioRecord.READ_BLOCKING)
-                } catch (_: IllegalStateException) {
-                    break
-                }
-                if (read <= 0) break
-                val level = processor.analyze(frame, read)
+            recorder.startRecording()
+            if (recorder.recordingState != AudioRecord.RECORDSTATE_RECORDING) throw MicrophoneUnavailable()
+            PcmFrameReader.readFrames(
+                read = { buffer, offset, length -> recorder.read(buffer, offset, length, AudioRecord.READ_NON_BLOCKING) },
+                nowMs = SystemClock::uptimeMillis,
+                cancelled = { stopRequested },
+                waitForAudio = SystemClock::sleep,
+            ) { frame ->
+                val level = processor.analyze(frame)
                 onLevel(level)
-                frame.copyInto(samples, count, 0, read)
-                count += read
-                val shouldStop = stopDetector.add(level)
+                frame.copyInto(samples, count)
+                count += frame.size
+                stopDetector.add(level)
                 if (!readySent && stopDetector.isCalibrated) {
                     readySent = true
                     onReady()
                 }
-                if (AudioCapturePolicy.shouldStopWaitingForSpeech(
-                        handsFree || afterWake, stopDetector.hasSpeech, count, answerReply,
-                    )) break
-                if (shouldStop && AudioCapturePolicy.canStopAfterSilence(afterWake, count, answerReply)) break
+                val timedOut = AudioCapturePolicy.shouldStopWaitingForSpeech(handsFree, stopDetector.hasSpeech, count, answerReply)
+                val finished = stopDetector.command?.endedBySilence == true && AudioCapturePolicy.canStopAfterSilence(count, answerReply)
+                !timedOut && !finished && count < samples.size
             }
         } finally {
-            activeRecorder = null
             try {
                 if (recorder.recordingState == AudioRecord.RECORDSTATE_RECORDING) recorder.stop()
             } catch (_: IllegalStateException) {
@@ -110,30 +100,30 @@ class VoiceRecorder(
             }
             recorder.release()
         }
-        val manualStop = stopRequested && !stopDetector.endedBySilence
+        val manualStop = stopRequested && stopDetector.command?.endedBySilence != true
         if (manualStop && !AudioCapturePolicy.acceptsManualStop(count)) return CaptureResult.NoClearCommand
-        val reviewedCount = AudioCapturePolicy.reviewedSampleCount(count, manualStop, samples, processor, stopDetector.hasClearCommand)
+        val reviewedCount = AudioCapturePolicy.reviewedSampleCount(count, manualStop, samples, processor, stopDetector.command != null)
         val reviewedDetector = if (manualStop) {
             reviewCapture(samples, reviewedCount, processor)
         } else {
             stopDetector
         }
-        if (!reviewedDetector.hasClearCommand) return CaptureResult.NoClearCommand
-        if (count >= samples.size && !reviewedDetector.endedBySilence) return CaptureResult.NoClearCommand
+        val command = reviewedDetector.command ?: return CaptureResult.NoClearCommand
+        if (count >= samples.size && !command.endedBySilence) return CaptureResult.NoClearCommand
         val start = AudioCapturePolicy.reviewedStartSample(
-            samples, reviewedCount, reviewedDetector.firstSpeechFrame * FRAME_SAMPLES - PRE_ROLL_SAMPLES, processor,
+            samples, reviewedCount, command.firstSpeechFrame * FRAME_SAMPLES - PRE_ROLL_SAMPLES, processor,
         )
-        val end = (reviewedDetector.lastSpeechFrame + 1) * FRAME_SAMPLES + POST_ROLL_SAMPLES
+        val end = (command.lastSpeechFrame + 1) * FRAME_SAMPLES + POST_ROLL_SAMPLES
         val cropped = processor.crop(samples, reviewedCount, start, end)
-        if (!AudioCapturePolicy.hasCommandEnergy(processor, cropped, afterWake)) return CaptureResult.NoClearCommand
+        if (!reviewedDetector.hasCommandEnergy(processor, cropped)) return CaptureResult.NoClearCommand
         val normalized = processor.normalizeForRecognition(cropped)
         return CaptureResult.Command(
             RecordedCommand(WavEncoder.encode(normalized), normalized.size * 1_000L / WavEncoder.SAMPLE_RATE),
         )
     }
 
-    private fun reviewCapture(samples: ShortArray, count: Int, processor: PcmProcessor): SpeechEndDetector {
-        val detector = AudioCapturePolicy.commandDetector(afterWake)
+    private fun reviewCapture(samples: ShortArray, count: Int, processor: PcmProcessor): CommandSpeechDetector {
+        val detector = CommandSpeechDetector()
         val frame = ShortArray(FRAME_SAMPLES)
         var offset = 0
         while (offset < count) {
@@ -148,7 +138,7 @@ class VoiceRecorder(
 
     private companion object {
         const val MAX_SECONDS = 10
-        const val FRAME_SAMPLES = 320
+        const val FRAME_SAMPLES = PcmFrameReader.FRAME_SAMPLES
         const val PRE_ROLL_SAMPLES = WavEncoder.SAMPLE_RATE * 300 / 1_000
         const val POST_ROLL_SAMPLES = WavEncoder.SAMPLE_RATE * 320 / 1_000
     }
@@ -158,6 +148,34 @@ sealed interface CaptureResult {
     data class Command(val recording: RecordedCommand) : CaptureResult
     data object NoClearCommand : CaptureResult
     data object AudioInUse : CaptureResult
+}
+
+/** Prefer the in-app speech boundaries. Recover quieter voices only with stronger voicing evidence. */
+internal class CommandSpeechDetector {
+    private val normal = SpeechEndDetector()
+    private val quiet = SpeechEndDetector(inputGain = QUIET_SPEECH_GAIN, minimumVoicedPercent = 65)
+
+    val isCalibrated get() = normal.isCalibrated
+    val hasSpeech get() = normal.hasSpeech || quiet.hasSpeech
+    val command: SpeechEndDetector? get() = when {
+        normal.hasClearCommand -> normal
+        quiet.hasClearCommand -> quiet
+        else -> null
+    }
+
+    fun add(level: PcmProcessor.Level) {
+        normal.add(level)
+        quiet.add(level)
+    }
+
+    fun hasCommandEnergy(processor: PcmProcessor, samples: ShortArray): Boolean {
+        if (processor.hasSpeech(samples)) return normal.hasClearCommand
+        return quiet.hasClearCommand && processor.hasSpeech(samples, inputGain = QUIET_SPEECH_GAIN)
+    }
+
+    private companion object {
+        const val QUIET_SPEECH_GAIN = 1.6f
+    }
 }
 
 class SpeechEndDetector(
@@ -251,6 +269,11 @@ class SpeechEndDetector(
     }
 
     private fun detectFrame(level: Float, voiced: Boolean, currentFrame: Int): Boolean {
+        // A cue or tap can start a candidate. A later command gets its own boundaries and voice counts.
+        if (endedBySilence && !hasClearCommand) {
+            hasSpeech = false
+            candidateSpeechFrames = 0
+        }
         if (!hasSpeech) {
             val startThreshold = max(ABSOLUTE_START_RMS, noiseFloor * START_NOISE_MULTIPLIER + START_OFFSET_RMS)
             val strongThreshold = max(ABSOLUTE_STRONG_RMS, startThreshold)

@@ -1,5 +1,8 @@
 package com.puneet.friday.debug.wake
 
+import com.puneet.friday.voice.MicrophoneUnavailable
+import com.puneet.friday.voice.PcmFrameReader
+
 import java.util.concurrent.CountDownLatch
 
 /** Debug trial lifecycle checks, with no microphone, native library or test framework. */
@@ -73,6 +76,55 @@ object WakeTrialLogicTests {
         expect(wakeAudio.copy().contentEquals(shortArrayOf(3, 4, 5, 6, 7)), "Wake clips keep only the newest samples in order")
         wakeAudio.clear()
         expect(wakeAudio.copy().isEmpty(), "Stopping capture clears the rolling wake audio")
+        var now = 0L
+        var nextSample = 0
+        val captured = mutableListOf<Short>()
+        val chunks = listOf(0, 91, 100, 129, 320).iterator()
+        PcmFrameReader.readFrames(
+            read = { frame, offset, length ->
+                val count = chunks.next()
+                check(count <= length)
+                repeat(count) { frame[offset + it] = (nextSample++).toShort() }
+                count
+            },
+            nowMs = { now }, cancelled = { false }, waitForAudio = { now += it },
+        ) { frame ->
+            captured.addAll(frame.toList())
+            captured.size < 640
+        }
+        expect(captured == (0 until 640).map(Int::toShort),
+            "Partial reads preserve sample order across detector frames")
+        expect(now == 3 * PcmFrameReader.FRAME_MS, "An incomplete frame waits for audio without spinning")
+        val stalled = runCatching {
+            PcmFrameReader.readFrames({ _, _, _ -> 0 }, { now }, { false }, { now += it }) { error("No audio") }
+        }
+        expect(stalled.exceptionOrNull() is MicrophoneUnavailable && now < 2_500,
+            "A stalled microphone exits within a bounded interval")
+        expect(runCatching {
+            PcmFrameReader.readFrames({ _, _, _ -> -6 }, { now }, { false }, { error("Unexpected wait") }) { true }
+        }.exceptionOrNull() is MicrophoneUnavailable, "A dead Android recorder can be reopened")
+        var cancelled = false
+        PcmFrameReader.readFrames({ _, _, _ -> 0 }, { now }, { cancelled }, { cancelled = true }) { error("No audio") }
+        expect(cancelled, "Stop can interrupt an empty recorder before the stall timeout")
+        val micRetry = WakeMicrophoneRetry()
+        expect(micRetry.nextDelayMs(0) == 250L && micRetry.nextDelayMs(20) == 1_000L &&
+            micRetry.nextDelayMs(0) == null, "Repeated recorder failures exhaust the retry budget")
+        expect(micRetry.nextDelayMs(5_000) == 250L, "Sustained audio restores the next outage's retry budget")
+        val retrySession = WakeTrialSession()
+        val retryRun = checkNotNull(retrySession.begin(WakeTrialSession.DEFAULT_THRESHOLD, commandMode = true))
+        retrySession.listening(retryRun, 100)
+        expect(retrySession.startingMicrophone(retryRun, retry = true) &&
+            retrySession.snapshot().phase == WakeTrialSession.Phase.STARTING,
+            "An interrupted recorder leaves Listening before its replacement receives any samples")
+        retrySession.pause(retryRun)
+        expect(!retrySession.startingMicrophone(retryRun, retry = true), "A delayed retry yields to a command")
+        expect(retrySession.startingMicrophone(retryRun), "After the command, the regular rearm can open the mic")
+        retrySession.stopping(retryRun, "Microphone off")
+        expect(!retrySession.startingMicrophone(retryRun, retry = true), "Explicit Stop cancels microphone recovery")
+        retrySession.finish(retryRun, 500, "Microphone off")
+        val nextRun = checkNotNull(retrySession.begin(WakeTrialSession.DEFAULT_THRESHOLD))
+        expect(!retrySession.startingMicrophone(retryRun, retry = true) && nextRun != retryRun,
+            "Recovery from a previous wake run cannot take the microphone")
         expect(runCatching { WakeTrialHandoff.awaitStopped(null) }.isSuccess, "Capture starts when no trial owns the mic")
         expect(runCatching { WakeTrialHandoff.awaitStopped(CountDownLatch(0)) }.isSuccess, "Completed cleanup permits capture")
         expect(runCatching { WakeTrialHandoff.awaitStopped(CountDownLatch(1), 0) }.exceptionOrNull() is IllegalStateException,
@@ -253,6 +305,35 @@ object WakeTrialLogicTests {
             "Pause retains a separate normal notification after removing the foreground notification")
         expect(!WakeUsagePolicy.retainsNotification(true, WakeUsagePolicy.Mode.TAP),
             "Tap mode removes the wake notification after cleanup")
+        val heyFriday = WakeUsagePolicy.Mode.HEY_FRIDAY
+        val tapToSpeak = WakeUsagePolicy.Mode.TAP
+        expect(WakeUsagePolicy.assistantSetup(selected = true, connected = false, waitExpired = false) == WakeUsagePolicy.AssistantSetup.WAIT,
+            "A cold assistant binding gets time to connect after selecting Friday or restarting the app")
+        expect(WakeUsagePolicy.assistantSetup(selected = true, connected = false, waitExpired = true) == WakeUsagePolicy.AssistantSetup.RECONNECT,
+            "Offer reconnection if the selected assistant stays disconnected")
+        expect(WakeUsagePolicy.assistantSetup(selected = true, connected = true, waitExpired = true) == WakeUsagePolicy.AssistantSetup.READY,
+            "A late binding immediately restores the normal start action")
+        expect(WakeUsagePolicy.assistantSetup(selected = false, connected = true, waitExpired = true) == WakeUsagePolicy.AssistantSetup.SELECT,
+            "A callback from the old binding cannot substitute for current assistant selection")
+        val setupReturn = WakeUsagePolicy.Continuation()
+        expect(!setupReturn.takeIfResumed(true), "Opening settings never starts wake listening on its own")
+        setupReturn.pending = true
+        expect(!setupReturn.takeIfResumed(false) && setupReturn.pending,
+            "A permission or sign-in result stays pending while the screen is paused")
+        val restored = WakeUsagePolicy.Continuation(pending = setupReturn.pending)
+        expect(restored.takeIfResumed(true) && !restored.takeIfResumed(true),
+            "Restoring and resuming continues the requested setup once")
+        expect(setupReturn.takeIfResumed(true), "A result delivered after resume continues immediately")
+        expect(WakeUsagePolicy.showResumeAfterUpdate(heyFriday, consented = true, modelAvailable = true, listening = false),
+            "An update restores the resume control for an opted-in and paused listener")
+        expect(!WakeUsagePolicy.showResumeAfterUpdate(tapToSpeak, consented = true, modelAvailable = true, listening = false),
+            "An update respects Tap to speak even if Hey Friday was previously enabled")
+        expect(!WakeUsagePolicy.showResumeAfterUpdate(heyFriday, consented = false, modelAvailable = true, listening = false),
+            "An update does not offer background listening without consent")
+        expect(!WakeUsagePolicy.showResumeAfterUpdate(heyFriday, consented = true, modelAvailable = false, listening = false),
+            "An APK without a wake model does not offer the update resume control")
+        expect(!WakeUsagePolicy.showResumeAfterUpdate(heyFriday, consented = true, modelAvailable = true, listening = true),
+            "A late update broadcast cannot replace an active listener's notification")
         for (mode in WakeUsagePolicy.Mode.entries) {
             expect(!WakeUsagePolicy.retainsNotification(false, mode), "An advanced trial retains its original Stop behavior")
         }

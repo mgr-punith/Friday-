@@ -5,7 +5,6 @@ import android.content.Intent
 import android.os.Bundle
 import android.service.voice.VoiceInteractionService
 import com.puneet.friday.ui.SettingsGroup
-import com.puneet.friday.ui.SettingsRow
 
 /** Release has no wake trial, native runtime, microphone service or developer entry point. */
 internal object DebugTools {
@@ -14,8 +13,7 @@ internal object DebugTools {
     fun hideFromLockScreen(activity: Activity) = Unit
     fun recoverAfterResult(activity: Activity, delayMs: Long) = false
     fun onKeyguardLaunch(service: VoiceInteractionService) = Unit
-    fun addStartOptions(activity: Activity, content: SettingsGroup): SettingsRow? = null
-    fun startMode(activity: Activity) = "Tap to speak"
+    fun addStartOptions(activity: Activity, content: SettingsGroup): () -> Unit = {}
     fun licenseAssets(): List<Pair<String, String>> = emptyList()
     fun addSettings(activity: Activity, content: SettingsGroup) = Unit
     fun onAssistantVisible(activity: Activity) = Unit

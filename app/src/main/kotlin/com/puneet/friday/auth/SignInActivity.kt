@@ -101,7 +101,7 @@ class SignInActivity : Activity() {
         accountRow.addView(info, LinearLayout.LayoutParams(dp(48), dp(48)))
         card.addView(accountRow, AppUi.params(this, 8))
         button = AppUi.button(this, "Continue with Google", AppUi.ButtonTone.PRIMARY) { begin(false) }.apply {
-            typeface = Typeface.create(resources.getFont(R.font.friday_sans), Typeface.BOLD)
+            typeface = Typeface.create(resources.getFont(R.font.geist), Typeface.BOLD)
             textSize = 14f
             setTextColor(Color.rgb(31, 31, 31))
             background = RippleDrawable(ColorStateList.valueOf(getColor(R.color.control_pressed)),

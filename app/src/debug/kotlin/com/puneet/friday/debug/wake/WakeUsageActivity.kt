@@ -6,10 +6,13 @@ import android.app.NotificationManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.provider.Settings
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -19,8 +22,11 @@ import android.widget.LinearLayout
 import android.widget.RadioButton
 import android.widget.TextView
 import com.puneet.friday.R
+import com.puneet.friday.auth.AccountStore
+import com.puneet.friday.auth.SignInActivity
 import com.puneet.friday.entry.AssistantSettings
 import com.puneet.friday.entry.ReadyNotification
+import com.puneet.friday.debug.wake.WakeUsagePolicy.AssistantSetup
 import com.puneet.friday.ui.AppUi
 import com.puneet.friday.ui.FridayDialog
 import com.puneet.friday.ui.AnchoredPopup
@@ -28,7 +34,9 @@ import com.puneet.friday.ui.SettingsGroup
 import com.puneet.friday.ui.SettingsRow
 
 /** Entry choice for the existing opt-in trial; selecting a row never starts audio. */
-class WakeUsageActivity : Activity() {
+open class WakeUsageActivity : Activity() {
+    protected open val fromModeSwitch = false
+    private var applySwitchOnResume = false
     private var selected = WakeUsagePolicy.Mode.TAP
     private val options = mutableMapOf<WakeUsagePolicy.Mode, RadioButton>()
     private lateinit var apply: Button
@@ -38,27 +46,40 @@ class WakeUsageActivity : Activity() {
     private lateinit var sensitivity: SettingsRow
     private lateinit var audioTrace: SettingsRow
     private val help by lazy { AnchoredPopup(this) }
-    private var pendingPermission = false
-    private var pendingAssistantSettings = false
+    private val continuation = WakeUsagePolicy.Continuation()
+    private var postResumed = false
+    private var connectionDeadline = 0L
+    private var connectionTimedOut = false
     private var assistantSelected = false
     private var showAssistantFallback = false
     private var message: String? = null
     private data class RenderState(val mode: WakeUsagePolicy.Mode, val phase: WakeTrialSession.Phase,
         val message: String?,
-        val assistantSelected: Boolean, val assistantFallback: Boolean, val higherSensitivity: Boolean,
+        val assistantSetup: AssistantSetup, val waitingForAssistant: Boolean,
+        val assistantFallback: Boolean, val higherSensitivity: Boolean,
         val tracking: Boolean)
     private val modelAvailable by lazy { FridayKeywordModel.available(assets) }
     private var rendered: RenderState? = null
     private val main = Handler(Looper.getMainLooper())
     private val refresh = object : Runnable {
-        override fun run() { render(); main.postDelayed(this, 500) }
+        override fun run() {
+            if (!postResumed || isFinishing) return
+            if (connectionDeadline != 0L) checkConnection()
+            if (!isFinishing && postResumed) {
+                render()
+                main.postDelayed(this, 500)
+            }
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        selected = WakeUsagePolicy.Mode.from(savedInstanceState?.getString("selection") ?: WakeUsageStore.mode(this).value)
-        pendingPermission = savedInstanceState?.getBoolean("permission") ?: false
-        pendingAssistantSettings = savedInstanceState?.getBoolean("assistant_settings") ?: false
+        applySwitchOnResume = fromModeSwitch && savedInstanceState == null
+        selected = if (applySwitchOnResume) WakeUsagePolicy.Mode.HEY_FRIDAY else
+            WakeUsagePolicy.Mode.from(savedInstanceState?.getString("selection") ?: WakeUsageStore.mode(this).value)
+        continuation.pending = savedInstanceState?.getBoolean("resume_setup") ?: false
+        connectionDeadline = savedInstanceState?.getLong("connection_deadline") ?: 0L
+        connectionTimedOut = savedInstanceState?.getBoolean("connection_timeout") ?: false
         showAssistantFallback = savedInstanceState?.getBoolean("assistant_fallback") ?: false
         assistantSelected = AssistantSettings.isSelected(this)
         val (scroll, content) = AppUi.groupedContent(this, "Start Friday")
@@ -120,7 +141,14 @@ class WakeUsageActivity : Activity() {
             buttonTintList = ColorStateList.valueOf(getColor(R.color.accent))
             minHeight = AppUi.dp(context, 48)
             setPadding(AppUi.dp(context, 4), AppUi.dp(context, 8), AppUi.dp(context, 8), AppUi.dp(context, 8))
-            setOnClickListener { selected = mode; message = null; render() }
+            setOnClickListener {
+                selected = mode
+                connectionDeadline = 0L
+                connectionTimedOut = false
+                continuation.pending = false
+                message = null
+                render()
+            }
         }
         row.addView(radio, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
             marginEnd = AppUi.dp(this@WakeUsageActivity, 8)
@@ -135,9 +163,7 @@ class WakeUsageActivity : Activity() {
     private fun useSelection() {
         message = null
         if (selected == WakeUsagePolicy.Mode.TAP) {
-            if (!WakeUsageStore.select(this, selected)) { showError("Couldn't save your choice. Try again."); return }
-            WakeTrialService.stopForAssistant()
-            WakeUsageNotification.cancel(this)
+            if (!WakeUsageStore.useTapToSpeak(this)) { showError("Couldn't save your choice. Try again."); return }
             finish()
             return
         }
@@ -150,47 +176,84 @@ class WakeUsageActivity : Activity() {
         if (!WakeUsageStore.consented(this)) {
             FridayDialog.show(this, "Use Hey Friday?",
                 "Friday checks for “Hey Friday” on this phone. After a wake, it sends your command audio to its Vercel backend and NVIDIA or Groq for speech recognition. Groq chooses the phone action. Friday does not save command recordings or transcripts.",
-                positive = "Allow Hey Friday", negative = "Not now",
+                positive = "Agree and allow", negative = "Not now",
             ) { WakeUsageStore.consent(this); checkPermissions() }
         } else checkPermissions()
     }
 
-    private fun checkPermissions() {
-        val missing = mutableListOf<String>()
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) missing += Manifest.permission.RECORD_AUDIO
-        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) missing += Manifest.permission.POST_NOTIFICATIONS
-        if (missing.isNotEmpty()) requestPermissions(missing.toTypedArray(), PERMISSIONS)
-        else checkAssistant()
+    private fun missingPermissions() = buildList {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.RECORD_AUDIO)
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.POST_NOTIFICATIONS)
     }
 
-    private fun checkAssistant() {
-        val manager = getSystemService(NotificationManager::class.java)
-        if (manager?.areNotificationsEnabled() != true ||
-            manager.getNotificationChannel(WakeTrialService.CHANNEL_ID)?.importance == NotificationManager.IMPORTANCE_NONE) {
-            showError("Allow Friday notifications in Android Settings, then try again.")
+    private fun notificationsAllowed(): Boolean {
+        val manager = getSystemService(NotificationManager::class.java) ?: return false
+        return manager.areNotificationsEnabled() &&
+            manager.getNotificationChannel(WakeTrialService.CHANNEL_ID)?.importance != NotificationManager.IMPORTANCE_NONE
+    }
+
+    private fun checkPermissions() {
+        if (selected != WakeUsagePolicy.Mode.HEY_FRIDAY) return
+        val missing = missingPermissions()
+        if (missing.isNotEmpty()) {
+            requestPermissions(missing.toTypedArray(), PERMISSIONS)
+            return
+        }
+        if (!notificationsAllowed()) {
+            offerAccessSettings()
             return
         }
         assistantSelected = AssistantSettings.isSelected(this)
-        if (!assistantSelected) {
-            openAssistantSettings()
-            return
+        when (assistantSetup()) {
+            AssistantSetup.SELECT -> openAssistantSettings()
+            AssistantSetup.WAIT -> {
+                connectionDeadline = SystemClock.elapsedRealtime() + CONNECTION_TIMEOUT_MS
+                render()
+            }
+            AssistantSetup.RECONNECT -> FridayDialog.show(this, "Reconnect Friday",
+                "In Android’s Digital assistant settings, select None, then select Friday again.",
+                positive = "Open settings", negative = "Cancel") { openAssistantSettings() }
+            AssistantSetup.READY -> startHeyFriday()
         }
-        startHeyFriday()
     }
 
+    private fun assistantSetup() = WakeUsagePolicy.assistantSetup(assistantSelected, WakeAssistantBridge.isReady(this), connectionTimedOut)
+
     private fun openAssistantSettings(from: AssistantSettings.Destination = AssistantSettings.Destination.ASSISTANT) {
-        pendingAssistantSettings = true
-        if (AssistantSettings.open(this, from) == null) {
-            pendingAssistantSettings = false
+        connectionTimedOut = false
+        if (AssistantSettings.open(this, from, ASSISTANT_SETTINGS) == null) {
             showAssistantFallback = true
             showError("Open Android Settings → Default apps → Digital assistant and choose Friday.")
         }
     }
 
+    private fun offerAccessSettings() {
+        val needsMic = Manifest.permission.RECORD_AUDIO in missingPermissions()
+        val detail = if (needsMic) "Allow microphone access under Permissions to use Hey Friday."
+            else "Allow Hey Friday notifications so you can pause listening."
+        FridayDialog.show(this, if (needsMic) "Microphone access" else "Notification access", detail,
+            positive = "Open settings", negative = "Not now") {
+            val manager = getSystemService(NotificationManager::class.java)
+            val settings = when {
+                needsMic -> Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+                manager?.areNotificationsEnabled() == true &&
+                    manager.getNotificationChannel(WakeTrialService.CHANNEL_ID)?.importance == NotificationManager.IMPORTANCE_NONE ->
+                    Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                        .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                        .putExtra(Settings.EXTRA_CHANNEL_ID, WakeTrialService.CHANNEL_ID)
+                else -> Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+            }
+            try {
+                startActivityForResult(settings, ACCESS_SETTINGS)
+            } catch (_: RuntimeException) {
+                showError("Open Friday in Android’s app settings. $detail")
+            }
+        }
+    }
+
     private fun startHeyFriday() {
-        if (!com.puneet.friday.auth.AccountStore.isSignedIn(this)) {
-            startActivity(Intent(this, com.puneet.friday.auth.SignInActivity::class.java))
-            showError("Sign in before starting Hey Friday.")
+        if (!AccountStore.isSignedIn(this)) {
+            startActivityForResult(Intent(this, SignInActivity::class.java), SIGN_IN)
             return
         }
         if (!WakeUsageStore.select(this, WakeUsagePolicy.Mode.HEY_FRIDAY)) {
@@ -247,23 +310,43 @@ class WakeUsageActivity : Activity() {
         super.onResume()
         assistantSelected = AssistantSettings.isSelected(this)
         if (assistantSelected) showAssistantFallback = false
-        main.post(refresh)
     }
     override fun onPostResume() {
         super.onPostResume()
-        if (pendingPermission) { pendingPermission = false; checkAssistant() }
-        else if (pendingAssistantSettings) {
-            pendingAssistantSettings = false
-            if (selected != WakeUsagePolicy.Mode.HEY_FRIDAY) return
-            assistantSelected = AssistantSettings.isSelected(this)
-            if (assistantSelected) checkPermissions()
-            else {
-                showAssistantFallback = true
-                showError("Friday isn't selected. Choose Friday under Default assistant.")
-            }
+        postResumed = true
+        if (applySwitchOnResume) {
+            applySwitchOnResume = false
+            useSelection()
+        }
+        continueSetupIfResumed()
+        main.post(refresh)
+    }
+
+    private fun continueSetupIfResumed() {
+        if (continuation.takeIfResumed(postResumed && !isFinishing)) {
+            checkPermissions()
         }
     }
-    override fun onPause() { help.dismiss(); main.removeCallbacks(refresh); super.onPause() }
+
+    private fun checkConnection() {
+        assistantSelected = AssistantSettings.isSelected(this)
+        val ready = WakeAssistantBridge.isReady(this)
+        if (!ready && assistantSelected && SystemClock.elapsedRealtime() < connectionDeadline) return
+        connectionDeadline = 0L
+        connectionTimedOut = assistantSelected && !ready
+        if (ready) {
+            checkPermissions()
+        } else if (!assistantSelected) {
+            showError("Choose Friday under Default assistant to use Hey Friday.")
+        }
+    }
+
+    override fun onPause() {
+        postResumed = false
+        help.dismiss()
+        main.removeCallbacksAndMessages(null)
+        super.onPause()
+    }
     override fun onStop() { WakeTrialService.assistantHidden(this); super.onStop() }
     override fun onDestroy() {
         main.removeCallbacksAndMessages(null)
@@ -271,23 +354,54 @@ class WakeUsageActivity : Activity() {
     }
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString("selection", selected.value)
-        outState.putBoolean("permission", pendingPermission)
-        outState.putBoolean("assistant_settings", pendingAssistantSettings)
+        outState.putBoolean("resume_setup", continuation.pending)
+        outState.putLong("connection_deadline", connectionDeadline)
+        outState.putBoolean("connection_timeout", connectionTimedOut)
         outState.putBoolean("assistant_fallback", showAssistantFallback)
         super.onSaveInstanceState(outState)
     }
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, results: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, results)
         if (requestCode != PERMISSIONS) return
-        pendingPermission = results.isNotEmpty() && results.all { it == PackageManager.PERMISSION_GRANTED }
-        if (!pendingPermission) showError("Allow microphone and notifications in Android Settings, then try again.")
+        if (results.isEmpty()) return
+        if (missingPermissions().isNotEmpty()) {
+            offerAccessSettings()
+            return
+        }
+        continuation.pending = true
+        continueSetupIfResumed()
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        when (requestCode) {
+            ASSISTANT_SETTINGS -> if (!AssistantSettings.isSelected(this)) {
+                showAssistantFallback = true
+                showError("Choose Friday under Default assistant to use Hey Friday.")
+                return
+            }
+            SIGN_IN -> if (!AccountStore.isSignedIn(this)) {
+                showError("Sign in to use Hey Friday.")
+                return
+            }
+            ACCESS_SETTINGS -> if (missingPermissions().isNotEmpty() || !notificationsAllowed()) {
+                showError("Allow microphone and notification access to use Hey Friday.")
+                return
+            }
+            else -> return
+        }
+        continuation.pending = true
+        continueSetupIfResumed()
     }
 
     private fun render() {
         val state = WakeTrialService.session.snapshot()
         val higherSensitivity = WakeUsageStore.higherSensitivity(this)
         val tracking = WakeAudioTrace.isActive()
-        val key = RenderState(selected, state.phase, message, assistantSelected, showAssistantFallback, higherSensitivity, tracking)
+        val waitingForAssistant = connectionDeadline != 0L
+        val assistantSetup = assistantSetup()
+        val key = RenderState(selected, state.phase, message, assistantSetup, waitingForAssistant, showAssistantFallback,
+            higherSensitivity, tracking)
         if (key == rendered) return
         rendered = key
         for ((mode, radio) in options) radio.isChecked = selected == mode
@@ -295,6 +409,8 @@ class WakeUsageActivity : Activity() {
         val value = message ?: when {
             !hey -> ""
             !modelAvailable -> FridayKeywordModel.MISSING
+            waitingForAssistant -> "Waiting for Android to connect to Friday…"
+            assistantSetup == AssistantSetup.RECONNECT -> "Android hasn’t connected to Friday. Tap Reconnect Friday."
             WakeUsageStore.mode(this) == selected -> WakeUsagePolicy.status(state)
             else -> ""
         }
@@ -308,15 +424,28 @@ class WakeUsageActivity : Activity() {
         apply.text = when {
             selected == WakeUsagePolicy.Mode.TAP -> "Use Tap to speak"
             state.phase == WakeTrialSession.Phase.STOPPING -> "Stopping…"
-            modelAvailable && !assistantSelected -> "Set default assistant"
+            waitingForAssistant -> "Connecting…"
+            modelAvailable && assistantSetup == AssistantSetup.SELECT -> "Set default assistant"
+            modelAvailable && assistantSetup == AssistantSetup.RECONNECT -> "Reconnect Friday"
             WakeUsageStore.mode(this) == selected && WakeUsagePolicy.canAdopt(state, WakeUsageStore.threshold(this)) -> "Use Hey Friday"
             WakeUsageStore.mode(this) == selected -> "Resume Hey Friday"
             else -> "Use Hey Friday"
         }
         apply.isEnabled = state.phase != WakeTrialSession.Phase.STOPPING &&
-            (!hey || modelAvailable)
+            (!hey || modelAvailable && !waitingForAssistant)
         apply.alpha = if (apply.isEnabled) 1f else 0.5f
     }
 
-    private companion object { const val PERMISSIONS = 763 }
+    private companion object {
+        const val PERMISSIONS = 763
+        const val ACCESS_SETTINGS = 764
+        const val SIGN_IN = 765
+        const val ASSISTANT_SETTINGS = 766
+        const val CONNECTION_TIMEOUT_MS = 5_000L
+    }
+}
+
+/** Only the in-app switch may apply a choice as soon as this screen resumes. */
+class WakeSwitchActivity : WakeUsageActivity() {
+    override val fromModeSwitch = true
 }

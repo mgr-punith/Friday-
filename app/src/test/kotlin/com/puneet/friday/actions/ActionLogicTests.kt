@@ -194,16 +194,17 @@ object ActionLogicTests {
         expect(previousCommands == listOf("seek:0", "previous"),
             "Previous track resets the current position before skipping back")
         val song = PhoneAction.PlayMedia("Believer")
-        expect(PhoneCapabilityRegistry.requiresUnlock(song) && !PhoneCapabilityRegistry.canPrecedeAnother(song),
-            "Playback needs an unlocked phone and ends the sequence")
+        expect(!PhoneCapabilityRegistry.requiresUnlock(song) && !PhoneCapabilityRegistry.canPrecedeAnother(song),
+            "Named playback can use the chosen player session while locked and ends the sequence")
         val firstPlayer = LauncherApp("Spotify", "com.spotify.music")
         val secondPlayer = LauncherApp("YouTube", "com.google.android.youtube")
         val players = listOf(firstPlayer, secondPlayer)
-        expect(MusicApps.select(null, players, players, "removed").question != null, "Ask after a default disappears")
-        expect(MusicApps.select(null, players, players, firstPlayer.packageName).apps == listOf(firstPlayer), "Use the chosen player")
-        expect(MusicApps.select("YouTube", players, players, firstPlayer.packageName).apps == listOf(secondPlayer), "Honor the spoken player")
-        expect(MusicApps.select("Spotify", listOf(secondPlayer), listOf(secondPlayer), null).question != null, "Ask before substituting another player")
-        expect(MusicApps.select(null, emptyList(), emptyList(), null).apps.isEmpty(), "Handle a phone without music players")
+        expect(MusicApps.select(null, listOf(firstPlayer), null).question != null, "Ask before saving even the only installed player")
+        expect(MusicApps.select(null, players, "removed").question != null, "Ask after a default disappears")
+        expect(MusicApps.select(null, players, firstPlayer.packageName).apps == listOf(firstPlayer), "Use the chosen player")
+        expect(MusicApps.select("YouTube", players, firstPlayer.packageName).apps == listOf(secondPlayer), "Honor the spoken player")
+        expect(MusicApps.select("Spotify", listOf(secondPlayer), null).question != null, "Ask before substituting another player")
+        expect(MusicApps.select(null, emptyList(), null).apps.isEmpty(), "Handle a phone without music players")
         expect(MusicApps.namedRequestRoute(secondPlayer.packageName) == MusicApps.NamedRequestRoute.SEARCH_RESULTS,
             "YouTube uses a search-results route that preserves the requested title while warm")
         expect(MusicApps.namedRequestRoute(firstPlayer.packageName) == MusicApps.NamedRequestRoute.PLAY_FROM_SEARCH,
@@ -272,12 +273,15 @@ object ActionLogicTests {
         val lockPolicyCases = listOf(
             PhoneAction.CallContact("Test contact") to false,
             PhoneAction.CallNumber("5550100") to false,
-            PhoneAction.SetAlarm(6, 30) to true,
+            PhoneAction.SetAlarm(6, 30) to false,
             PhoneAction.SetTimer(60) to false,
             PhoneAction.OpenApp("Clock") to true,
-            PhoneAction.OpenMusic to true,
-            song to true,
-            PhoneAction.PlayMedia("Believer", "Spotify") to true,
+            PhoneAction.OpenMusic() to true,
+            song to false,
+            PhoneAction.OpenMusic(play = true) to false,
+            PhoneAction.PlayMedia("The Weeknd", "Spotify", MusicItemType.ARTIST) to true,
+            PhoneAction.PlayMedia("Starboy", "Spotify", MusicItemType.ALBUM) to true,
+            PhoneAction.PlayMedia("Believer", "Spotify", MusicItemType.TRACK) to false,
             PhoneAction.CloseApp() to true,
             PhoneAction.SetRingerMode(RingerMode.SILENT) to false,
             PhoneAction.SetRingerMode(RingerMode.VIBRATE) to false,
@@ -293,7 +297,7 @@ object ActionLogicTests {
             )) to true,
             PhoneAction.Sequence(listOf(
                 PhoneAction.SetRingerMode(RingerMode.NORMAL),
-                PhoneAction.OpenMusic,
+                PhoneAction.OpenMusic(),
             )) to true,
         ) + MediaOperation.entries.map { PhoneAction.ControlMedia(it) to false }
         lockPolicyCases.forEach { (action, requiresUnlock) ->

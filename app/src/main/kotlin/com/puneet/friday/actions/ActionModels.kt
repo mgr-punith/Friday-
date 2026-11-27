@@ -6,8 +6,9 @@ sealed interface PhoneAction {
     data class SetAlarm(val hour: Int, val minute: Int, val label: String? = null) : PhoneAction
     data class SetTimer(val seconds: Int) : PhoneAction
     data class OpenApp(val name: String) : PhoneAction
-    data object OpenMusic : PhoneAction
-    data class PlayMedia(val query: String, val appName: String? = null) : PhoneAction
+    data class OpenMusic(val play: Boolean = false, val appName: String? = null) : PhoneAction
+    data class PlayMedia(val query: String, val appName: String? = null,
+        val mediaType: MusicItemType? = null) : PhoneAction
     data class ControlMedia(val operation: MediaOperation) : PhoneAction
     data class CloseApp(val name: String? = null) : PhoneAction
     data class SetRingerMode(val mode: RingerMode) : PhoneAction
@@ -23,6 +24,8 @@ enum class MediaOperation(val wireName: String, val label: String, val requested
     NEXT("next", "Next track", "Next track requested"),
     PREVIOUS("previous", "Previous track", "Previous track requested"),
 }
+
+enum class MusicItemType(val wireName: String) { TRACK("track"), ARTIST("artist"), ALBUM("album") }
 
 enum class SettingsTarget {
     AIRPLANE_MODE,
@@ -60,7 +63,7 @@ object RingerModePolicy {
 }
 
 sealed interface ActionResult {
-    data class Success(val confirmation: String) : ActionResult
+    data class Success(val confirmation: String, val openedActivity: Boolean = false) : ActionResult
     data class MediaRequest(val confirmation: String) : ActionResult
     data class Handoff(val instruction: String, val music: Boolean = false) : ActionResult
     data class NeedsPermission(val which: RequiredAccess) : ActionResult
@@ -92,7 +95,8 @@ fun PhoneAction.validationError(): String? = when (this) {
         else -> steps.firstNotNullOfOrNull { it.validationError() }
     }
     is PhoneAction.CloseApp, is PhoneAction.SetRingerMode, is PhoneAction.Flashlight,
-    is PhoneAction.OpenSettings, is PhoneAction.ControlMedia, PhoneAction.OpenMusic -> null
+    is PhoneAction.OpenSettings, is PhoneAction.ControlMedia -> null
+    is PhoneAction.OpenMusic -> if (appName == null || play && validName(appName)) null else "Invalid music app"
 }
 
 /** Allows formatted phone numbers, while rejecting USSD and post-dial instructions. */

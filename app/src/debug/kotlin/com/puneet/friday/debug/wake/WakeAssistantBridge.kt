@@ -11,6 +11,7 @@ import android.service.voice.VoiceInteractionService
 import android.util.Log
 import com.puneet.friday.AssistantActivity
 import com.puneet.friday.actions.DeviceLock
+import com.puneet.friday.entry.AssistantSettings
 import java.lang.ref.WeakReference
 import java.util.WeakHashMap
 
@@ -36,6 +37,8 @@ internal object WakeAssistantBridge {
         if (assistant === service) assistant = null
         Log.i(TAG, "event=voice_service_stopped")
     }
+
+    fun isReady(context: Context): Boolean = assistant != null && AssistantSettings.isSelected(context)
 
     fun request(context: Context, token: String, testOutcome: String? = null): Boolean {
         val service = assistant

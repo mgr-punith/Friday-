@@ -3,7 +3,7 @@
     <style name="Theme.HeyFriday" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/screen_background</item>
         <item name="android:colorAccent">@color/accent</item>
-        <item name="android:fontFamily">@font/friday_sans</item>
+        <item name="android:fontFamily">@font/geist</item>
         <item name="android:navigationBarColor">@color/screen_background</item>
         <item name="android:statusBarColor">@color/screen_background_top</item>
         <item name="android:windowLightStatusBar">false</item>
@@ -14,11 +14,17 @@
         <item name="android:windowIsTranslucent">true</item>
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:windowCloseOnTouchOutside">true</item>
-        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
         <item name="android:windowAnimationStyle">@style/Animation.Friday.Assistant</item>
     </style>
     <style name="Animation.Friday.Assistant" parent="android:style/Animation.Dialog">
         <item name="android:windowEnterAnimation">@anim/friday_assistant_enter</item>
         <item name="android:windowExitAnimation">@anim/friday_assistant_exit</item>
+    </style>
+    <style name="Theme.Friday.GlassDialog" parent="android:style/Theme.Material.Dialog.NoActionBar">
+        <item name="android:fontFamily">@font/geist</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowAnimationStyle">@style/Animation.Friday.Assistant</item>
     </style>
 </resources>

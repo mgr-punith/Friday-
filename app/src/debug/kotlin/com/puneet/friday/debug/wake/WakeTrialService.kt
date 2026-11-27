@@ -1,9 +1,11 @@
 package com.puneet.friday.debug.wake
 
+import com.puneet.friday.voice.MicrophoneUnavailable
+import com.puneet.friday.voice.PcmFrameReader
+
 import android.Manifest
 import android.app.Activity
 import android.app.Notification
-import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
@@ -40,6 +42,7 @@ class WakeTrialService : Service() {
     private var forceFallbackForTest = false
     private var outcomeForTest: String? = null
     private var usageControlled = false
+    private var microphoneRetry = WakeMicrophoneRetry()
     private var lastControl = "none"
     private var wakeCue: ToneGenerator? = null
     @Volatile private var scoreProbe: WakeScoreProbe? = null
@@ -92,6 +95,15 @@ class WakeTrialService : Service() {
         }
         val threshold = if (controlRequest) WakeUsageStore.threshold(this)
             else intent.getFloatExtra(THRESHOLD, WakeTrialSession.DEFAULT_THRESHOLD)
+        if (controlRequest && !WakeAssistantBridge.isReady(this)) {
+            if (session.snapshot().active) {
+                if (usageControlled) stopTest("Reconnect Friday to use Hey Friday.")
+            } else {
+                WakeUsageNotification.showPaused(this, openSetup = true)
+                stopSelf()
+            }
+            return START_NOT_STICKY
+        }
         if (session.snapshot().active) {
             if (controlRequest && WakeUsagePolicy.canAdopt(session.snapshot(), threshold)) {
                 usageControlled = true
@@ -108,8 +120,9 @@ class WakeTrialService : Service() {
             return START_NOT_STICKY
         }
         val generation = synchronized(captureLock) {
-            if (capture != null || gate.commandActive) null
-            else session.begin(threshold, intent.getBooleanExtra(COMMAND_MODE, false))
+            val commandMode = intent.getBooleanExtra(COMMAND_MODE, false)
+            if (capture != null || (gate.commandActive && !commandMode)) null
+            else session.begin(threshold, commandMode)
         }
         if (generation == null) {
             if (!session.snapshot().active) {
@@ -119,6 +132,7 @@ class WakeTrialService : Service() {
             return START_NOT_STICKY
         }
         try {
+            microphoneRetry = WakeMicrophoneRetry()
             val notification = notification()
             if (Build.VERSION.SDK_INT >= 30) startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
             else startForeground(NOTIFICATION_ID, notification)
@@ -141,30 +155,27 @@ class WakeTrialService : Service() {
 
     private fun permissionsAllowed(): Boolean {
         val manager = getSystemService(NotificationManager::class.java) ?: return false
-        manager.createNotificationChannel(NotificationChannel(CHANNEL_ID, "Hey Friday", NotificationManager.IMPORTANCE_LOW).apply {
-            description = "Pause or resume local wake listening"
-            setSound(null, null)
-            enableVibration(false)
-            setShowBadge(false)
-        })
+        WakeUsageNotification.ensureChannel(manager)
         return checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED &&
             (Build.VERSION.SDK_INT < 33 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) &&
             manager.areNotificationsEnabled() && manager.getNotificationChannel(CHANNEL_ID)?.importance != NotificationManager.IMPORTANCE_NONE
     }
 
     private fun startCaptureIfReady() {
-        val state = session.snapshot()
-        if (!state.active || state.phase == WakeTrialSession.Phase.STOPPING || state.phase == WakeTrialSession.Phase.HANDOFF) return
         val next = synchronized(captureLock) {
+            val state = session.snapshot()
+            if (owner !== this) return
+            if (state.phase != WakeTrialSession.Phase.STARTING && state.phase != WakeTrialSession.Phase.PAUSED) return
             if (capture != null) return
             if (!gate.canCapture(state)) {
-                if (state.commandMode) session.pause(state.generation)
+                if (state.commandMode) session.pause(state.generation) else stopTest("Stopped for Friday's assistant")
                 return
             }
             if (!permissionsAllowed()) {
                 stopTest("Allow microphone and notifications to start the test.")
                 return
             }
+            if (!session.startingMicrophone(state.generation)) return
             Capture(state.generation, state.threshold).also { capture = it }
         }
         updateNotification()
@@ -184,10 +195,14 @@ class WakeTrialService : Service() {
     private fun resumeAfterCommand() {
         val state = session.snapshot()
         if (!state.commandMode || state.phase != WakeTrialSession.Phase.PAUSED || synchronized(captureLock) { gate.occupied }) return
+        scheduleCapture(REARM_DELAY_MS)
+    }
+
+    private fun scheduleCapture(delayMs: Long) {
         synchronized(resumeLock) {
             if (!resumeScheduled) {
                 resumeScheduled = true
-                main.postDelayed(resume, REARM_DELAY_MS)
+                main.postDelayed(resume, delayMs)
             }
         }
     }
@@ -224,12 +239,11 @@ class WakeTrialService : Service() {
         stopSelf()
     }
 
-    private fun afterCapture(generation: Long, failure: String?) {
+    private fun afterCapture(generation: Long, failure: IllegalStateException?, audioMs: Long = 0) {
         if (synchronized(captureLock) { owner !== this } || session.snapshot().generation != generation) return
         val state = session.snapshot()
         if (!state.active) return
         when {
-            failure != null -> finishRun(failure)
             state.phase == WakeTrialSession.Phase.STOPPING -> finishRun(state.message)
             state.phase == WakeTrialSession.Phase.HANDOFF -> {
                 val token = session.claimHandoff(generation) ?: return
@@ -243,11 +257,24 @@ class WakeTrialService : Service() {
                 main.postDelayed({
                     if (session.expireWake(generation, token)) {
                         Log.i(TAG, "event=handoff_expired run=$generation")
-                        startCaptureIfReady()
+                        if (usageControlled && !WakeAssistantBridge.isReady(this)) {
+                            finishRun("Reconnect Friday to use Hey Friday.")
+                        } else startCaptureIfReady()
                     }
                 }, HANDOFF_TIMEOUT_MS)
             }
             state.phase == WakeTrialSession.Phase.PAUSED -> { updateNotification(); resumeAfterCommand() }
+            failure is MicrophoneUnavailable -> {
+                val delay = microphoneRetry.nextDelayMs(audioMs)
+                if (delay == null) {
+                    finishRun(checkNotNull(failure.message))
+                } else if (session.startingMicrophone(generation, retry = true)) {
+                    Log.i(TAG, "event=microphone_retry run=$generation delayMs=$delay")
+                    updateNotification()
+                    scheduleCapture(delay)
+                }
+            }
+            failure != null -> finishRun(failure.message ?: "Detector stopped. Try again.")
             else -> finishRun("Microphone off")
         }
     }
@@ -326,7 +353,8 @@ class WakeTrialService : Service() {
     override fun onDestroy() {
         wakeCue?.release()
         wakeCue = null
-        main.removeCallbacksAndMessages(null)
+        // The capture worker's queued completion still needs to release its slot.
+        cancelResume()
         val state = session.snapshot()
         val previous = synchronized(captureLock) { if (owner === this) owner = null; capture }
         if (state.active) {
@@ -347,13 +375,10 @@ class WakeTrialService : Service() {
         @Volatile var liveAudioMs = 0L
             private set
         val done = CountDownLatch(1)
-        private val audioLock = Any()
         @Volatile private var cancelled = false
-        private var recorder: AudioRecord? = null
 
         fun cancel() {
             cancelled = true
-            synchronized(audioLock) { try { recorder?.stop() } catch (_: IllegalStateException) { Unit } }
         }
 
         override fun run() {
@@ -362,7 +387,7 @@ class WakeTrialService : Service() {
             var trace: WakeAudioTrace.Capture? = null
             var samples = 0L
             var computeNanos = 0L
-            var failure: String? = null
+            var failure: IllegalStateException? = null
             try {
                 Process.setThreadPriority(Process.THREAD_PRIORITY_LESS_FAVORABLE)
                 if (cancelled) return
@@ -373,64 +398,82 @@ class WakeTrialService : Service() {
                 }
                 detector = keyword
                 val minimum = AudioRecord.getMinBufferSize(16_000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-                check(minimum > 0) { "Microphone unavailable" }
+                if (minimum <= 0) throw MicrophoneUnavailable()
+                if (cancelled) return
                 audio = AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, 16_000,
                     AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(minimum, 2_560))
-                check(audio.state == AudioRecord.STATE_INITIALIZED) { "Microphone unavailable" }
-                synchronized(audioLock) {
-                    if (cancelled) return
-                    recorder = audio
+                if (audio.state != AudioRecord.STATE_INITIALIZED) throw MicrophoneUnavailable()
+                if (cancelled) return
+                try {
                     audio.startRecording()
+                } catch (_: IllegalStateException) {
+                    throw MicrophoneUnavailable()
                 }
-                check(audio.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "Microphone unavailable" }
-                if (!session.listening(generation, SystemClock.elapsedRealtime())) return
+                if (audio.recordingState != AudioRecord.RECORDSTATE_RECORDING) throw MicrophoneUnavailable()
                 trace = WakeAudioTrace.begin(this@WakeTrialService)
-                Log.i(TAG, "event=listening run=$generation cutoff=${model.cutoffFor(threshold)} detector=friday_keyword")
-                main.post { if (session.snapshot().generation == generation) updateNotification() }
-                val frame = ShortArray(320)
-                while (!cancelled) {
-                    val count = audio.read(frame, 0, frame.size, AudioRecord.READ_BLOCKING)
-                    if (cancelled) break
-                    check(count > 0) { "Microphone stopped. Tap Start local test to retry." }
-                    samples += count
-                    liveAudioMs = samples * 1_000 / 16_000
-                    val before = System.nanoTime()
-                    val detected = keyword.process(frame, count)
-                    computeNanos += System.nanoTime() - before
-                    val accepted = !cancelled && detected && session.detected(generation, elapsed(session.snapshot()))
-                    trace?.append(frame, if (accepted) keyword.wakeSampleCount else count, accepted)
-                    if (accepted) {
-                        Log.i(TAG, "event=wake run=$generation atMs=${session.snapshot().lastDetectionMs} cutoff=${model.cutoffFor(threshold)}")
-                        if (session.snapshot().commandMode) break
+                PcmFrameReader.readFrames(
+                    read = { buffer, offset, length -> audio.read(buffer, offset, length, AudioRecord.READ_NON_BLOCKING) },
+                    nowMs = SystemClock::uptimeMillis,
+                    cancelled = { cancelled },
+                    waitForAudio = Thread::sleep,
+                ) { frame ->
+                    if (cancelled) return@readFrames false
+                    if (samples == 0L) {
+                        val listening = synchronized(captureLock) {
+                            !cancelled && !gate.occupied && session.listening(generation, SystemClock.elapsedRealtime())
+                        }
+                        if (!listening) return@readFrames false
+                        Log.i(TAG, "event=listening run=$generation cutoff=${model.cutoffFor(threshold)} detector=friday_keyword")
                         main.post { if (session.snapshot().generation == generation) updateNotification() }
                     }
+                    samples += frame.size
+                    liveAudioMs = samples * 1_000 / 16_000
+                    val before = System.nanoTime()
+                    val detected = keyword.process(frame, frame.size)
+                    computeNanos += System.nanoTime() - before
+                    val accepted = !cancelled && detected && session.detected(generation, elapsed(session.snapshot()))
+                    trace?.append(frame, if (accepted) keyword.wakeSampleCount else frame.size, accepted)
+                    if (accepted) {
+                        Log.i(TAG, "event=wake run=$generation atMs=${session.snapshot().lastDetectionMs} cutoff=${model.cutoffFor(threshold)}")
+                        if (session.snapshot().commandMode) return@readFrames false
+                        main.post { if (session.snapshot().generation == generation) updateNotification() }
+                    }
+                    true
                 }
             } catch (_: SecurityException) {
-                failure = "Microphone permission needed. Allow it in App permissions."
+                failure = IllegalStateException("Microphone permission needed. Allow it in App permissions.")
             } catch (error: IllegalStateException) {
-                if (!cancelled) failure = error.message ?: "Detector stopped. Tap Start local test to retry."
+                if (!cancelled) failure = error
             } catch (_: Exception) {
-                failure = "Couldn't load Hey Friday or start the microphone."
+                failure = IllegalStateException("Couldn't load Hey Friday or start the microphone.")
             } finally {
                 trace?.close()
-                synchronized(audioLock) {
-                    recorder = null
-                    try { audio?.stop() } catch (_: IllegalStateException) { Unit }
+                try { audio?.stop() } catch (_: RuntimeException) { Unit }
+                try {
                     audio?.release()
+                } catch (_: RuntimeException) {
+                    failure = IllegalStateException("Couldn't release the microphone. Try again.")
                 }
                 try { detector?.close() } catch (_: RuntimeException) {
-                    failure = "Detector stopped. Tap Start local test to retry."
+                    failure = IllegalStateException("Detector stopped. Try again.")
                 }
                 session.addCompute(generation, samples * 1_000 / 16_000, computeNanos / 1_000_000)
-                synchronized(captureLock) { if (capture === this) capture = null }
                 done.countDown()
-                if (synchronized(captureLock) { owner !== this@WakeTrialService } && session.snapshot().generation == generation) {
-                    val state = session.snapshot()
-                    session.finish(generation, elapsed(state), state.message)
-                    WakeTrialReports.save(filesDir, session.snapshot())
-                    if (usageControlled) main.post { WakeUsageNotification.showPaused(this@WakeTrialService) }
+                main.post {
+                    // Retain the slot until its completion is handled. A late completion
+                    // must never stop a newer capture in the same wake run.
+                    synchronized(captureLock) {
+                        if (capture !== this) return@post
+                        capture = null
+                    }
+                    if (synchronized(captureLock) { owner !== this@WakeTrialService } && session.snapshot().generation == generation) {
+                        val state = session.snapshot()
+                        session.finish(generation, elapsed(state), state.message)
+                        val final = session.snapshot()
+                        Thread({ WakeTrialReports.save(filesDir, final) }, "FridayWakeReport").start()
+                        if (usageControlled) WakeUsageNotification.showPaused(this@WakeTrialService)
+                    } else afterCapture(generation, failure, liveAudioMs)
                 }
-                main.post { afterCapture(generation, failure) }
             }
         }
     }
