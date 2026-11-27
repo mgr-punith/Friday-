@@ -218,6 +218,7 @@ class ActionDebugActivity : Activity() {
                 val modes = RadioGroup(this).apply { orientation = RadioGroup.VERTICAL }
                 RingerMode.entries.forEach { mode ->
                     val option = RadioButton(this).apply {
+                        typeface = resources.getFont(R.font.geist)
                         id = View.generateViewId()
                         text = when (mode) {
                             RingerMode.NORMAL -> "Normal"

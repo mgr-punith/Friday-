@@ -509,7 +509,7 @@ open class MainActivity : Activity() {
         detail.setTextColor(getColor(R.color.text_secondary))
         surface.setVoiceState(AssistantOrbView.State.LISTENING)
         backend.warmAsync()
-        val commandRecorder = VoiceRecorder(applicationContext, afterWake = fromWake,
+        val commandRecorder = VoiceRecorder(applicationContext,
             answerReply = answerContext != null, handsFree = compactSurface)
         activeRecorder = commandRecorder
         worker.execute {

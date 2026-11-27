@@ -117,7 +117,7 @@ object AppUi {
     ): TextView = TextView(context).apply {
         text = value
         textSize = size
-        typeface = fridaySans(context, bold)
+        typeface = geistTypeface(context, bold)
         setTextColor(context.getColor(if (secondary) R.color.text_secondary else R.color.text_primary))
         includeFontPadding = false
         setLineSpacing(0f, 1.12f)
@@ -125,6 +125,10 @@ object AppUi {
 
     fun sectionLabel(context: Context, label: String): TextView =
         text(context, label, 11f, bold = true, secondary = true).apply { letterSpacing = 0.02f }
+
+    internal fun compactVoiceText(context: Context, value: String): TextView = text(context, value, 16f).apply {
+        setLineSpacing(0f, 1.16f)
+    }
 
     fun button(
         context: Context,
@@ -136,7 +140,7 @@ object AppUi {
         text = label
         isAllCaps = false
         textSize = 13f
-        typeface = fridaySans(context, bold = false)
+        typeface = geistTypeface(context, bold = false)
         gravity = Gravity.CENTER
         minHeight = dp(context, 48)
         minWidth = dp(context, 88)
@@ -161,7 +165,7 @@ object AppUi {
 
     fun styleField(field: EditText) {
         field.apply {
-            typeface = fridaySans(context, bold = false)
+            typeface = geistTypeface(context, bold = false)
             textSize = 13f
             minHeight = dp(context, 48)
             setPadding(dp(context, 12), dp(context, 8), dp(context, 12), dp(context, 8))
@@ -215,8 +219,8 @@ object AppUi {
 
     fun dp(context: Context, value: Int): Int = (value * context.resources.displayMetrics.density).toInt()
 
-    private fun fridaySans(context: Context, bold: Boolean): Typeface = Typeface.create(
-        context.resources.getFont(R.font.friday_sans),
+    private fun geistTypeface(context: Context, bold: Boolean): Typeface = Typeface.create(
+        context.resources.getFont(R.font.geist),
         if (bold) Typeface.BOLD else Typeface.NORMAL,
     )
 }

@@ -7,6 +7,7 @@
     <application>
         <activity android:name=".ActionDebugActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".debug.wake.WakeUsageActivity" android:exported="true" android:label="Start Friday" />
+        <activity android:name=".debug.wake.WakeSwitchActivity" android:exported="false" android:label="Start Friday" />
         <activity android:name=".debug.wake.WakeTrialActivity" android:exported="true" android:label="Friday wake test" />
         <service android:name=".debug.wake.WakeTrialService" android:exported="false" android:foregroundServiceType="microphone" android:stopWithTask="false" />
         <activity android:name=".debug.wake.WakeBackgroundActivity" android:exported="false" android:label="Background listening" />

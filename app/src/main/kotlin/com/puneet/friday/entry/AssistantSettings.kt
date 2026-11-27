@@ -21,11 +21,13 @@ object AssistantSettings {
         false
     }
 
-    fun open(activity: Activity, from: Destination = Destination.ASSISTANT): Destination? =
+    fun open(activity: Activity, from: Destination = Destination.ASSISTANT, requestCode: Int? = null): Destination? =
         firstAvailable(from) { destination ->
             // AOSP's assistant role is non-requestable, so a role-request popup can close without a chooser.
             // Launch the public settings action instead; OEMs may omit or restrict individual screens.
-            activity.startActivity(Intent(destination.action))
+            val intent = Intent(destination.action)
+            if (requestCode == null) activity.startActivity(intent)
+            else activity.startActivityForResult(intent, requestCode)
         }
 
     internal fun firstAvailable(

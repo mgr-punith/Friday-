@@ -3,7 +3,6 @@ package com.puneet.friday.ui
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
-import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.util.AttributeSet
 import android.view.View
@@ -24,7 +23,7 @@ class MicButtonView @JvmOverloads constructor(
     private var monochrome = false
     private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textSize = 15f * resources.displayMetrics.scaledDensity
-        typeface = Typeface.create(resources.getFont(R.font.friday_sans), Typeface.NORMAL)
+        typeface = resources.getFont(R.font.geist)
     }
 
     init {

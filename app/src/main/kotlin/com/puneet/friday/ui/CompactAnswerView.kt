@@ -21,8 +21,7 @@ internal class CompactAnswerView(
     onReport: () -> Unit,
     onStop: () -> Unit,
 ) : ScrollView(activity) {
-    private val body = AppUi.text(activity, answer.text, 16f).apply {
-        setLineSpacing(0f, 1.16f)
+    private val body = AppUi.compactVoiceText(activity, answer.text).apply {
         accessibilityLiveRegion = ACCESSIBILITY_LIVE_REGION_POLITE
     }
     private val arrow = AppUi.iconButton(activity, R.drawable.ic_chevron_right, "Answer details") {

@@ -27,7 +27,7 @@ class SettingsPanel(private val activity: Activity, onAccount: () -> Unit, onBac
     private val popup = AnchoredPopup(activity)
     private val about = AppUi.roundIconButton(activity, R.drawable.ic_info_circle, "About Friday") {}
     private val accountButton: SettingsRow
-    private val startFriday: SettingsRow?
+    private val refreshStartMode: () -> Unit
     private val readyNotificationButton: SettingsRow
     private val assistantButton: SettingsRow
     private val assistantFallback: SettingsRow
@@ -49,7 +49,7 @@ class SettingsPanel(private val activity: Activity, onAccount: () -> Unit, onBac
         accountButton = SettingsRow(activity, "Account", icon = R.drawable.ic_account, onClick = onAccount)
         content.addView(SettingsGroup(activity).apply { addRow(accountButton) }, AppUi.params(activity, 16))
         val access = SettingsGroup(activity)
-        startFriday = DebugTools.addStartOptions(activity, access)
+        refreshStartMode = DebugTools.addStartOptions(activity, access)
         assistantButton = SettingsRow(activity, "Default assistant", icon = R.drawable.ic_assistant) { openAssistantSettings() }
         access.addRow(assistantButton)
         readyNotificationButton = SettingsRow(activity, "Ready notification", showChevron = false, icon = R.drawable.ic_notification) {
@@ -87,7 +87,7 @@ class SettingsPanel(private val activity: Activity, onAccount: () -> Unit, onBac
         val account = AccountStore(activity).session()
         accountButton.setValue(account?.let { it.displayName.ifBlank { it.email }.ifBlank { "Signed in" } } ?: "Signed out")
         accountButton.isEnabled = account != null
-        startFriday?.setValue(DebugTools.startMode(activity))
+        refreshStartMode()
         val preferred = activity.getSharedPreferences(MusicApps.PREFS, Activity.MODE_PRIVATE).getString(MusicApps.PREFERRED, null)
         val playerLabel = preferred?.let { pkg ->
             try { activity.packageManager.getApplicationLabel(activity.packageManager.getApplicationInfo(pkg, 0)) }

@@ -361,12 +361,22 @@ object VoiceLogicTests {
         expect(!VoicePayload.isValid(ByteArray(VoicePayload.MAX_WAV_BYTES + 1)), "The app rejects oversized uploads")
         expect(!AudioCapturePolicy.acceptsManualStop(16_000), "A one-second manual stop stays local")
         expect(AudioCapturePolicy.acceptsManualStop(24_000), "A 1.5-second manual stop can contain a command")
-        expect(!AudioCapturePolicy.canStopAfterSilence(afterWake = true, sampleCount = 31_999),
-            "Wake capture keeps listening until two seconds")
-        expect(AudioCapturePolicy.canStopAfterSilence(afterWake = true, sampleCount = 32_000),
-            "Wake capture can stop on silence after two seconds")
-        expect(AudioCapturePolicy.canStopAfterSilence(afterWake = false, sampleCount = 1),
-            "Tap capture keeps its current silence stop")
+        var finishRecorder = false
+        var capturedSamples = 0
+        PcmFrameReader.readFrames(
+            read = { _, _, length ->
+                finishRecorder = capturedSamples + length == 24_000
+                length
+            },
+            nowMs = { 0L }, cancelled = { finishRecorder }, waitForAudio = { error("Full frames are available") },
+        ) { frame ->
+            capturedSamples += frame.size
+            true
+        }
+        expect(AudioCapturePolicy.acceptsManualStop(capturedSamples),
+            "Tapping Finish during the final read includes a full frame at the 1.5-second boundary")
+        expect(AudioCapturePolicy.canStopAfterSilence(sampleCount = 20_000),
+            "A short complete command can finish on natural silence on either screen")
         expect(!AudioCapturePolicy.shouldStopWaitingForSpeech(handsFree = true, hasSpeech = false, sampleCount = 79_999),
             "Hands-free capture gives the user five seconds to start a command")
         expect(AudioCapturePolicy.shouldStopWaitingForSpeech(handsFree = true, hasSpeech = false, sampleCount = 80_000),
@@ -377,12 +387,10 @@ object VoiceLogicTests {
             "The no-command deadline preserves Home's existing recording window")
         expect(!AudioCapturePolicy.shouldStopWaitingForSpeech(handsFree = true, hasSpeech = false,
             sampleCount = 80_000, answerReply = true), "Clarification replies retain their existing recording window")
-        expect(!AudioCapturePolicy.canStopAfterSilence(afterWake = false, sampleCount = 79_999, answerReply = true),
+        expect(!AudioCapturePolicy.canStopAfterSilence(sampleCount = 79_999, answerReply = true),
             "Reply capture leaves five seconds to respond before a silence stop")
-        expect(AudioCapturePolicy.canStopAfterSilence(afterWake = false, sampleCount = 80_000, answerReply = true),
+        expect(AudioCapturePolicy.canStopAfterSilence(sampleCount = 80_000, answerReply = true),
             "Reply capture can finish on silence after five seconds")
-        expect(!AudioCapturePolicy.canStopAfterSilence(afterWake = true, sampleCount = 32_000, answerReply = true),
-            "A clarification after a wake still uses the reply listening window")
         expect(
             AudioCapturePolicy.reviewedSampleCount(24_000, manualStop = true) == 24_000,
             "Manual stop cannot delete an unexamined spoken ending",
@@ -501,6 +509,8 @@ object VoiceLogicTests {
             ambientMotion = false), "The compact ribbon stays still during silence")
         expect(OrbMotionPolicy.shouldRenderContinuously(AssistantOrbView.State.LISTENING, 0.08f, true, true,
             ambientMotion = false), "The compact ribbon animates during speech")
+        expect(!OrbMotionPolicy.shouldRenderContinuously(AssistantOrbView.State.PROCESSING, 0.08f, true, true,
+            settling = true, ambientMotion = false), "The compact progress pill stays still behind its inline indicator")
         expect(!OrbMotionPolicy.shouldRenderContinuously(AssistantOrbView.State.LISTENING, 0.5f, false, true),
             "Orb rendering respects disabled system animators")
         expect(!OrbMotionPolicy.shouldRenderContinuously(AssistantOrbView.State.PREVIEW, 0f, true, false),
@@ -569,44 +579,56 @@ object VoiceLogicTests {
         repeat(5) { tapThenRoomNoise.add(0.008f) }
         expect(tapThenRoomNoise.endedBySilence, "Room noise after a screen tap reaches the silence stop")
         expect(!tapThenRoomNoise.hasClearCommand, "A screen tap followed by room noise is not a command")
-        val afterWake = AudioCapturePolicy.commandDetector(afterWake = true)
-        val afterTap = AudioCapturePolicy.commandDetector(afterWake = false)
-        repeat(3) {
-            afterWake.add(0.004f)
-            afterTap.add(0.004f)
-        }
-        expect(!afterWake.isCalibrated, "Wake capture still samples the noise floor before the ready tone")
-        afterWake.add(0.004f)
-        afterTap.add(0.004f)
-        expect(afterWake.isCalibrated && !afterTap.isCalibrated, "Wake entry is ready after four microphone frames")
-        repeat(8) { afterTap.add(0.004f) }
-        expect(afterTap.isCalibrated, "Tap entry keeps its twelve-frame calibration")
+        val capture = CommandSpeechDetector()
         val commandProcessor = PcmProcessor()
+        val quietFrame = commandProcessor.analyze(ShortArray(320))
+        repeat(11) { capture.add(quietFrame) }
+        expect(!capture.isCalibrated, "A wake or tap samples the same noise floor before showing Listening")
+        capture.add(quietFrame)
+        expect(capture.isCalibrated, "Command capture is ready after twelve microphone frames")
+
+        // A ready cue with a short echo is not a command and must not end hands-free capture.
+        val cue = PcmProcessor.Level(0f, 0f, 0f, 0f, rms = 0.04f, voicing = 0.95f)
+        repeat(5) { capture.add(cue) }
+        repeat(50) { capture.add(quietFrame) }
+        expect(!capture.hasSpeech && capture.command == null, "The ready cue expires while the user can still speak")
+
         val quietCommand = ShortArray(320 * 28) { index ->
             val peak = if ((index / 320) % 2 == 0) 330 else 475
             (sin(2.0 * PI * index / 100.0) * peak).toInt().toShort()
         }
-        val wakeQuiet = AudioCapturePolicy.commandDetector(afterWake = true)
-        val tapQuiet = AudioCapturePolicy.commandDetector(afterWake = false)
-        val wakeNoise = AudioCapturePolicy.commandDetector(afterWake = true)
-        repeat(12) {
-            wakeQuiet.add(0.002f)
-            tapQuiet.add(0.002f)
-            wakeNoise.add(0.002f)
-        }
+        val unvoiced = CommandSpeechDetector()
+        repeat(12) { unvoiced.add(quietFrame) }
         for (offset in quietCommand.indices step 320) {
             val level = commandProcessor.analyze(quietCommand.copyOfRange(offset, offset + 320))
-            wakeQuiet.add(level)
-            tapQuiet.add(level)
-            wakeNoise.add(level.copy(voicing = 0f))
+            capture.add(level)
+            unvoiced.add(level.copy(voicing = 0f))
         }
-        expect(wakeQuiet.hasClearCommand && !tapQuiet.hasClearCommand,
-            "Wake listening accepts quieter voiced commands")
-        expect(!wakeNoise.hasClearCommand, "Wake listening still rejects unvoiced sound at the same level")
-        expect(AudioCapturePolicy.hasCommandEnergy(commandProcessor, quietCommand, afterWake = true),
-            "The final energy check accepts quiet speech after a wake")
-        expect(!AudioCapturePolicy.hasCommandEnergy(commandProcessor, quietCommand, afterWake = false),
-            "The tap-to-speak energy check keeps its existing threshold")
+        repeat(42) { capture.add(quietFrame); unvoiced.add(quietFrame) }
+        expect(capture.command?.endedBySilence == true && capture.hasCommandEnergy(commandProcessor, quietCommand),
+            "Tap and wake capture accept a short, quietly spoken command after the cue")
+        expect(capture.command?.firstSpeechFrame == 67, "Earlier cue samples stay outside the speech boundaries")
+        expect(unvoiced.command == null, "An equally quiet unvoiced sound cannot become a command")
+        val humWithClick = quietCommand.copyOf().also { it[it.lastIndex] = 1_000 }
+        val humming = CommandSpeechDetector()
+        repeat(12) { humming.add(quietFrame) }
+        for (offset in humWithClick.indices step 320) {
+            humming.add(commandProcessor.analyze(humWithClick.copyOfRange(offset, offset + 320)))
+        }
+        expect(commandProcessor.hasSpeech(humWithClick) && !humming.hasCommandEnergy(commandProcessor, humWithClick),
+            "The quiet fallback cannot promote a noisy clip that already passes the normal energy gate")
+        val softCommand = ShortArray(320 * 28) { index ->
+            val peak = if ((index / 320) % 2 == 0) 490 else 680
+            (sin(2.0 * PI * index / 100.0) * peak).toInt().toShort()
+        }
+        val softCapture = CommandSpeechDetector()
+        repeat(12) { softCapture.add(quietFrame) }
+        for (offset in softCommand.indices step 320) {
+            softCapture.add(commandProcessor.analyze(softCommand.copyOfRange(offset, offset + 320)))
+        }
+        expect(!commandProcessor.hasSpeech(softCommand) && softCapture.command != null &&
+            softCapture.hasCommandEnergy(commandProcessor, softCommand),
+            "Clear voicing recovers a soft command below the normal final peak threshold")
         val adaptive = SpeechEndDetector(
             minimumSpeechFrames = 3,
             silenceFramesToStop = 3,
@@ -671,7 +693,7 @@ object VoiceLogicTests {
             val peak = when (frameIndex % 5) { 0 -> 800; 1 -> 1_900; 2 -> 4_200; 3 -> 2_300; else -> 1_000 }
             (sin(2.0 * PI * index / 100.0) * peak).toInt().toShort()
         }
-        val immediateDetector = AudioCapturePolicy.commandDetector(afterWake = false)
+        val immediateDetector = SpeechEndDetector()
         for (offset in immediateVoice.indices step 320) {
             immediateDetector.add(immediateProcessor.analyze(immediateVoice.copyOfRange(offset, offset + 320)))
         }
@@ -683,7 +705,7 @@ object VoiceLogicTests {
         val immediateCrop = immediateProcessor.crop(immediateVoice, immediateVoice.size,
             immediateDetector.firstSpeechFrame * 320 - 4_800, (immediateDetector.lastSpeechFrame + 1) * 320 + 5_120)
         expect(immediateCrop.contentEquals(immediateVoice), "Immediate capture crop retains spoken boundary samples")
-        val delayedDetector = AudioCapturePolicy.commandDetector(afterWake = false)
+        val delayedDetector = SpeechEndDetector()
         repeat(12) { delayedDetector.add(0.001f) }
         repeat(16) { frame -> delayedDetector.add(PcmProcessor.Level(0f, 0f, 0f, 0f,
             if (frame % 2 == 0) 0.010f else 0.013f, 0.9f)) }
@@ -712,14 +734,14 @@ object VoiceLogicTests {
             val random = Random(516)
             for (index in samples.indices) samples[index] = random.nextInt(-5_000, 5_001).toShort()
         }).withIndex()) {
-            val startupNoise = AudioCapturePolicy.commandDetector(afterWake = false)
+            val startupNoise = SpeechEndDetector()
             for (offset in startupSamples.indices step 320) {
                 startupNoise.add(immediateProcessor.analyze(startupSamples.copyOfRange(offset, offset + 320)))
             }
             repeat(42) { startupNoise.add(0f) }
             expect(!startupNoise.hasClearCommand, "Startup noise case $noiseIndex cannot bypass calibration")
         }
-        val startupTap = AudioCapturePolicy.commandDetector(afterWake = false)
+        val startupTap = SpeechEndDetector()
         repeat(12) { index ->
             val frame = ShortArray(320)
             if (index == 0) { frame[10] = 30_000; frame[11] = -18_000 }

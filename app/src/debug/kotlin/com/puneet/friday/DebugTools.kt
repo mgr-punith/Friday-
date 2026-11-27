@@ -6,10 +6,16 @@ import android.content.Intent
 import android.os.Bundle
 import android.service.voice.VoiceInteractionService
 import android.view.WindowManager
+import android.view.Gravity
+import android.widget.LinearLayout
+import android.widget.Switch
 import com.puneet.friday.debug.wake.WakeTrialActivity
 import com.puneet.friday.debug.wake.WakeTrialService
 import com.puneet.friday.debug.wake.WakeAssistantBridge
 import com.puneet.friday.debug.wake.WakeUsageActivity
+import com.puneet.friday.debug.wake.WakeSwitchActivity
+import com.puneet.friday.ui.AppUi
+import com.puneet.friday.ui.FridayDialog
 import com.puneet.friday.ui.SettingsGroup
 import com.puneet.friday.ui.SettingsRow
 import com.puneet.friday.debug.wake.WakeUsagePolicy
@@ -45,11 +51,40 @@ internal object DebugTools {
     fun onKeyguardLaunch(service: VoiceInteractionService) {
         try { service.showSession(Bundle.EMPTY, 0) } catch (_: RuntimeException) { Unit }
     }
-    fun addStartOptions(activity: Activity, content: SettingsGroup): SettingsRow =
-        SettingsRow(activity, "Start Friday", icon = R.drawable.ic_microphone_01) {
+    fun addStartOptions(activity: Activity, content: SettingsGroup): () -> Unit {
+        val details = SettingsRow(activity, "Start Friday", icon = R.drawable.ic_microphone_01) {
             activity.startActivity(Intent(activity, WakeUsageActivity::class.java))
-        }.also { content.addRow(it) }
-    fun startMode(activity: Activity) = if (WakeUsageStore.mode(activity) == WakeUsagePolicy.Mode.HEY_FRIDAY) "Hey Friday" else "Tap to speak"
+        }
+        val toggle = Switch(activity).apply {
+            contentDescription = "Hey Friday"
+            showText = false
+            gravity = Gravity.CENTER
+            minHeight = AppUi.dp(activity, 56)
+            setPadding(0, 0, AppUi.dp(activity, 12), 0)
+        }
+        val refresh = {
+            val enabled = WakeUsageStore.mode(activity) == WakeUsagePolicy.Mode.HEY_FRIDAY
+            details.setValue(if (enabled) "Hey Friday" else "Tap to speak")
+            toggle.isChecked = enabled
+        }
+        refresh()
+        toggle.setOnCheckedChangeListener { _, checked ->
+            if (checked != (WakeUsageStore.mode(activity) == WakeUsagePolicy.Mode.HEY_FRIDAY)) {
+                if (checked) {
+                    activity.startActivity(Intent(activity, WakeSwitchActivity::class.java))
+                } else if (!WakeUsageStore.useTapToSpeak(activity)) {
+                    FridayDialog.show(activity, "Start Friday", "Couldn't save your choice. Try again.")
+                }
+                refresh()
+            }
+        }
+        content.addRow(LinearLayout(activity).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            addView(details, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(toggle, LinearLayout.LayoutParams(AppUi.dp(activity, 68), LinearLayout.LayoutParams.WRAP_CONTENT))
+        })
+        return refresh
+    }
     fun licenseAssets() = listOf("Hey Friday wake detector" to "wake-trial-licenses.txt")
     fun addSettings(activity: Activity, content: SettingsGroup) {
         content.addRow(SettingsRow(activity, "Try a phone action", icon = R.drawable.ic_phone_action) {

@@ -274,7 +274,6 @@ class AssistantOrbView @JvmOverloads constructor(
             visible = !renderUnavailable && isAttachedToWindow && isShown && windowVisibility == VISIBLE,
             settling = settling,
             ambientMotion = renderer != null,
-            processingIndicator = wakeOrb != null,
         )
         renderer?.setMotionEnabled(continuous && hostResumed)
         setRenderMode(continuous, settling || targetVoiceEnergy > MOTION_EPSILON)
@@ -307,7 +306,6 @@ object OrbMotionPolicy {
         visible: Boolean,
         settling: Boolean = false,
         ambientMotion: Boolean = true,
-        processingIndicator: Boolean = false,
     ): Boolean {
         if (!animatorsEnabled || !visible) return false
         if (ambientMotion) return true
@@ -315,7 +313,7 @@ object OrbMotionPolicy {
             AssistantOrbView.State.PREVIEW -> true
             AssistantOrbView.State.LISTENING, AssistantOrbView.State.SPEAKING ->
                 settling || gatedEnergy.isFinite() && gatedEnergy > 0.006f
-            AssistantOrbView.State.PROCESSING -> processingIndicator
+            AssistantOrbView.State.PROCESSING,
             AssistantOrbView.State.IDLE,
             AssistantOrbView.State.SUCCESS,
             AssistantOrbView.State.ERROR -> false

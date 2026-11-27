@@ -37,13 +37,17 @@ class VoiceSurface(
         contentDescription = "Start listening"
         setOnClickListener { onMic() }
     }
-    val title = AppUi.text(activity, "Talk to Friday", if (compact) 17f else 19f)
-    val detail = AppUi.text(activity, "Tap the microphone to start.", if (compact) 14f else 12f, secondary = true)
+    val title = if (compact) AppUi.compactVoiceText(activity, "Talk to Friday").apply {
+        fontVariationSettings = "'wght' 500"
+    } else AppUi.text(activity, "Talk to Friday", 19f)
+    val detail = if (compact) AppUi.compactVoiceText(activity, "Tap the microphone to start.")
+        else AppUi.text(activity, "Tap the microphone to start.", 12f, secondary = true)
     val controlLabel = AppUi.text(activity, "Tap to speak", if (compact) 14f else 11f, secondary = true)
     val permission = AppUi.button(activity, "Manage permissions", AppUi.ButtonTone.SECONDARY, onClick = onPermissions)
     val cancel = AppUi.iconButton(activity, R.drawable.ic_x_close, "Close command", onCancel)
     val replay = AppUi.button(activity, "Speak again", AppUi.ButtonTone.QUIET, onClick = onReplay)
     private val statusScroll = ScrollView(activity)
+    private val progressIndicator = if (compact) CompactProgressIndicator(activity) else null
     private var panelText: LinearLayout? = null
     private var answerView: CompactAnswerView? = null
     private var pillHeight = 0
@@ -77,16 +81,18 @@ class VoiceSurface(
             gravity = Gravity.CENTER_VERTICAL
         }
         addView(orb, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-        title.textSize = 13f
         title.gravity = Gravity.START
-        title.setTextColor(activity.getColor(R.color.text_primary))
         content.addView(title, AppUi.params(activity, 0))
         detail.visibility = View.GONE
         detail.gravity = Gravity.START
         content.addView(detail, AppUi.params(activity, 0))
         val row = LinearLayout(activity).apply {
             gravity = Gravity.CENTER_VERTICAL
+            isBaselineAligned = false
             alpha = 0f
+            addView(requireNotNull(progressIndicator), LinearLayout.LayoutParams(dp(18), dp(18)).apply {
+                marginEnd = dp(10)
+            })
             addView(content, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
         }
         addView(row, panelParams())
@@ -294,6 +300,7 @@ class VoiceSurface(
         orb.setWakeShape(shape)
         val processing = voiceState == AssistantOrbView.State.PROCESSING
         val listening = shape == WakeOrbView.Shape.GLASS
+        progressIndicator?.visibility = if (processing) View.VISIBLE else View.GONE
         text.visibility = when {
             answerView != null -> View.GONE
             listening -> View.INVISIBLE
@@ -306,8 +313,9 @@ class VoiceSurface(
         val stageWidth = minOf(resources.displayMetrics.widthPixels - dp(24), dp(440))
         val side = if (listening) 0 else (stageWidth * (1f - shape.widthFraction) / 2f).toInt()
         text.minimumHeight = (stageWidth * .23f).toInt().coerceIn(dp(56), dp(90))
-        val labelStart = if (processing) dp(64) - side else dp(26)
-        text.setPadding(labelStart, dp(8), dp(22), dp(14))
+        val start = if (processing) dp(34) - side else dp(26)
+        if (processing) text.setPaddingRelative(start, dp(11), dp(22), dp(11))
+        else text.setPaddingRelative(start, dp(8), dp(22), dp(14))
         text.layoutParams = (text.layoutParams as LayoutParams).apply {
             marginStart = side
             marginEnd = side

@@ -29,6 +29,13 @@ internal object WakeUsageStore {
     fun select(context: Context, mode: WakeUsagePolicy.Mode): Boolean = preferences(context).edit()
         .putString("mode", mode.value).putLong("revision", nextRevision(context)).commit()
 
+    fun useTapToSpeak(context: Context): Boolean {
+        if (!select(context, WakeUsagePolicy.Mode.TAP)) return false
+        WakeTrialService.stopForAssistant()
+        WakeUsageNotification.cancel(context)
+        return true
+    }
+
     /** Each notification action consumes its revision, so a second tap cannot replay it. */
     fun consume(context: Context, requestedRevision: Long): Boolean {
         if (!WakeUsagePolicy.accepts(mode(context), revision(context), requestedRevision)) return false

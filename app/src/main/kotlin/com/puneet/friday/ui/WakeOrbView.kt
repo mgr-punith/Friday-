@@ -15,7 +15,6 @@ import android.os.SystemClock
 import android.view.View
 import android.view.animation.PathInterpolator
 import kotlin.math.PI
-import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
 
@@ -39,7 +38,6 @@ internal class WakeOrbView(context: Context) : View(context) {
     private val outline = LinearGradient(0f, 0f, 0f, 1f,
         intArrayOf(0x52696F74, 0x15282A2B, 0x91F3FAFD.toInt()),
         floatArrayOf(0f, .40f, 1f), Shader.TileMode.CLAMP)
-    private val refraction = LinearGradient(0f, 0f, 0f, 1f, 0x70262F34, 0xC3212F37.toInt(), Shader.TileMode.CLAMP)
     private val seam = LinearGradient(-.5f, 0f, .5f, 0f,
         intArrayOf(0x00333435, 0xB5A4ADB2.toInt(), 0xFFFFFFFF.toInt(), 0xA396A6AD.toInt(), 0x00333435),
         floatArrayOf(.03f, .26f, .51f, .76f, .97f), Shader.TileMode.CLAMP)
@@ -56,7 +54,6 @@ internal class WakeOrbView(context: Context) : View(context) {
     private var shape = Shape.GLASS
     private var fraction = Shape.GLASS.widthFraction
     private var glass = 1f
-    private var spinner = 0f
     private var heightRatio = 1f
     private var pillCorner = Shape.GLASS.corner
     private var resultGlow = 0f
@@ -84,18 +81,15 @@ internal class WakeOrbView(context: Context) : View(context) {
         transition = null
         val startWidth = fraction
         val startGlass = glass
-        val startSpinner = spinner
         val startHeight = heightRatio
         val startCorner = pillCorner
         val startGlow = resultGlow
         val endGlass = if (next == Shape.GLASS) 1f else 0f
-        val endSpinner = if (next.loading) 1f else 0f
         val endHeight = if (next == Shape.GLASS) 1f else 0f
         val endGlow = if (next == Shape.STATUS) 1f else 0f
         fun update(progress: Float) {
             fraction = startWidth + (next.widthFraction - startWidth) * progress
             glass = startGlass + (endGlass - startGlass) * progress
-            spinner = startSpinner + (endSpinner - startSpinner) * progress
             heightRatio = startHeight + (endHeight - startHeight) * progress
             pillCorner = startCorner + (next.corner - startCorner) * progress
             resultGlow = startGlow + (endGlow - startGlow) * progress
@@ -197,11 +191,6 @@ internal class WakeOrbView(context: Context) : View(context) {
             fill(canvas, shell, dome, glass)
             canvas.save()
             canvas.clipPath(shell)
-            paint.style = Paint.Style.FILL
-            paint.shader = refraction
-            paint.alpha = (188 * glass).toInt()
-            drawRefraction(canvas, -.228f, 18f)
-            drawRefraction(canvas, .228f, -18f)
             drawSeam(canvas)
             canvas.restore()
         }
@@ -219,16 +208,8 @@ internal class WakeOrbView(context: Context) : View(context) {
         paint.strokeWidth = .008f
         paint.alpha = 205
         canvas.drawPath(shell, paint)
-        if (spinner > 0f) drawIndicator(canvas, visualWidth, visualHeight)
         canvas.restore()
         if (moving && isShown && windowVisibility == VISIBLE) postInvalidateOnAnimation()
-    }
-
-    private fun drawRefraction(canvas: Canvas, center: Float, tilt: Float) {
-        canvas.save()
-        canvas.rotate(tilt, center, .83f)
-        canvas.drawOval(center - .15f, .738f, center + .15f, .93f, paint)
-        canvas.restore()
     }
 
     private fun drawSeam(canvas: Canvas) {
@@ -245,26 +226,6 @@ internal class WakeOrbView(context: Context) : View(context) {
         light.cubicTo(-.21f, peak + .038f, -.30f, edge + .017f, -.47f, edge)
         light.close()
         fill(canvas, light, seam, glass)
-    }
-
-    private fun drawIndicator(canvas: Canvas, visualWidth: Float, visualHeight: Float) {
-        val dotX = 2.25f * density / visualWidth
-        val dotY = 2.25f * density / visualHeight
-        val radiusX = 10.5f * density / visualWidth
-        val radiusY = 10.5f * density / visualHeight
-        val center = -.5f + 34f * density / visualWidth
-        repeat(6) { index ->
-            val angle = phase + index * TWO_PI / 6f
-            val x = center + radiusX * cos(angle)
-            val y = .5f + radiusY * sin(angle)
-            val brightness = .5f + .5f * sin(phase * 2f - index * TWO_PI / 6f)
-            val alpha = (spinner * (140f + 115f * brightness)).toInt()
-            drawGlint(canvas, x, y, dotX * 3.5f, dotY * 3.5f, alpha)
-            paint.shader = null
-            paint.color = Color.WHITE
-            paint.alpha = alpha
-            canvas.drawOval(x - dotX, y - dotY, x + dotX, y + dotY, paint)
-        }
     }
 
     private fun drawGlint(canvas: Canvas, x: Float, y: Float, rx: Float, ry: Float, alpha: Int, shader: Shader = glint) {

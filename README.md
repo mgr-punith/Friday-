@@ -86,7 +86,7 @@ This builds debug and release APKs, runs the Kotlin action, voice, and wake-tria
 ls -lh app/build/outputs/apk/debug/*.apk app/build/outputs/apk/release/*.apk
 ```
 
-The app package is `com.puneet.friday`. The opt-in **Hey Friday** detector is available in debug builds that include the local Friday model. Pass `-PfridayWakeModelDir=.local/tools/wake-model/android-assets` to `./gradlew assembleDebug` to package those weights. The model stays in the ignored local folder and out of release APKs.
+The app package is `com.puneet.friday`. To enable **Hey Friday** for local testing, put the selected phone-tested model in `.local/wake/active/friday-keyword.bin`. Run `./gradlew assembleDebug` for each update. The build checks that the packaged weights match that file. A fresh checkout builds without a wake model. To compare another model, pass `-PfridayWakeModelDir=<experiment-directory>` for that build. Release APKs exclude wake models.
 
 ### Backend
 
@@ -105,6 +105,8 @@ Vercel production setup and backend variables are documented in [the backend dep
 
 ## Try a command
 
+Friday uses Geist throughout its screens. In the compact panel, progress labels use Geist Medium and answers use Geist Regular, both at 16sp.
+
 Open Friday to see the Home orb drift. It wiggles as you speak. The assistant shortcut, tile, widget and notification open a compact glass orb above the current app. After you speak, the panel shows “Working on it” and “Looking into it”. One-line answers appear in the center. The panel grows for longer answers and scrolls when they exceed the available space. Tap the arrow to see sources, stop reading aloud or report the answer in the same panel. Tap it again to collapse the controls. Press Back or tap outside to close the panel. Phone actions run as soon as they’re ready.
 
 Friday requests exclusive audio focus while recording a command. Music players that honor Android audio focus pause for the recording and resume when it ends. The background Hey Friday detector does not pause playback. Friday releases audio focus before running a command, so a requested music pause stays in effect.
@@ -117,9 +119,9 @@ Set a timer for two minutes
 
 Friday should send the timer request to your clock app and speak a short confirmation. On Home, Friday shows command feedback in a brief toast at the top center. Speech can finish after Clock takes focus from either Home or the compact assistant. The compact assistant closes after one completed command; Home retains the result, and an enabled Hey Friday listener resumes when speech ends. Exact results depend on the installed clock app and Android permissions.
 
-In a wake-enabled debug build, select **Settings → Start Friday → Hey Friday** and tap **Use Hey Friday**. Allow microphone and notification access and choose Friday as Android’s default assistant. Say your command after the short tone. Friday accepts quieter speech for the command that follows a wake.
+In a wake-enabled debug build, use the switch beside **Settings → Start Friday** to choose Hey Friday (on) or Tap to speak (off). Tap the row to open the full setup page. Allow microphone and notification access and choose Friday as Android’s default assistant. After the short tone, speak as you would after tapping the orb. Both use the same command recorder, including its checks for quiet speech. If the wake microphone stops delivering audio, Friday tries to reopen it twice. You can tap **Resume Hey Friday** if the microphone stays unavailable.
 
-After an app update, tap the **Resume Hey Friday** notification to open **Start Friday** and resume listening. If Android loses the assistant connection, tap **Reconnect Friday**, select **None** in Android’s Digital assistant settings, then select **Friday** again.
+After an app update, tap the **Resume Hey Friday** notification to open **Start Friday** and resume listening. Setup continues when you return from sign-in or grant access. If Friday is already the default, setup waits up to five seconds for Android to connect. If **Reconnect Friday** appears, tap it, select **None** in Android’s Digital assistant settings, then select **Friday** again.
 
 Pause Hey Friday before changing **Settings → Start Friday → Wake sensitivity**. Standard uses the model’s calibrated cutoff. Higher sensitivity lowers it and can wake Friday during other speech.
 

@@ -47,6 +47,13 @@ internal class WakeTrialSession {
         return true
     }
 
+    @Synchronized fun startingMicrophone(generation: Long, retry: Boolean = false): Boolean {
+        val from = if (retry) Phase.LISTENING else Phase.PAUSED
+        if (generation != value.generation || (value.phase != Phase.STARTING && value.phase != from)) return false
+        value = value.copy(phase = Phase.STARTING, message = "Starting microphone")
+        return true
+    }
+
     @Synchronized fun detected(generation: Long, elapsedMs: Long, synthetic: Boolean = false): Boolean {
         if (generation != value.generation || value.phase != Phase.LISTENING) return false
         val count = value.detections + 1

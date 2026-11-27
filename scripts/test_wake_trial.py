@@ -11,6 +11,19 @@ from wake_trial_checks import FRIDAY_WAKE_ASSET, JNI_SYMBOL_PREFIX, check_apk, c
 
 
 class WakeTrialTests(unittest.TestCase):
+    def test_only_private_settings_switch_can_apply_wake_mode_on_entry(self):
+        root = Path(__file__).resolve().parents[1] / "app/src"
+        android = "{http://schemas.android.com/apk/res/android}"
+        debug = ElementTree.parse(root / "debug/AndroidManifest.xml")
+        switch = next(item for item in debug.iter("activity")
+                      if item.get(android + "name", "").endswith(".WakeSwitchActivity"))
+        self.assertEqual(switch.get(android + "exported"), "false")
+        self.assertIsNone(switch.find("intent-filter"))
+        setup = (root / "debug/kotlin/com/puneet/friday/debug/wake/WakeUsageActivity.kt").read_text()
+        self.assertIn("protected open val fromModeSwitch = false", setup)
+        self.assertIn("fromModeSwitch && savedInstanceState == null", setup)
+        self.assertRegex(setup, r"class WakeSwitchActivity : WakeUsageActivity\(\) \{\s*override val fromModeSwitch = true")
+
     def test_signing_check_accepts_current_and_older_android_tool_output(self):
         digest = "a1" * 20
         expected = ":".join(["A1"] * 20)
