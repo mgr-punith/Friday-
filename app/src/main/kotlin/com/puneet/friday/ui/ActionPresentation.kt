@@ -2,6 +2,7 @@ package com.puneet.friday.ui
 
 import com.puneet.friday.actions.PhoneAction
 import com.puneet.friday.actions.RingerMode
+import com.puneet.friday.actions.VolumeDirection
 import java.util.Locale
 
 /** Describes the returned action, without claiming Android has completed it. */
@@ -18,6 +19,10 @@ object ActionPresentation {
         is PhoneAction.CloseApp -> "Go to home screen"
         is PhoneAction.Flashlight -> if (action.on) "Turn on flashlight" else "Turn off flashlight"
         is PhoneAction.SetVolume -> "Set ${action.stream.label.lowercase(Locale.ENGLISH)} volume to ${action.percent}%"
+        is PhoneAction.AdjustVolume -> {
+            val verb = if (action.direction == VolumeDirection.UP) "Raise" else "Lower"
+            "$verb ${action.stream.wireName} volume by ${action.percent}%"
+        }
         is PhoneAction.OpenSettings -> when (action.state) {
             com.puneet.friday.actions.SettingState.ON -> "Open airplane mode settings · turn on"
             com.puneet.friday.actions.SettingState.OFF -> "Open airplane mode settings · turn off"

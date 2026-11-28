@@ -190,7 +190,7 @@ test("opted-in phone actions issue short confirmation speech without synthesizin
 function confirmationCommand(): FunctionUrlEvent {
   const base = request();
   return { ...base, rawPath: "/v1/command", body: JSON.stringify({ text: "Turn on vibrate" }), headers: {
-    ...base.headers, "x-now": "2026-11-17T14:00:00+05:30", "x-friday-actions": "5",
+    ...base.headers, "x-now": "2026-11-17T14:00:00+05:30", "x-friday-actions": "6",
     "x-friday-speech": "elevenlabs-v1", "x-friday-confirmations": "1"
   } };
 }
@@ -217,6 +217,7 @@ test("confirmation phrases omit private names and labels and describe handoffs a
     ["close_app", { name: "Private app" }, "Went to home screen"],
     ["open_app", { name: "Private app" }, "Opening app"],
     ["set_volume", { stream: "media", percent: 50 }, "Media volume set"],
+    ["adjust_volume", { stream: "media", direction: "up", percent: 50 }, undefined],
     ["flashlight", { on: false }, "Flashlight off"],
     ["open_settings", { setting: "airplane_mode", state: "on" }, "Check settings"],
     ["play_media", { query: "Private song" }, "Music requested"],

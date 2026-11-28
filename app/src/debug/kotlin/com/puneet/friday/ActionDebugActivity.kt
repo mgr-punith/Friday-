@@ -31,6 +31,8 @@ import com.puneet.friday.actions.RequiredAccess
 import com.puneet.friday.actions.RingerMode
 import com.puneet.friday.actions.SettingState
 import com.puneet.friday.actions.SettingsTarget
+import com.puneet.friday.actions.VolumeDirection
+import com.puneet.friday.actions.VolumeStream
 import com.puneet.friday.actions.validationError
 import com.puneet.friday.ui.AppUi
 import com.puneet.friday.ui.FridayDialog
@@ -205,6 +207,14 @@ class ActionDebugActivity : Activity() {
             Tool.FLASHLIGHT -> {
                 actionButton("Turn on flashlight") { PhoneAction.Flashlight(true) }
                 actionButton("Turn off flashlight") { PhoneAction.Flashlight(false) }
+            }
+            Tool.VOLUME -> {
+                actionButton("Raise media volume by 20%") {
+                    PhoneAction.AdjustVolume(VolumeStream.MEDIA, VolumeDirection.UP, 20)
+                }
+                actionButton("Lower media volume by 20%") {
+                    PhoneAction.AdjustVolume(VolumeStream.MEDIA, VolumeDirection.DOWN, 20)
+                }
             }
             Tool.AIRPLANE_MODE -> {
                 body.addView(
@@ -417,6 +427,7 @@ class ActionDebugActivity : Activity() {
         MUSIC("Music apps"),
         HOME("Go to Home"),
         SOUND("Sound mode"),
+        VOLUME("Media volume"),
         FLASHLIGHT("Flashlight"),
         AIRPLANE_MODE("Airplane mode settings"),
     }

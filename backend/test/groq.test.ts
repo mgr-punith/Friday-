@@ -227,6 +227,54 @@ test("v3 describes Settings as a user handoff with allowlisted arguments", async
   });
 });
 
+test("common spoken relative volume requests keep their direction and amount", async () => {
+  const cases = [
+    ["Raise the volume", "media", "up", 20],
+    ["Lower the volume", "media", "down", 20],
+    ["Raise the volume by 50%", "media", "up", 50],
+    ["Decrease the volume by 30%", "media", "down", 30],
+    ["Raise the alarm volume by 50 percent", "alarm", "up", 50],
+    ["Could you please reduce my ringer volume by 15 per cent?", "ring", "down", 15]
+  ] as const;
+  for (const [text, stream, direction, percent] of cases) {
+    const provider = new GroqProvider(CONFIG, async (_, init) => {
+      assert.ok(init?.body instanceof FormData);
+      return Response.json({ ...TRANSCRIPT, text });
+    }, new Runtime());
+    const result = await provider.select({ kind: "audio", bytes: createPcmWav(), mimeType: "audio/wav", actionVersion: 6 }, NOW);
+    assert.deepEqual(parseFunctionSelection(result.selection, 6), {
+      type: "action", action: "adjust_volume", args: { stream, direction, percent }
+    });
+  }
+});
+
+test("Groq offers relative volume for paraphrases and keeps absolute and compound commands intact", async () => {
+  const cases = [
+    ["Could you reduce the volume by thirty percent?", "adjust_volume", { stream: "media", direction: "down", percent: 30 }],
+    ["Raise the volume to 50%", "set_volume", { stream: "media", percent: 50 }],
+    ["Raise the volume and open Clock", "run_actions", { actions: [
+      { action: "adjust_volume", args: { stream: "media", direction: "up" } },
+      { action: "open_app", args: { name: "Clock" } }
+    ] }],
+    ["Don't raise the volume", "unsupported", {}]
+  ] as const;
+  for (const [text, name, args] of cases) {
+    const provider = new GroqProvider(CONFIG, async (_, init) => {
+      const request = JSON.parse(String(init?.body));
+      assert.ok(request.messages[1].content.includes(text));
+      assert.equal(request.tool_choice, "required");
+      const declarations = request.tools.map((entry: { function: { name: string } }) => entry.function);
+      const relative = declarations.find((entry: { name: string }) => entry.name === "adjust_volume");
+      assert.ok(relative);
+      assert.deepEqual(relative.parameters.required, ["stream", "direction"]);
+      assert.ok(declarations.some((entry: { name: string }) => entry.name === "set_volume"));
+      return tool(name, JSON.stringify(args));
+    }, new Runtime());
+    const result = await provider.select({ kind: "text", text, actionVersion: 6, answerSetup: "answers_disabled" }, NOW);
+    assert.deepEqual(result.selection, { name, args });
+  }
+});
+
 test("exact spoken music and torch commands skip classification while compound and negated requests do not", async () => {
   const cases = [
     ["Turn on the flash light.", { name: "flashlight", args: { on: true } }],

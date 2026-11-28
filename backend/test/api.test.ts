@@ -162,6 +162,27 @@ test("only phones with the music-player capability receive the new music action 
   }
 });
 
+test("relative volume requires client opt-in while absolute volume keeps working", async () => {
+  const { api, assistant } = harness();
+  const headers = { authorization: `Bearer ${token()}`, "content-type": "application/json",
+    "x-now": "2026-11-17T14:00:00+05:30", "x-friday-actions": "4", "x-friday-media-controls": "1" };
+  assistant.result = { selection: { name: "adjust_volume", args: { stream: "media", direction: "up" } }, durationMs: 1 };
+  for (const capability of ["0", "1"]) {
+    const response = await api.handle(event("POST", "/v1/command", {
+      headers: { ...headers, "x-friday-relative-volume": capability }, body: JSON.stringify({ text: "Raise the volume" })
+    }));
+    assert.equal(assistant.calls.at(-1)?.input.actionVersion, capability === "1" ? 6 : 5);
+    assert.deepEqual(body(response), capability === "1" ? {
+      type: "action", action: "adjust_volume", args: { stream: "media", direction: "up", percent: 20 }
+    } : { type: "unsupported" });
+  }
+  assistant.result = { selection: { name: "set_volume", args: { stream: "media", percent: 50 } }, durationMs: 1 };
+  const response = await api.handle(event("POST", "/v1/command", {
+    headers, body: JSON.stringify({ text: "Set the volume to 50%" })
+  }));
+  assert.deepEqual(body(response), { type: "action", action: "set_volume", args: { stream: "media", percent: 50 } });
+});
+
 test("v3 validates settings handoffs while v2 keeps them unsupported", async () => {
   const old = harness();
   old.assistant.result = {

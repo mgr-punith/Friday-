@@ -105,6 +105,10 @@ export const FUNCTION_DECLARATIONS = [
 
 export const FUNCTION_NAMES = FUNCTION_DECLARATIONS.map((declaration) => declaration.name);
 
+const VOLUME_STREAMS = ["media", "ring", "alarm"] as const;
+const VOLUME_DIRECTIONS = ["up", "down"] as const;
+const DEFAULT_VOLUME_ADJUSTMENT = 20;
+
 const DEVICE_CONTROLS = [
   {
     name: "open_music",
@@ -120,14 +124,28 @@ const DEVICE_CONTROLS = [
   },
   {
     name: "set_volume",
-    description: "Set media, ring, or alarm volume to a specific percentage. Use media when no stream is named. Do not infer a percentage for a relative change.",
+    description: "Set media, ring, or alarm volume to a specific level, such as 'set volume to 50%'. Use media when no stream is named. Do not use for relative changes.",
     parameters: {
       type: "object",
       properties: {
-        stream: { type: "string", enum: ["media", "ring", "alarm"] },
+        stream: { type: "string", enum: VOLUME_STREAMS },
         percent: { type: "integer", minimum: 0, maximum: 100 }
       },
       required: ["stream", "percent"]
+    }
+  },
+  {
+    name: "adjust_volume",
+    description: "Raise or lower the current volume, such as 'raise the volume' or 'decrease the volume by 30%'. Use media when no stream is named. Use set_volume for an explicit target level such as 'raise the volume to 50%'.",
+    parameters: {
+      type: "object",
+      properties: {
+        stream: { type: "string", enum: VOLUME_STREAMS },
+        direction: { type: "string", enum: VOLUME_DIRECTIONS },
+        percent: { type: "integer", minimum: 1, maximum: 100,
+          description: "Explicit change in percentage points. Omit when the user gives no amount; Friday uses 20." }
+      },
+      required: ["stream", "direction"]
     }
   }
 ] as const;
@@ -341,11 +359,19 @@ export function parseFunctionSelection(
     }
     case "set_volume": {
       if (!supportsAction("set_volume", version)) return unsupported();
-      const stream = args.stream;
+      const stream = VOLUME_STREAMS.find(value => value === args.stream);
       const percent = readInteger(args, "percent", 0, 100);
-      return (stream === "media" || stream === "ring" || stream === "alarm") &&
-        percent !== undefined && hasOnlyKeys(args, ["stream", "percent"])
+      return stream && percent !== undefined && hasOnlyKeys(args, ["stream", "percent"])
         ? action("set_volume", { stream, percent })
+        : badAudio();
+    }
+    case "adjust_volume": {
+      if (!supportsAction("adjust_volume", version)) return unsupported();
+      const stream = VOLUME_STREAMS.find(value => value === args.stream);
+      const direction = VOLUME_DIRECTIONS.find(value => value === args.direction);
+      const percent = Object.hasOwn(args, "percent") ? readInteger(args, "percent", 1, 100) : DEFAULT_VOLUME_ADJUSTMENT;
+      return stream && direction && percent !== undefined && hasOnlyKeys(args, ["stream", "direction", "percent"])
+        ? action("adjust_volume", { stream, direction, percent })
         : badAudio();
     }
     case "open_settings": {

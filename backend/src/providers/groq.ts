@@ -354,7 +354,7 @@ function focusedGroqTools<T extends { readonly name: string }>(text: string, too
   const normalized = text.toLowerCase().replace(/[’']/g, "").replace(/[.!?]+$/, "").replace(/\s+/g, " ").trim();
   const command = normalized.replace(/^(?:(?:can|could|would|will) you\s+)?(?:please\s+)?/, "");
   if (/\b(?:and|or|then|also|but|if|unless|before|after|without|except|instead|not|never|dont|cannot|cant|wont)\b/.test(command)) return tools;
-  const actionStart = /^(?:call|phone|dial|ring|set|start|open|launch|close|exit|go to|leave|switch|turn|put|change|mute|unmute|play|pause|resume|skip|lower|raise|increase|decrease|make)\b/.test(command);
+  const actionStart = /^(?:call|phone|dial|ring|set|start|open|launch|close|exit|go to|leave|switch|turn|put|change|mute|unmute|play|pause|resume|skip|lower|raise|increase|decrease|reduce|make)\b/.test(command);
   const question = /^(?:who|what|when|where|why|how|which|tell me|explain)\b/.test(command) || /\?$/.test(text.trim());
   const answerNames = new Set(["answer_question", "short_answers_required"]);
   const fallbackNames = new Set(["unsupported", "unclear_command", ...answerNames]);
@@ -385,7 +385,7 @@ function focusedGroqTools<T extends { readonly name: string }>(text: string, too
     { match: /\b(?:timer|countdown)\b/, names: ["set_timer"] },
     { match: /\b(?:ringer|silent|vibrat\w*|mute|unmute)\b/, names: ["set_ringer_mode"] },
     { match: /\b(?:flashlight|flash light|torch)\b/, names: ["flashlight"] },
-    { match: /\b(?:volume|louder|quieter)\b/, names: ["set_volume"] },
+    { match: /\b(?:volume|louder|quieter)\b/, names: ["set_volume", "adjust_volume"] },
     { match: /\bairplane mode\b/, names: ["open_settings"] },
     { match: /\b(?:home screen|go home|close|exit)\b/, names: ["close_app"] },
     { match: /\b(?:music|song|track|playlist|spotify|youtube|play|pause|resume|skip|previous)\b/,
@@ -399,7 +399,7 @@ function focusedGroqTools<T extends { readonly name: string }>(text: string, too
 function isInformationRequest(text: string): boolean {
   const normalized = text.toLowerCase().replace(/[’']/g, "").replace(/[.!?]+$/, "").trim();
   const command = normalized.replace(/^(?:(?:can|could|would|will) you\s+)?(?:please\s+)?/, "");
-  if (/^(?:call|phone|dial|ring|set|start|open|launch|close|exit|go to|leave|switch|turn|put|change|mute|unmute|play|pause|resume|skip|lower|raise|increase|decrease|make)\b/.test(command)) {
+  if (/^(?:call|phone|dial|ring|set|start|open|launch|close|exit|go to|leave|switch|turn|put|change|mute|unmute|play|pause|resume|skip|lower|raise|increase|decrease|reduce|make)\b/.test(command)) {
     return false;
   }
   return /^(?:who|what|when|where|why|how|which)(?:s|re|ve|d|ll)?\b/.test(command) ||
@@ -418,6 +418,15 @@ function exactDeviceRequest(text: string, version: NonNullable<CommandInput["act
     const operation = /^(pause|resume) (?:(?:the|my) )?(?:music|playback|audio|song)$/.exec(words)
       ?? /^(?:skip to |go to )?(?:the )?(next|previous) (?:song|track)$/.exec(words);
     if (operation) return { name: "control_media", args: { operation: operation[1] } };
+  }
+  if (version >= 6) {
+    const adjustment = /^(raise|increase|lower|decrease|reduce) (?:(?:the|my) )?(?:(media|ring|ringer|alarm) )?volume(?: by (\d{1,3})\s*(?:%|percent|per cent))?$/.exec(words);
+    if (adjustment) {
+      const [, verb, stream, percent] = adjustment;
+      return { name: "adjust_volume", args: { stream: stream === "ringer" ? "ring" : stream ?? "media",
+        direction: verb === "raise" || verb === "increase" ? "up" : "down",
+        ...(percent === undefined ? {} : { percent: Number(percent) }) } };
+    }
   }
   const torch = /^(?:turn|switch) (on|off) (?:(?:the|my) )?(?:flashlight|flash light|torch)$/.exec(words)
     ?? /^(?:turn|switch|put) (?:(?:the|my) )?(?:flashlight|flash light|torch) (on|off)$/.exec(words);

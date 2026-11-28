@@ -179,8 +179,25 @@ object ActionLogicTests {
         expect(PhoneAction.SetRingerMode(RingerMode.SILENT).validationError() == null, "Typed ringer modes are valid")
         val airplaneOn = PhoneAction.OpenSettings(SettingsTarget.AIRPLANE_MODE, SettingState.ON)
         expect(airplaneOn.validationError() == null, "Typed Settings handoffs are valid")
-        expect(PhoneCapabilityRegistry.ACTION_PROTOCOL_VERSION == 5 &&
-            PhoneCapabilityRegistry.BASE_ACTION_PROTOCOL_VERSION == 4, "Media controls extend the v4 wire contract")
+        expect(PhoneCapabilityRegistry.ACTION_PROTOCOL_VERSION == 6 &&
+            PhoneCapabilityRegistry.BASE_ACTION_PROTOCOL_VERSION == 4, "Media and volume controls extend the v4 wire contract")
+        val adjustment = PhoneAction.AdjustVolume(VolumeStream.MEDIA, VolumeDirection.UP, 20)
+        expect(PhoneCapabilityRegistry.requiresUnlock(adjustment) && PhoneCapabilityRegistry.canPrecedeAnother(adjustment),
+            "Relative volume uses the same unlock and sequence policy as absolute volume")
+        val volume = VolumeRange(0, 10)
+        expect(volume.adjustedLevel(4, VolumeDirection.UP, 20) == 6, "Raise by 20 points from the current level")
+        expect(volume.adjustedLevel(4, VolumeDirection.UP, 50) == 9, "Raise by 50 points from the current level")
+        expect(volume.adjustedLevel(4, VolumeDirection.DOWN, 30) == 1, "Lower by 30 points from the current level")
+        expect(volume.adjustedLevel(8, VolumeDirection.UP, 50) == 10 &&
+            volume.adjustedLevel(2, VolumeDirection.DOWN, 30) == 0, "Clamp relative changes at both limits")
+        val alarmVolume = VolumeRange(1, 6)
+        expect(alarmVolume.adjustedLevel(2, VolumeDirection.UP, 50) == 5 &&
+            alarmVolume.adjustedLevel(5, VolumeDirection.DOWN, 50) == 2, "Round volume steps equally in both directions")
+        expect(alarmVolume.adjustedLevel(2, VolumeDirection.UP, 1) == 2, "A change under half a step leaves the volume alone")
+        expect(alarmVolume.adjustedLevel(0, VolumeDirection.UP, 20) == 2 && alarmVolume.percentAt(0) == 0,
+            "A muted stream may report zero even when its minimum step is higher")
+        expect(alarmVolume.levelFor(50) == 4 && alarmVolume.percentAt(4) == 60,
+            "Absolute requests and confirmations use the available steps above a nonzero minimum")
         for (operation in MediaOperation.entries) {
             val control = PhoneAction.ControlMedia(operation)
             expect(!PhoneCapabilityRegistry.requiresUnlock(control) && !PhoneCapabilityRegistry.canPrecedeAnother(control),
