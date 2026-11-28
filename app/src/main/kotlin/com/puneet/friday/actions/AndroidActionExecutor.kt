@@ -24,7 +24,6 @@ import android.service.media.MediaBrowserService
 import android.view.KeyEvent
 import android.view.View
 import java.util.Locale
-import kotlin.math.roundToInt
 
 /** Resolves names locally on a worker; runs Android effects only from the visible UI. */
 class AndroidActionExecutor(private val activity: Activity) {
@@ -353,7 +352,8 @@ class AndroidActionExecutor(private val activity: Activity) {
             is PhoneAction.CloseApp -> goHome()
             is PhoneAction.SetRingerMode -> setRingerMode(action.mode)
             is PhoneAction.Flashlight -> setFlashlight(action.on)
-            is PhoneAction.SetVolume -> setVolume(action)
+            is PhoneAction.SetVolume -> changeVolume(action.stream, action.percent)
+            is PhoneAction.AdjustVolume -> changeVolume(action.stream, action.percent, action.direction)
             is PhoneAction.ControlMedia -> controlMedia(action.operation, null)
             is PhoneAction.OpenSettings -> openSettings(action)
             is PhoneAction.CallContact, is PhoneAction.OpenApp, is PhoneAction.Sequence, is PhoneAction.OpenMusic, is PhoneAction.PlayMedia ->
@@ -545,11 +545,11 @@ class AndroidActionExecutor(private val activity: Activity) {
         }
     }
 
-    private fun setVolume(action: PhoneAction.SetVolume): ActionResult {
+    private fun changeVolume(volume: VolumeStream, percent: Int, direction: VolumeDirection? = null): ActionResult {
         val audio = activity.getSystemService(AudioManager::class.java)
             ?: return ActionResult.Failed("Volume controls unavailable")
         if (audio.isVolumeFixed) return ActionResult.Failed("Volume can't be changed")
-        val stream = when (action.stream) {
+        val stream = when (volume) {
             VolumeStream.MEDIA -> AudioManager.STREAM_MUSIC
             VolumeStream.RING -> AudioManager.STREAM_RING
             VolumeStream.ALARM -> AudioManager.STREAM_ALARM
@@ -557,11 +557,28 @@ class AndroidActionExecutor(private val activity: Activity) {
         val minimum = if (Build.VERSION.SDK_INT >= 28) audio.getStreamMinVolume(stream) else 0
         val maximum = audio.getStreamMaxVolume(stream)
         if (maximum <= minimum) return ActionResult.Failed("Volume can't be changed")
-        val requested = minimum + ((maximum - minimum) * action.percent / 100.0).roundToInt()
+        val range = VolumeRange(minimum, maximum)
+        if (direction == null) {
+            val requested = range.levelFor(percent)
+            audio.setStreamVolume(stream, requested, 0)
+            if (audio.getStreamVolume(stream) != requested) return ActionResult.Failed("Volume didn't change")
+            return ActionResult.Success("${volume.label} volume set to ${range.percentAt(requested)}%")
+        }
+
+        val current = audio.getStreamVolume(stream)
+        val atLimit = if (direction == VolumeDirection.UP) current >= maximum else current <= minimum
+        if (atLimit) {
+            val endpoint = if (direction == VolumeDirection.UP) "maximum" else "minimum"
+            return ActionResult.Success("${volume.label} volume is already at $endpoint")
+        }
+        val requested = range.adjustedLevel(current, direction, percent)
+        if (requested == current.coerceIn(minimum, maximum)) {
+            return ActionResult.Failed("$percent% is too small to change ${volume.wireName} volume")
+        }
         audio.setStreamVolume(stream, requested, 0)
-        if (audio.getStreamVolume(stream) != requested) return ActionResult.Failed("Volume didn't change")
-        val percent = ((requested - minimum) * 100.0 / (maximum - minimum)).roundToInt()
-        return ActionResult.Success("${action.stream.label} volume set to $percent%")
+        val applied = audio.getStreamVolume(stream)
+        if (applied == current) return ActionResult.Failed("${volume.label} volume stayed at ${range.percentAt(current)}%")
+        return ActionResult.Success("${volume.label} volume is ${range.percentAt(applied)}%")
     }
 
     private fun openSettings(action: PhoneAction.OpenSettings): ActionResult {
@@ -572,12 +589,8 @@ class AndroidActionExecutor(private val activity: Activity) {
 
     private fun permissionAfterFailure(action: PhoneAction): ActionResult = when (action) {
         is PhoneAction.Flashlight -> ActionResult.Failed("Flashlight unavailable")
-        is PhoneAction.SetVolume -> {
-            val policy = activity.getSystemService(NotificationManager::class.java)
-            if (action.stream == VolumeStream.RING && policy?.isNotificationPolicyAccessGranted != true) {
-                ActionResult.NeedsPermission(RequiredAccess.NOTIFICATION_POLICY)
-            } else ActionResult.Failed("Volume can't be changed")
-        }
+        is PhoneAction.SetVolume -> volumePermissionFailure(action.stream)
+        is PhoneAction.AdjustVolume -> volumePermissionFailure(action.stream)
         is PhoneAction.CallContact -> callPermissionFailure(needsContacts = true)
             ?: ActionResult.Failed("Calling unavailable")
         is PhoneAction.CallNumber -> callPermissionFailure(needsContacts = false)
@@ -591,6 +604,13 @@ class AndroidActionExecutor(private val activity: Activity) {
                 ?: ActionResult.Failed("Sound mode can't be changed")
         }
         else -> ActionResult.Failed("Action unavailable")
+    }
+
+    private fun volumePermissionFailure(stream: VolumeStream): ActionResult {
+        val policy = activity.getSystemService(NotificationManager::class.java)
+        return if (stream == VolumeStream.RING && policy?.isNotificationPolicyAccessGranted != true) {
+            ActionResult.NeedsPermission(RequiredAccess.NOTIFICATION_POLICY)
+        } else ActionResult.Failed("Volume can't be changed")
     }
 
     private fun hasPermission(permission: String): Boolean =

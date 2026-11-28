@@ -25,6 +25,32 @@ test("media controls require opt-in and accept only transport operations", () =>
   }
 });
 
+test("relative volume requires v6 and defaults only an omitted amount", () => {
+  const args = { stream: "media", direction: "up" };
+  const select = (fields: unknown, version: 5 | 6 = 6) =>
+    parseFunctionSelection({ name: "adjust_volume", args: fields }, version);
+  assert.equal(actionProtocolVersion("4", "1", "1"), 6);
+  assert.equal(actionProtocolVersion("4", undefined, "1"), 4);
+  assert.equal(actionProtocolVersion("6"), 6);
+  assert.equal(functionNamesFor(5).includes("adjust_volume"), false);
+  assert.equal(functionNamesFor(6).includes("adjust_volume"), true);
+  assert.deepEqual(select(args, 5), { type: "unsupported" });
+  assert.deepEqual(select(args), { type: "action", action: "adjust_volume", args: { ...args, percent: 20 } });
+  for (const percent of [null, 0, -30, 101, 2.5, "50"]) {
+    assert.deepEqual(select({ ...args, percent }), { type: "error", reason: "bad_audio" });
+  }
+  for (const invalid of [{ direction: "up" }, { stream: "ring" }, { ...args, stream: "system" },
+    { ...args, direction: "raise" }, { ...args, target: 50 }]) {
+    assert.deepEqual(select(invalid), { type: "error", reason: "bad_audio" });
+  }
+  const sequence = { name: "run_actions", args: { actions: [
+    { action: "adjust_volume", args: { stream: "alarm", direction: "down", percent: 30 } },
+    { action: "open_app", args: { name: "Clock" } }
+  ] } };
+  assert.equal(parseFunctionSelection(sequence, 6).type, "actions");
+  assert.deepEqual(parseFunctionSelection(sequence, 5), { type: "unsupported" });
+});
+
 test("named media is a validated terminal v4 handoff", () => {
   const args = { query: "Believer", appName: "Spotify" };
   const play = { name: "play_media", args };

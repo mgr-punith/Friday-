@@ -14,6 +14,7 @@ sealed interface PhoneAction {
     data class SetRingerMode(val mode: RingerMode) : PhoneAction
     data class Flashlight(val on: Boolean) : PhoneAction
     data class SetVolume(val stream: VolumeStream, val percent: Int) : PhoneAction
+    data class AdjustVolume(val stream: VolumeStream, val direction: VolumeDirection, val percent: Int) : PhoneAction
     data class OpenSettings(val target: SettingsTarget, val state: SettingState? = null) : PhoneAction
     data class Sequence(val steps: List<PhoneAction>) : PhoneAction
 }
@@ -36,8 +37,12 @@ enum class SettingState {
     OFF,
 }
 
-enum class VolumeStream(val label: String) {
-    MEDIA("Media"), RING("Ring"), ALARM("Alarm"),
+enum class VolumeStream(val wireName: String, val label: String) {
+    MEDIA("media", "Media"), RING("ring", "Ring"), ALARM("alarm", "Alarm"),
+}
+
+enum class VolumeDirection(val wireName: String) {
+    UP("up"), DOWN("down"),
 }
 
 enum class RingerMode {
@@ -88,6 +93,7 @@ fun PhoneAction.validationError(): String? = when (this) {
         else -> null
     }
     is PhoneAction.SetVolume -> if (percent in 0..100) null else "Use a volume from 0 to 100 percent"
+    is PhoneAction.AdjustVolume -> if (percent in 1..100) null else "Use a change from 1 to 100 percent"
     is PhoneAction.Sequence -> when {
         steps.size !in 2..3 || steps.any { it is PhoneAction.Sequence } -> "Use two or three commands"
         steps.dropLast(1).any { !PhoneCapabilityRegistry.canPrecedeAnother(it) } ->

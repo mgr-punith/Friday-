@@ -1,5 +1,5 @@
 {
-  "protocolVersion": 5,
+  "protocolVersion": 6,
   "capabilities": [
     { "id": "call_contact", "minimumVersion": 1, "sequence": "terminal", "requiresUnlock": false },
     { "id": "call_number", "minimumVersion": 1, "sequence": "terminal", "requiresUnlock": false },
@@ -13,6 +13,7 @@
     { "id": "control_media", "minimumVersion": 5, "sequence": "terminal", "requiresUnlock": false },
     { "id": "flashlight", "minimumVersion": 2, "sequence": "preparatory", "requiresUnlock": true },
     { "id": "set_volume", "minimumVersion": 2, "sequence": "preparatory", "requiresUnlock": true },
+    { "id": "adjust_volume", "minimumVersion": 6, "sequence": "preparatory", "requiresUnlock": true },
     { "id": "open_settings", "minimumVersion": 3, "sequence": "terminal", "requiresUnlock": true }
   ]
 }

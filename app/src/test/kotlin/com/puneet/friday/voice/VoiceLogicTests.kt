@@ -6,6 +6,8 @@ import com.puneet.friday.actions.PhoneAction
 import com.puneet.friday.actions.RingerMode
 import com.puneet.friday.actions.SettingState
 import com.puneet.friday.actions.SettingsTarget
+import com.puneet.friday.actions.VolumeDirection
+import com.puneet.friday.actions.VolumeStream
 import com.puneet.friday.entry.EntryPointPolicy
 import com.puneet.friday.entry.AssistantSettingsTests
 import com.puneet.friday.ui.OrbMotionMath
@@ -73,6 +75,18 @@ object VoiceLogicTests {
             confirmationSpeech = confirmationFields) as VoiceCommandResponse.Action).confirmationSpeech == null,
             "Wrong speech metadata cannot change or block a valid phone action")
         val volume = parsedAction("set_volume", mapOf("stream" to "media", "percent" to 50))
+        val relativeFields = mapOf("stream" to "ring", "direction" to "down", "percent" to 30)
+        val relative = parsedAction("adjust_volume", relativeFields)
+        expect(relative.action == PhoneAction.AdjustVolume(VolumeStream.RING, VolumeDirection.DOWN, 30),
+            "Relative volume preserves the requested stream, direction and amount")
+        expect(ConfirmationSpeechPayload.parse(confirmationFields + ("text" to "Ring volume is 30%"), relative.action) == null,
+            "The phone supplies the applied volume for speech")
+        for (invalid in listOf(relativeFields - "percent", relativeFields + ("stream" to "system"),
+            relativeFields + ("direction" to "sideways"), relativeFields + ("percent" to 0),
+            relativeFields + ("percent" to 101), relativeFields + ("percent" to 1.5),
+            relativeFields + ("percent" to "30"), relativeFields + ("target" to 50))) {
+            rejects("adjust_volume", invalid)
+        }
         val launch = parsedAction("open_app", mapOf("name" to "Clock"))
         expect(parsedAction("open_music", emptyMap()).action == PhoneAction.OpenMusic(), "Find installed music apps locally")
         rejects("open_music", mapOf("package" to "com.spotify.music"))
@@ -119,6 +133,8 @@ object VoiceLogicTests {
         rejects("open_settings", mapOf("setting" to "airplane_mode", "state" to "toggle"))
         rejects("open_settings", mapOf("setting" to "airplane_mode", "intent" to "android.settings.SETTINGS"))
         val steps = listOf(flashlight, volume, launch)
+        expect((VoiceResponseParser.parseSequence(listOf(relative, launch), null) as VoiceCommandResponse.Action).action ==
+            PhoneAction.Sequence(listOf(relative.action, launch.action)), "Relative volume can run before an app launch")
         val batch = VoiceResponseParser.parseSequence(steps, null) as VoiceCommandResponse.Action
         val batchSpeech = confirmationFields + ("text" to "Flashlight off. Media volume set. Opening app")
         expect((VoiceResponseParser.parseSequence(steps, null, batchSpeech) as VoiceCommandResponse.Action)

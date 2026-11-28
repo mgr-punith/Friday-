@@ -12,7 +12,8 @@ Friday is a native Android voice assistant for quick phone tasks. It sends one s
 - When the phone is unlocked, Friday sends the recognized title directly to a player that supports Android media-session playback by title. If the player needs its own screen, Friday opens it. On the Vivo, Spotify opens search and you can tap the song. Artist and album requests open browsing or search.
 - Say “Pause music,” “Resume music,” “Next track,” or “Previous track,” including while the phone is locked. Friday sends media controls without opening the player. For Previous, Friday seeks to the start, then skips back through one identified player session. If the player does not expose a suitable session, Friday sends one Previous button press, which can restart the current song.
 - Switch the ringer between silent, vibrate, and normal.
-- Turn the flashlight on or off and set media, ring, or alarm volume.
+- Turn the flashlight on or off.
+- Say “Raise the volume” or “Lower the volume” to change media volume by 20 percentage points. Give an amount, as in “Decrease the volume by 30%,” or name ring or alarm volume. “Set the volume to 50%” goes to a specific level. Unlock your phone to change volume. Friday confirms the level Android reports.
 - Open Airplane mode settings and tell you which switch to change. Android requires this final tap.
 - Run up to three supported actions in one request. Say “Turn off the flashlight, set media volume to half, and open Clock.”
 - Use Friday as the selected Android assistant, a Quick Settings tile, or a notification shortcut.

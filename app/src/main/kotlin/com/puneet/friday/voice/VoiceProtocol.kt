@@ -6,6 +6,7 @@ import com.puneet.friday.actions.PhoneAction
 import com.puneet.friday.actions.RingerMode
 import com.puneet.friday.actions.SettingState
 import com.puneet.friday.actions.SettingsTarget
+import com.puneet.friday.actions.VolumeDirection
 import com.puneet.friday.actions.VolumeStream
 import com.puneet.friday.actions.validationError
 import org.json.JSONException
@@ -193,14 +194,15 @@ object VoiceResponseParser {
                 (args["on"] as? Boolean)?.let(PhoneAction::Flashlight)
             } else null
             "set_volume" -> if (hasOnlyKeys(args, "stream", "percent")) {
-                val percent = requiredInt(args, "percent")
-                val stream = when (args["stream"]) {
-                    "media" -> VolumeStream.MEDIA
-                    "ring" -> VolumeStream.RING
-                    "alarm" -> VolumeStream.ALARM
-                    else -> null
-                }
-                if (stream != null && percent != null && percent in 0..100) PhoneAction.SetVolume(stream, percent) else null
+                val stream = VolumeStream.entries.find { it.wireName == args["stream"] } ?: return badResponse()
+                val percent = requiredInt(args, "percent") ?: return badResponse()
+                PhoneAction.SetVolume(stream, percent).takeIf { it.validationError() == null }
+            } else null
+            "adjust_volume" -> if (hasOnlyKeys(args, "stream", "direction", "percent")) {
+                val stream = VolumeStream.entries.find { it.wireName == args["stream"] } ?: return badResponse()
+                val direction = VolumeDirection.entries.find { it.wireName == args["direction"] } ?: return badResponse()
+                val percent = requiredInt(args, "percent") ?: return badResponse()
+                PhoneAction.AdjustVolume(stream, direction, percent).takeIf { it.validationError() == null }
             } else null
             "open_settings" -> if (hasOnlyKeys(args, "setting", "state")) {
                 val target = when (requiredString(args, "setting", 32)) {

@@ -1,6 +1,6 @@
-export const LATEST_ACTION_PROTOCOL_VERSION = 5 as const;
+export const LATEST_ACTION_PROTOCOL_VERSION = 6 as const;
 
-export type ActionProtocolVersion = 1 | 2 | 3 | 4 | 5;
+export type ActionProtocolVersion = 1 | 2 | 3 | 4 | 5 | 6;
 
 export type ActionName =
   | "call_contact"
@@ -15,6 +15,7 @@ export type ActionName =
   | "control_media"
   | "flashlight"
   | "set_volume"
+  | "adjust_volume"
   | "open_settings";
 
 export type SequencePosition = "preparatory" | "terminal";
@@ -38,11 +39,13 @@ export const CAPABILITIES = {
   control_media: { minimumVersion: 5, sequencePosition: "terminal" },
   flashlight: { minimumVersion: 2, sequencePosition: "preparatory" },
   set_volume: { minimumVersion: 2, sequencePosition: "preparatory" },
+  adjust_volume: { minimumVersion: 6, sequencePosition: "preparatory" },
   open_settings: { minimumVersion: 3, sequencePosition: "terminal" }
 } as const satisfies Readonly<Record<ActionName, CapabilityMetadata>>;
 
-export function actionProtocolVersion(value: string | undefined, mediaControls?: string): ActionProtocolVersion {
-  if (value === "5" || (value === "4" && mediaControls === "1")) return 5;
+export function actionProtocolVersion(value: string | undefined, mediaControls?: string, relativeVolume?: string): ActionProtocolVersion {
+  if (value === "6") return 6;
+  if (value === "5" || (value === "4" && mediaControls === "1")) return relativeVolume === "1" ? 6 : 5;
   return value === "4" ? 4 : value === "3" ? 3 : value === "2" ? 2 : 1;
 }
 

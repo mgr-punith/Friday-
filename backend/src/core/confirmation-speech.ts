@@ -58,6 +58,7 @@ function confirmationText(response: CommandResponse): string | null {
     case "play_media": return "Music requested";
     case "control_media": return { pause: "Pause requested", resume: "Resume requested", next: "Next track requested",
       previous: "Previous track requested" }[String(response.args.operation)] ?? null;
+    case "adjust_volume": // The phone reads and confirms the applied level.
     case "call_contact": case "call_number": return null;
   }
 }

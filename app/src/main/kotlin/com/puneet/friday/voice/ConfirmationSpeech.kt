@@ -38,7 +38,7 @@ object ConfirmationSpeechPayload {
             val phrases = action.steps.map { textFor(it) ?: return null }
             phrases.joinToString(". ")
         }
-        is PhoneAction.CallContact, is PhoneAction.CallNumber -> null
+        is PhoneAction.AdjustVolume, is PhoneAction.CallContact, is PhoneAction.CallNumber -> null
     }
 
     private val UUID = Regex("[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")

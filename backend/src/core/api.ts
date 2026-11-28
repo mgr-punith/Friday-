@@ -187,7 +187,8 @@ async function handleCommand(
   }
 
   try {
-    const actionVersion = actionProtocolVersion(header(event, "x-friday-actions"), header(event, "x-friday-media-controls"));
+    const actionVersion = actionProtocolVersion(header(event, "x-friday-actions"),
+      header(event, "x-friday-media-controls"), header(event, "x-friday-relative-volume"));
     const musicPlayer = actionVersion >= 4 && header(event, "x-friday-music-player") === "1";
     const result = await dependencies.assistant.select(
       { ...input, ...(actionVersion === 1 ? {} : { actionVersion }), ...(supportsAnswers ? { supportsAnswers: true } : {}),
